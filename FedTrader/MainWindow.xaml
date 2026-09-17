@@ -1,0 +1,248 @@
+﻿<Window x:Class="FedTrader.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:FedTrader"
+        mc:Ignorable="d"
+        Title="FedAgent" Height="450" Width="800"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent">
+    <Border Background="#111111" CornerRadius="8" Padding="0" SnapsToDevicePixels="True">
+      <Grid>
+        <Grid.Resources>
+          <!-- Round button style for Apple-like controls -->
+          <Style x:Key="RoundButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="14" />
+            <Setter Property="Height" Value="14" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Template">
+              <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                  <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="999" Width="{TemplateBinding Width}" Height="{TemplateBinding Height}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                    </Trigger>
+                    <Trigger Property="IsPressed" Value="True">
+                      <Setter TargetName="bd" Property="RenderTransform">
+                        <Setter.Value>
+                          <ScaleTransform ScaleX="0.95" ScaleY="0.95"/>
+                        </Setter.Value>
+                      </Setter>
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </Setter.Value>
+            </Setter>
+          </Style>
+        </Grid.Resources>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="18" />
+          <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Custom title bar (half size, black, rounded top corners) -->
+        <Border Grid.Row="0" Background="Black" CornerRadius="8,8,0,0" Height="18" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+          <Grid>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0">
+              <!-- Minimize: amber round button with minus symbol -->
+              <Button x:Name="MinimizeButton" Click="MinimizeButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFEDB400" BorderBrush="Transparent">
+                <TextBlock Text="—" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Button>
+              <!-- Close: red round button with cross symbol -->
+              <Button x:Name="CloseButton" Click="CloseButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFED6A5A" BorderBrush="Transparent">
+                <TextBlock Text="✕" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Button>
+            </StackPanel>
+          </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Background="#141414" Margin="0">
+
+        <!-- Market data rows: evenly spaced every 40px starting at 226 -->
+        <Grid HorizontalAlignment="Left" Margin="25,226,0,0" VerticalAlignment="Top">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="100" />
+                <ColumnDefinition Width="180" />
+                <ColumnDefinition Width="24" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="TickerName1" Text="[TICKER NAME]" Grid.Column="0" VerticalAlignment="Center" Foreground="White"/>
+            <TextBlock x:Name="TickerValue1" Text="[TICKER VALUE] [TENDENCY UP/DOWN %]" Grid.Column="1" VerticalAlignment="Center" Foreground="White"/>
+            <Grid Grid.Column="2" Width="24" Height="16">
+                <Polygon x:Name="TickerUp1" Points="12,0 0,16 24,16" Fill="Green" Visibility="Collapsed"/>
+                <Polygon x:Name="TickerDown1" Points="0,0 24,0 12,16" Fill="Red" Visibility="Collapsed"/>
+                <TextBlock x:Name="TickerSide1" Text="=" Foreground="#FFBFBFBF" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+            </Grid>
+        </Grid>
+
+        <Grid HorizontalAlignment="Left" Margin="25,266,0,0" VerticalAlignment="Top">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="100" />
+                <ColumnDefinition Width="180" />
+                <ColumnDefinition Width="24" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="TickerName2" Text="[TICKER NAME]" Grid.Column="0" VerticalAlignment="Center" Foreground="White"/>
+            <TextBlock x:Name="TickerValue2" Text="[TICKER VALUE] [TENDENCY UP/DOWN %]" Grid.Column="1" VerticalAlignment="Center" Foreground="White"/>
+            <Grid Grid.Column="2" Width="24" Height="16">
+                <Polygon x:Name="TickerUp2" Points="12,0 0,16 24,16" Fill="Green" Visibility="Collapsed"/>
+                <Polygon x:Name="TickerDown2" Points="0,0 24,0 12,16" Fill="Red" Visibility="Collapsed"/>
+                <TextBlock x:Name="TickerSide2" Text="=" Foreground="#FFBFBFBF" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+            </Grid>
+        </Grid>
+
+        <Grid HorizontalAlignment="Left" Margin="25,306,0,0" VerticalAlignment="Top">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="100" />
+                <ColumnDefinition Width="180" />
+                <ColumnDefinition Width="24" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="TickerName3" Text="[TICKER NAME]" Grid.Column="0" VerticalAlignment="Center" Foreground="White"/>
+            <TextBlock x:Name="TickerValue3" Text="[TICKER VALUE] [TENDENCY UP/DOWN %]" Grid.Column="1" VerticalAlignment="Center" Foreground="White"/>
+            <Grid Grid.Column="2" Width="24" Height="16">
+                <Polygon x:Name="TickerUp3" Points="12,0 0,16 24,16" Fill="Green" Visibility="Collapsed"/>
+                <Polygon x:Name="TickerDown3" Points="0,0 24,0 12,16" Fill="Red" Visibility="Collapsed"/>
+                <TextBlock x:Name="TickerSide3" Text="=" Foreground="#FFBFBFBF" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+            </Grid>
+        </Grid>
+
+        <Grid HorizontalAlignment="Left" Margin="25,346,0,0" VerticalAlignment="Top">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="100" />
+                <ColumnDefinition Width="180" />
+                <ColumnDefinition Width="24" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="TickerName4" Text="[TICKER NAME]" Grid.Column="0" VerticalAlignment="Center" Foreground="White"/>
+            <TextBlock x:Name="TickerValue4" Text="[TICKER VALUE] [TENDENCY UP/DOWN %]" Grid.Column="1" VerticalAlignment="Center" Foreground="White"/>
+            <Grid Grid.Column="2" Width="24" Height="16">
+                <Polygon x:Name="TickerUp4" Points="12,0 0,16 24,16" Fill="Green" Visibility="Collapsed"/>
+                <Polygon x:Name="TickerDown4" Points="0,0 24,0 12,16" Fill="Red" Visibility="Collapsed"/>
+                <TextBlock x:Name="TickerSide4" Text="=" Foreground="#FFBFBFBF" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+            </Grid>
+        </Grid>
+
+        <!-- Right-side transcript: label above textbox with same vertical spacing (subheader look) -->
+        <TextBlock x:Name="LiveTranscriptLabel" Text="Live Transcript" HorizontalAlignment="Left" Margin="479,186,0,0" VerticalAlignment="Top" FontSize="12" FontStyle="Italic" Foreground="#FFBFBFBF"/>
+        <Grid x:Name="TranscriptGrid" HorizontalAlignment="Left" Margin="479,226,0,0" VerticalAlignment="Top" Width="300" Height="200" MouseEnter="TranscriptGrid_MouseEnter" MouseLeave="TranscriptGrid_MouseLeave">
+            <Border Background="#FF1B1B1B" CornerRadius="6" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="6">
+                <TextBox x:Name="TranscriptTextBox" TextWrapping="Wrap" Text="Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: " VerticalAlignment="Stretch" Background="Transparent" Foreground="#FFF5F5F5" BorderThickness="0" CaretBrush="#FFF5F5F5" VerticalScrollBarVisibility="Auto" AcceptsReturn="True" TextChanged="TextBox_TextChanged">
+                    <TextBox.Resources>
+                        <Style TargetType="Thumb">
+                            <Setter Property="Background" Value="#FF4A4A4A" />
+                            <Setter Property="MinHeight" Value="28" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="Thumb">
+                                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" RenderTransformOrigin="0.5,0.5">
+                                            <Border.RenderTransform>
+                                                <ScaleTransform ScaleX="1" ScaleY="1" />
+                                            </Border.RenderTransform>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsDragging" Value="True">
+                                                <Setter TargetName="bd" Property="Background" Value="#FF888888" />
+                                                <Trigger.EnterActions>
+                                                    <BeginStoryboard>
+                                                        <Storyboard>
+                                                            <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.08" />
+                                                            <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.08" />
+                                                        </Storyboard>
+                                                    </BeginStoryboard>
+                                                </Trigger.EnterActions>
+                                                <Trigger.ExitActions>
+                                                    <BeginStoryboard>
+                                                        <Storyboard>
+                                                            <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.12" />
+                                                            <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.12" />
+                                                        </Storyboard>
+                                                    </BeginStoryboard>
+                                                </Trigger.ExitActions>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                        <Style TargetType="ScrollBar">
+                            <Setter Property="Width" Value="8" />
+                            <Setter Property="Background" Value="Transparent" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ScrollBar">
+                                        <Grid Background="Transparent">
+                                            <Border Margin="2,0,2,0" Background="#FF242424" CornerRadius="4"/>
+                                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                                <Track.DecreaseRepeatButton>
+                                                    <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" IsHitTestVisible="False"/>
+                                                </Track.DecreaseRepeatButton>
+                                                <Track.Thumb>
+                                                    <Thumb />
+                                                </Track.Thumb>
+                                                <Track.IncreaseRepeatButton>
+                                                    <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" IsHitTestVisible="False"/>
+                                                </Track.IncreaseRepeatButton>
+                                            </Track>
+                                        </Grid>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </TextBox.Resources>
+                </TextBox>
+            </Border>
+            <Rectangle x:Name="TranscriptFadeRect" IsHitTestVisible="False" VerticalAlignment="Bottom" Height="28" Opacity="1">
+                <Rectangle.Fill>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#00141414" Offset="0" />
+                        <GradientStop Color="#FF141414" Offset="1" />
+                    </LinearGradientBrush>
+                </Rectangle.Fill>
+            </Rectangle>
+        </Grid>
+        <Label Content="Session Data" HorizontalAlignment="Left" Margin="479,10,0,0" VerticalAlignment="Top" FontWeight="Bold" FontSize="16" RenderTransformOrigin="0.868,0.515" Foreground="White"/>
+        <Label Content="Market Data" HorizontalAlignment="Left" Margin="25,10,0,0" VerticalAlignment="Top" FontWeight="Bold" FontSize="16" Foreground="White"/>
+
+        <!-- Top Live Market Data label with dynamic timestamp (subheader look) -->
+        <TextBlock x:Name="TopLiveMarketDataText" HorizontalAlignment="Left" Margin="22,186,0,0" VerticalAlignment="Top" FontSize="12" FontStyle="Italic" Foreground="#FFBFBFBF">
+            <Run Text="Top Live Market Data "/>
+            <Run x:Name="TimestampRun" Text="[TIMESTAMP NEWEST BATCH]" />
+        </TextBlock>
+
+        <!-- Verdict widget under Market Data -->
+        <Grid HorizontalAlignment="Left" Margin="22,50,0,0" VerticalAlignment="Top">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Circular ring: background + foreground arc -->
+            <Grid Grid.Column="0">
+                <Ellipse Width="80" Height="80" Stroke="#FFAAAAAA" StrokeThickness="10"/>
+                <Ellipse x:Name="RingForeground" Width="80" Height="80" Stroke="Green" StrokeThickness="10" StrokeDashArray="0,100" StrokeStartLineCap="Round" StrokeEndLineCap="Round" RenderTransformOrigin="0.5,0.5">
+                    <Ellipse.RenderTransform>
+                        <RotateTransform Angle="-90" />
+                    </Ellipse.RenderTransform>
+                </Ellipse>
+                <!-- inner circle to appear gräulich -->
+                <Ellipse Width="50" Height="50" Fill="#FFEEEEEE" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <!-- confidence below ring -->
+                <TextBlock x:Name="ConfidenceTextBlock" Text="0/100" HorizontalAlignment="Center" Margin="0,90,0,0" Foreground="#FFBFBFBF" />
+            </Grid>
+
+            <!-- spacer -->
+
+            <!-- Verdict text and reason -->
+            <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                <TextBlock x:Name="VerdictTextBlock" Text="Current Verdict: [NONE]" FontWeight="Bold" FontSize="16" Foreground="White"/>
+                <TextBlock x:Name="ReasonTextBlock" Text="[REASON]" TextWrapping="Wrap" Foreground="#FFBFBFBF" Margin="0,6,0,0"/>
+            </StackPanel>
+        </Grid>
+
+        </Grid>
+      </Grid>
+    </Border>
+</Window>
