@@ -1,0 +1,51 @@
+"""Central configuration: environment secrets and asset/ticker mappings."""
+import os
+from dataclasses import dataclass, field
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324")
+
+YOUTUBE_URL = os.getenv("YOUTUBE_URL", "")
+
+WS_HOST = os.getenv("WS_HOST", "0.0.0.0")
+WS_PORT = int(os.getenv("WS_PORT", "8765"))
+
+MARKET_DATA_POLL_SECONDS = int(os.getenv("MARKET_DATA_POLL_SECONDS", "15"))
+
+# Deepgram expects raw PCM at this rate/format from the ffmpeg transcode step.
+AUDIO_SAMPLE_RATE = 16000
+AUDIO_CHANNELS = 1
+
+LOG_DIR = os.path.join(os.path.dirname(__file__), "data", "logs")
+SCENARIOS_DIR = os.path.join(os.path.dirname(__file__), "data", "scenarios")
+
+# category -> tickers used as market proxies for that asset class
+TICKERS: dict[str, list[str]] = {
+    "treasury_yields": ["^TNX", "^TYX"],
+    "bond_proxies": ["TLT", "AGG"],
+    "reits": ["VNQ"],
+    "utilities": ["XLU"],
+    "homebuilders": ["XHB", "ITB"],
+    "tech_giants": ["QQQ", "MAGS"],
+    "unprofitable_growth": ["ARKK"],
+    "financials": ["XLF"],
+}
+
+
+@dataclass
+class TickerQuote:
+    symbol: str
+    price: float | None = None
+    change_percent: float | None = None
+
+
+@dataclass
+class MarketSnapshot:
+    quotes: dict[str, TickerQuote] = field(default_factory=dict)
+    timestamp: str | None = None

@@ -27,6 +27,49 @@ namespace FedTrader
             UpdateReason("[REASON]");
         }
 
+        // Confidence history: add a sample (0..100)
+        public void AddConfidenceSample(int value)
+        {
+            var clamped = Math.Max(0, Math.Min(100, value));
+            Dispatcher.Invoke(() =>
+            {
+                // create a small bar
+                var bar = new System.Windows.Shapes.Rectangle
+                {
+                    Width = 8,
+                    Height = 40 * clamped / 100.0,
+                    Fill = new SolidColorBrush(Color.FromRgb(0x4C, 0xC9, 0x50)), // greenish
+                    Margin = new Thickness(2, 0, 2, 0),
+                    VerticalAlignment = VerticalAlignment.Bottom,
+                    ToolTip = $"{clamped}/100"
+                };
+                // keep max items
+                while (ConfidenceStack.Children.Count > 80) ConfidenceStack.Children.RemoveAt(0);
+                ConfidenceStack.Children.Add(bar);
+            });
+        }
+
+
+
+        // Connection status update
+        public void UpdateConnectionStatus(string status)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                var s = (status ?? string.Empty).ToUpperInvariant();
+                Brush color = Brushes.Gray;
+                string text = status ?? "";
+                if (s.Contains("CONNECTED")) color = Brushes.LimeGreen;
+                else if (s.Contains("CONNECTING") || s.Contains("RECONNECT")) color = Brushes.Gold;
+                else if (s.Contains("ERROR")) color = Brushes.Red;
+                else if (s.Contains("DISCONNECTED")) color = Brushes.Gray;
+
+                ConnectionIndicator.Fill = color;
+                ConnectionStatusText.Text = text;
+                ConnectionLastText.Text = $"last: {DateTime.Now:HH:mm:ss}";
+            });
+        }
+
         private void TextBox_TextChanged(object sender, TextChangedEventArgs e)
         {
 

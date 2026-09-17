@@ -58,6 +58,14 @@
                 <TextBlock Text="✕" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
               </Button>
             </StackPanel>
+        <!-- Confidence history under Connection status -->
+        <TextBlock Text="Confidence History" FontSize="12" FontStyle="Italic" Foreground="#FFBFBFBF" HorizontalAlignment="Left" Margin="479,72,0,0" VerticalAlignment="Top"/>
+        <Border HorizontalAlignment="Left" Margin="479,92,0,0" VerticalAlignment="Top" Background="#101010" CornerRadius="4" Padding="6" BorderBrush="#202020" BorderThickness="1" Width="300" Height="48">
+            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Height="36">
+                <StackPanel x:Name="ConfidenceStack" Orientation="Horizontal" HorizontalAlignment="Left"/>
+            </ScrollViewer>
+        </Border>
+
           </Grid>
         </Border>
 
@@ -126,6 +134,14 @@
 
         <!-- Right-side transcript: label above textbox with same vertical spacing (subheader look) -->
         <TextBlock x:Name="LiveTranscriptLabel" Text="Live Transcript" HorizontalAlignment="Left" Margin="479,186,0,0" VerticalAlignment="Top" FontSize="12" FontStyle="Italic" Foreground="#FFBFBFBF"/>
+        <!-- Connection status under Session Data -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" Margin="479,40,0,0" VerticalAlignment="Top">
+            <Ellipse x:Name="ConnectionIndicator" Width="12" Height="12" Fill="Gray" Stroke="#222" StrokeThickness="1" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Vertical" Margin="8,0,0,0">
+                <TextBlock x:Name="ConnectionStatusText" Text="Disconnected" Foreground="#FFBFBFBF" FontSize="12"/>
+                <TextBlock x:Name="ConnectionLastText" Text="last: -" Foreground="#FF8F8F8F" FontSize="11"/>
+            </StackPanel>
+        </StackPanel>
         <Grid x:Name="TranscriptGrid" HorizontalAlignment="Left" Margin="479,226,0,0" VerticalAlignment="Top" Width="300" Height="200" MouseEnter="TranscriptGrid_MouseEnter" MouseLeave="TranscriptGrid_MouseLeave">
             <Border Background="#FF1B1B1B" CornerRadius="6" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="6">
                 <TextBox x:Name="TranscriptTextBox" TextWrapping="Wrap" Text="Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: " VerticalAlignment="Stretch" Background="Transparent" Foreground="#FFF5F5F5" BorderThickness="0" CaretBrush="#FFF5F5F5" VerticalScrollBarVisibility="Auto" AcceptsReturn="True" TextChanged="TextBox_TextChanged">
@@ -241,6 +257,8 @@
                 <TextBlock x:Name="ReasonTextBlock" Text="[REASON]" TextWrapping="Wrap" Foreground="#FFBFBFBF" Margin="0,6,0,0"/>
             </StackPanel>
         </Grid>
+
+        <!-- Verdict history removed to avoid overlap; confidence history moved under Session Data -->
 
         </Grid>
       </Grid>

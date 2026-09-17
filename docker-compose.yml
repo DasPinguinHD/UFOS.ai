@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  backend:
+    build: ./FedTrader/backend
+    container_name: fedtrader_backend
+    ports:
+      - "8765:8765"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./FedTrader/backend:/app
+    restart: unless-stopped
