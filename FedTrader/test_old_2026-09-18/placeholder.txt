@@ -1,0 +1,7 @@
+archive placeholder - actual move was performed by apply_patch operations
+
+Moved files:
+- .\tools\ws_smoke.py
+- .\tools\ws_smoke.ps1
+- .\tools\run_full_smoke.ps1
+- .\tools\test_ws_client.py

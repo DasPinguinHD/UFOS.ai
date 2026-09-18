@@ -1,6 +1,7 @@
 """Entrypoint: wires audio ingestion, transcription, market data, LLM analysis, and broadcast."""
 import asyncio
 import logging
+from aiohttp import web
 
 from audio_stream import pcm_chunks
 from broadcast import Broadcaster
@@ -75,6 +76,18 @@ async def main() -> None:
     broadcaster = Broadcaster()
 
     await broadcaster.start()
+
+    # start a small health endpoint so external scripts can verify backend readiness
+    async def _health(request):
+        return web.Response(text="ok")
+
+    health_app = web.Application()
+    health_app.router.add_get('/health', _health)
+    health_runner = web.AppRunner(health_app)
+    await health_runner.setup()
+    health_site = web.TCPSite(health_runner, '127.0.0.1', 8766)
+    await health_site.start()
+    logger.info("Health endpoint listening on http://127.0.0.1:8766/health")
 
     tasks = [
         asyncio.create_task(market_feed.run(), name="market_data"),
