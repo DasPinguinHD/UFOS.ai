@@ -240,10 +240,24 @@ namespace FedTrader
                         break;
                     case "verdict":
                         var vm = new VerdictMessage();
-                        if (doc.RootElement.TryGetProperty("verdict", out var v)) vm.Verdict = v.GetString() ?? string.Empty;
-                        if (doc.RootElement.TryGetProperty("ticker", out var tt)) vm.Ticker = tt.GetString() ?? string.Empty;
-                        if (doc.RootElement.TryGetProperty("reason", out var rr)) vm.Reason = rr.GetString() ?? string.Empty;
-                        if (doc.RootElement.TryGetProperty("confidence", out var cv) && cv.TryGetInt32(out var civ)) vm.Confidence = civ;
+                        // verdict payload may be nested under a "payload" object (backend broadcasts as {type, payload})
+                        JsonElement payloadEl;
+                        if (doc.RootElement.TryGetProperty("payload", out payloadEl) && payloadEl.ValueKind == JsonValueKind.Object)
+                        {
+                            var src = payloadEl;
+                            if (src.TryGetProperty("verdict", out var v)) vm.Verdict = v.GetString() ?? string.Empty;
+                            if (src.TryGetProperty("ticker", out var tt)) vm.Ticker = tt.GetString() ?? string.Empty;
+                            if (src.TryGetProperty("reason", out var rr)) vm.Reason = rr.GetString() ?? string.Empty;
+                            if (src.TryGetProperty("confidence", out var cv) && cv.TryGetInt32(out var civ)) vm.Confidence = civ;
+                        }
+                        else
+                        {
+                            // fallback to top-level properties
+                            if (doc.RootElement.TryGetProperty("verdict", out var v)) vm.Verdict = v.GetString() ?? string.Empty;
+                            if (doc.RootElement.TryGetProperty("ticker", out var tt)) vm.Ticker = tt.GetString() ?? string.Empty;
+                            if (doc.RootElement.TryGetProperty("reason", out var rr)) vm.Reason = rr.GetString() ?? string.Empty;
+                            if (doc.RootElement.TryGetProperty("confidence", out var cv) && cv.TryGetInt32(out var civ)) vm.Confidence = civ;
+                        }
                         OnVerdict?.Invoke(vm);
                         break;
                     case "connection":

@@ -9,10 +9,13 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Markup;
 using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Controls.Primitives;
+using System.Net.NetworkInformation;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
@@ -25,26 +28,31 @@ namespace FedTrader
     /// </summary>
     public partial class MainWindow : Window
     {
+        // state to control arc sweep direction
+        private bool _isLongState = false;
+        private bool _isShortState = false;
         // view model for each ticker row shown in the UI
         private class TickerViewModel
         {
             public string Name { get; set; } = string.Empty;
+            // numeric value / price
             public string Value { get; set; } = string.Empty;
+            // change as percentage text
+            public string Change { get; set; } = string.Empty;
+            // original tendency string (optional)
             public string Tendency { get; set; } = string.Empty;
+            // color indicator for trend rectangle
+            public SolidColorBrush TrendColor { get; set; } = Brushes.Transparent;
+            // rotation for triangle: 0 = up, 180 = down, 90 = right (sideways)
+            public double TrendRotation { get; set; } = 90.0;
         }
 
         private void ShowLogs_Click(object sender, RoutedEventArgs e)
         {
             try
             {
-                var dlg = new BackendLogsWindow(() => {
-                    lock (_backendLogBuffer)
-                    {
-                        return _backendLogBuffer.ToString();
-                    }
-                });
-                dlg.Owner = this;
-                dlg.ShowDialog();
+                // Redirect to the custom log popup builder so the UI chrome matches MainWindow
+                OpenBackendLogButton_Click(sender, e);
             }
             catch (Exception ex)
             {
@@ -69,6 +77,8 @@ namespace FedTrader
         private WebSocketService? _wsService;
         private CancellationTokenSource? _wsCts;
         private Process? _backendProcess;
+        // flag to detect first real transcript input from backend
+        private bool _transcriptReceived = false;
         private readonly System.Text.StringBuilder _backendLogBuffer = new();
         private const int BackendLogBufferLimit = 1_048_576; // ~1 MB chars
         public MainWindow()
@@ -84,7 +94,7 @@ namespace FedTrader
             try { DebugLogger.Log("[UI] MainWindow ctor"); } catch { }
         }
 
-        // Render a compact list of tickers from MarketUpdateMessage
+        // Render a compact list of tickers from MarketUpdateMessage.
         public void RenderMarketUpdate(MarketUpdateMessage mu)
         {
             try
@@ -93,15 +103,27 @@ namespace FedTrader
                 _tickers.Clear();
                 foreach (var group in TickerGroups)
                 {
-                    // group header
-                    _tickers.Add(new TickerViewModel { Name = group.Key.Replace('_', ' ').ToUpperInvariant(), Value = string.Empty, Tendency = string.Empty });
+                    // add only actual ticker symbols (no category headers)
                     foreach (var symbol in group.Symbols)
                     {
                         mu.Quotes.TryGetValue(symbol, out var q);
                         q ??= new Quote { Price = 0, ChangePercent = 0 };
-                        var valueText = q.Price != 0 ? $"{q.Price:0.00}" : $"{q.ChangePercent:0.00}%";
+                        // show prices with three decimals to capture precision for treasury yields
+                        var valueText = q.Price != 0 ? $"{q.Price:0.000}" : string.Empty;
+                        var changeText = $"{q.ChangePercent:+0.000;-0.000;0.000}%";
                         var tendency = q.ChangePercent > 0.0001 ? "UP" : (q.ChangePercent < -0.0001 ? "DOWN" : "SIDEWAYS");
-                        _tickers.Add(new TickerViewModel { Name = symbol, Value = valueText, Tendency = tendency });
+                        SolidColorBrush trendColor = Brushes.Gray;
+                        double trendRotation = 90.0; // default sideways
+                        try {
+                            if (q.ChangePercent > 0.0001) trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FF4CAF50"));
+                            else if (q.ChangePercent < -0.0001) trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FFF44336"));
+                            else trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FF9E9E9E"));
+                            if (q.ChangePercent > 0.0001) trendRotation = 0.0;
+                            else if (q.ChangePercent < -0.0001) trendRotation = 180.0;
+                            else trendRotation = 90.0;
+                        } catch { trendColor = Brushes.Gray; }
+
+                        _tickers.Add(new TickerViewModel { Name = symbol, Value = valueText, Change = changeText, Tendency = tendency, TrendColor = trendColor, TrendRotation = trendRotation });
                     }
                 }
 
@@ -121,10 +143,9 @@ namespace FedTrader
             try { UpdateConnectionStatus("Connecting"); } catch { }
             try
             {
-                try { DebugLogger.Log("[UI] Before TryStartBackendHelper"); } catch { }
-                // start backend helper script if available
-                TryStartBackendHelper();
-                try { DebugLogger.Log("[UI] After TryStartBackendHelper"); } catch { }
+                // attempt to start backend helper script (if present) so health endpoint becomes available
+                try { DebugLogger.Log("[UI] Attempting to start backend helper..."); } catch { }
+                try { TryStartBackendHelper(); } catch (Exception ex) { try { DebugLogger.Log("[UI] TryStartBackendHelper threw: " + ex.Message); } catch { } }
                 // wait for backend health endpoint before attempting websocket connect
                 var ok = await WaitForBackendHealthAsync(TimeSpan.FromSeconds(12)).ConfigureAwait(false);
                 try { DebugLogger.Log($"[UI] Health check result: {ok}"); } catch { }
@@ -134,13 +155,35 @@ namespace FedTrader
                 _wsService.OnTicker += msg => Dispatcher.Invoke(() => UpdateTicker(msg.Index == 0 ? 1 : msg.Index, msg.Name, msg.Value, msg.Tendency));
                 _wsService.OnMarketUpdate += mu => Dispatcher.Invoke(() => RenderMarketUpdate(mu));
                 _wsService.OnConfidence += v => Dispatcher.Invoke(() => { AddConfidenceSample(v); UpdateConfidence(v); });
-                _wsService.OnVerdict += vm => Dispatcher.Invoke(() => { UpdateVerdict(vm.Verdict, vm.Ticker); UpdateReason(vm.Reason); if (vm.Confidence != 0) AddConfidenceSample(vm.Confidence); });
-                _wsService.OnTranscript += t => Dispatcher.Invoke(() => {
-                    // prepend new transcript line to top
+                _wsService.OnVerdict += vm => Dispatcher.Invoke(() => { UpdateVerdict(vm.Verdict, vm.Ticker, vm.Confidence); UpdateReason(vm.Reason); if (vm.Confidence != 0) AddConfidenceSample(vm.Confidence); });
+                _wsService.OnTranscript += t => {
+                    // log raw transcript arrival for debugging
+                    try { DebugLogger.Log("[UI] OnTranscript raw: " + (t ?? string.Empty).Replace("\n", "\\n")); } catch { }
+                    // append new transcript line at the bottom (newest last) on UI thread
                     try {
-                        TranscriptTextBox.Text = t + "\n" + TranscriptTextBox.Text;
-                    } catch { }
-                });
+                        Dispatcher.Invoke(() => {
+                            try {
+                                if (!_transcriptReceived)
+                                {
+                                    TranscriptTextBox.Clear();
+                                    _transcriptReceived = true;
+                                    try { DebugLogger.Log("[UI] Cleared initial transcript placeholder"); } catch { }
+                                }
+                                if (!string.IsNullOrEmpty(TranscriptTextBox.Text)) TranscriptTextBox.AppendText("\n");
+                                TranscriptTextBox.AppendText(t ?? string.Empty);
+                                TranscriptTextBox.ScrollToEnd();
+                            }
+                            catch (Exception ex)
+                            {
+                                try { DebugLogger.Log("[UI] Error appending transcript: " + ex.Message); } catch { }
+                            }
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        try { DebugLogger.Log("[UI] Dispatcher.Invoke failed for transcript: " + ex.Message); } catch { }
+                    }
+                };
                 _wsService.OnConnectionStatus += s => Dispatcher.Invoke(() => UpdateConnectionStatus(s));
                 // also log connection status changes to backend buffer for diagnostics
                 _wsService.OnConnectionStatus += s => { try { lock(_backendLogBuffer){ _backendLogBuffer.AppendLine("[WS STATUS] " + s); if (_backendLogBuffer.Length > BackendLogBufferLimit) { var ov = _backendLogBuffer.Length - BackendLogBufferLimit; if (ov>0) _backendLogBuffer.Remove(0, ov); } } } catch { } };
@@ -304,9 +347,76 @@ namespace FedTrader
                         if (overflow > 0) _backendLogBuffer.Remove(0, overflow);
                     }
                 }
-                _backendProcess.Start();
-                _backendProcess.BeginOutputReadLine();
-                _backendProcess.BeginErrorReadLine();
+                try
+                {
+                    var started = _backendProcess.Start();
+                    _backendProcess.BeginOutputReadLine();
+                    _backendProcess.BeginErrorReadLine();
+                    lock (_backendLogBuffer)
+                    {
+                        _backendLogBuffer.AppendLine($"[BACKEND] helper process started: Success={started} PID={_backendProcess.Id}");
+                        if (_backendLogBuffer.Length > BackendLogBufferLimit)
+                        {
+                            var overflow = _backendLogBuffer.Length - BackendLogBufferLimit;
+                            if (overflow > 0) _backendLogBuffer.Remove(0, overflow);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    try { lock (_backendLogBuffer) { _backendLogBuffer.AppendLine("[BACKEND] failed to start helper: " + ex.Message); } } catch { }
+                }
+
+                // fire-and-check: short background probe whether process exited quickly or listener appeared
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(1500);
+                        try
+                        {
+                            if (_backendProcess == null)
+                            {
+                                lock (_backendLogBuffer) { _backendLogBuffer.AppendLine("[BACKEND] process is null after start check"); }
+                                return;
+                            }
+                            if (_backendProcess.HasExited)
+                            {
+                                lock (_backendLogBuffer)
+                                {
+                                    _backendLogBuffer.AppendLine($"[BACKEND] helper exited early (code={_backendProcess.ExitCode})");
+                                    if (_backendLogBuffer.Length > BackendLogBufferLimit)
+                                    {
+                                        var overflow = _backendLogBuffer.Length - BackendLogBufferLimit;
+                                        if (overflow > 0) _backendLogBuffer.Remove(0, overflow);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                // check active TCP listeners for port 8765
+                                try
+                                {
+                                    var props = IPGlobalProperties.GetIPGlobalProperties();
+                                    var listeners = props.GetActiveTcpListeners();
+                                    var found = listeners.Any(l => l.Port == 8765);
+                                    lock (_backendLogBuffer)
+                                    {
+                                        _backendLogBuffer.AppendLine($"[BACKEND] port 8765 listening: {found}");
+                                        if (_backendLogBuffer.Length > BackendLogBufferLimit)
+                                        {
+                                            var overflow = _backendLogBuffer.Length - BackendLogBufferLimit;
+                                            if (overflow > 0) _backendLogBuffer.Remove(0, overflow);
+                                        }
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                        catch (Exception ex2) { try { lock (_backendLogBuffer) { _backendLogBuffer.AppendLine("[BACKEND] post-start check failed: " + ex2.Message); } } catch { } }
+                    }
+                    catch { }
+                });
             }
             catch { }
         }
@@ -352,53 +462,174 @@ namespace FedTrader
             Window? win = null;
             try
             {
-                win = new Window {
+                // Create a non-standard window that matches the MainWindow look: dark border and custom title bar
+                win = new Window
+                {
                     Title = "Backend Log",
                     Width = 700,
                     Height = 420,
                     Owner = this,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    WindowStyle = WindowStyle.None,
+                    AllowsTransparency = true,
+                    Background = Brushes.Transparent
                 };
-                var grid = new Grid { Background = new SolidColorBrush(Color.FromRgb(17,17,17)), Margin = new Thickness(8) };
-                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-                var header = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-                var closeBtn = new Button { Content = "Close", Width = 64, Margin = new Thickness(0,0,0,8) };
-                var styleObj = TryFindResource("SmallFlatButtonStyle");
-                if (styleObj is Style style) closeBtn.Style = style;
-                closeBtn.Click += (s, ev) => win.Close();
-                header.Children.Add(closeBtn);
-                Grid.SetRow(header, 0);
-                grid.Children.Add(header);
+                // Outer border to emulate MainWindow chrome
+                var outer = new Border
+                {
+                    Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(0),
+                    SnapsToDevicePixels = true
+                };
 
-                var tb = new TextBox {
+                var root = new Grid { Margin = new Thickness(0) };
+                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(18) }); // title bar
+                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+                // Title bar (black) with round buttons on the right
+                var titleBar = new Border { Background = Brushes.Black, CornerRadius = new CornerRadius(8,8,0,0), Height = 18 };
+                titleBar.MouseLeftButtonDown += (s, ev) => { try { if (ev.ButtonState == MouseButtonState.Pressed) win.DragMove(); } catch { } };
+
+                var tbGrid = new Grid();
+                tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                var titleText = new TextBlock { Text = "Backend Log", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8,0,0,0), FontSize = 12, FontWeight = FontWeights.SemiBold };
+                Grid.SetColumn(titleText, 0);
+                tbGrid.Children.Add(titleText);
+
+                var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0,0,6,0) };
+
+                var roundStyleObj = TryFindResource("RoundButtonStyle");
+                Style roundStyle = roundStyleObj as Style;
+
+                // If the RoundButtonStyle isn't available (resource lookup failed), create a fallback style from XAML
+                if (roundStyle == null)
+                {
+                    // Fallback: construct equivalent Style in code to avoid parsing XAML at runtime
+                    var template = new ControlTemplate(typeof(Button));
+                    var borderFactory = new FrameworkElementFactory(typeof(Border));
+                    borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(999));
+                    borderFactory.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
+                    borderFactory.SetBinding(Border.WidthProperty, new System.Windows.Data.Binding("Width") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
+                    borderFactory.SetBinding(Border.HeightProperty, new System.Windows.Data.Binding("Height") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
+                    var contentPresenterFactory = new FrameworkElementFactory(typeof(ContentPresenter));
+                    contentPresenterFactory.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                    contentPresenterFactory.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+                    borderFactory.AppendChild(contentPresenterFactory);
+                    template.VisualTree = borderFactory;
+
+                    var style = new Style(typeof(Button));
+                    style.Setters.Add(new Setter(Button.WidthProperty, 14.0));
+                    style.Setters.Add(new Setter(Button.HeightProperty, 14.0));
+                    style.Setters.Add(new Setter(Button.PaddingProperty, new Thickness(0)));
+                    style.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(0)));
+                    style.Setters.Add(new Setter(Button.BackgroundProperty, Brushes.Transparent));
+                    style.Setters.Add(new Setter(Button.TemplateProperty, template));
+
+                    roundStyle = style;
+                }
+
+                var minimizeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6,0,0,0) };
+                if (roundStyle != null) minimizeBtn.Style = roundStyle;
+                // match MainWindow exact amber background color
+                try { minimizeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0xB4, 0x00)); } catch { minimizeBtn.Background = Brushes.Gold; }
+                minimizeBtn.Click += (s, ev) => { try { win.WindowState = WindowState.Minimized; } catch { } };
+                var minTxt = new TextBlock { Text = "—", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                minimizeBtn.Content = minTxt;
+
+                var closeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6,0,0,0) };
+                if (roundStyle != null) closeBtn.Style = roundStyle;
+                // match MainWindow exact red background color
+                try { closeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0x6A, 0x5A)); } catch { closeBtn.Background = Brushes.IndianRed; }
+                closeBtn.Click += (s, ev) => { try { win.Close(); } catch { } };
+                var closeTxt = new TextBlock { Text = "✕", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                closeBtn.Content = closeTxt;
+
+                btnPanel.Children.Add(minimizeBtn);
+                btnPanel.Children.Add(closeBtn);
+                Grid.SetColumn(btnPanel, 1);
+                tbGrid.Children.Add(btnPanel);
+
+                titleBar.Child = tbGrid;
+                Grid.SetRow(titleBar, 0);
+                root.Children.Add(titleBar);
+
+                // Content area with padding
+                var contentGrid = new Grid { Margin = new Thickness(8) };
+                Grid.SetRow(contentGrid, 1);
+
+                var tb = new TextBox
+                {
                     Text = string.Empty,
                     IsReadOnly = true,
                     TextWrapping = TextWrapping.Wrap,
                     VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-                    Background = new SolidColorBrush(Color.FromRgb(24,24,24)),
-                    Foreground = new SolidColorBrush(Color.FromRgb(240,240,240)),
+                    Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)),
+                    Foreground = new SolidColorBrush(Color.FromRgb(240, 240, 240)),
                     FontFamily = new System.Windows.Media.FontFamily("Consolas"),
                     Margin = new Thickness(0)
                 };
-                Grid.SetRow(tb, 1);
-                grid.Children.Add(tb);
+
+                // Apply the same compact scrollbar style used by the transcript textbox
+                try
+                {
+                    var compact = TryFindResource("CompactScrollBarStyle") as Style;
+                    if (compact != null) tb.Resources.Add(typeof(ScrollBar), compact);
+                    var thumbStyle = TryFindResource("CompactScrollThumbStyle") as Style;
+                    if (thumbStyle != null) tb.Resources.Add(typeof(Thumb), thumbStyle);
+                    // Ensure internal scrollbars get the template after the textbox is loaded
+                    tb.Loaded += (s, ev) => ApplyScrollStylesToVisualTree(tb);
+                }
+                catch { }
+
+                // helper to apply styles to internal ScrollBar/Thumb elements
+                void ApplyScrollStylesToVisualTree(DependencyObject root)
+                {
+                    try
+                    {
+                        var sbStyle = TryFindResource("CompactScrollBarStyle") as Style ?? Application.Current?.FindResource("CompactScrollBarStyle") as Style;
+                        var thStyle = TryFindResource("CompactScrollThumbStyle") as Style ?? Application.Current?.FindResource("CompactScrollThumbStyle") as Style;
+                        if (sbStyle == null && thStyle == null) return;
+                        // traverse visual tree and set styles
+                        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+                        {
+                            var child = VisualTreeHelper.GetChild(root, i);
+                            if (child is ScrollBar sb)
+                            {
+                                if (sbStyle != null) sb.Style = sbStyle;
+                            }
+                            if (child is Thumb th)
+                            {
+                                if (thStyle != null) th.Style = thStyle;
+                            }
+                            ApplyScrollStylesToVisualTree(child);
+                        }
+                    }
+                    catch { }
+                }
+
+                contentGrid.Children.Add(tb);
+                root.Children.Add(contentGrid);
+
+                outer.Child = root;
+                win.Content = outer;
 
                 // populate current buffer
-                lock(_backendLogBuffer)
+                lock (_backendLogBuffer)
                 {
                     tb.Text = _backendLogBuffer.ToString();
                 }
 
                 // update periodically while open
                 var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-                timer.Tick += (s, ev) => { lock(_backendLogBuffer){ tb.Text = _backendLogBuffer.ToString(); tb.CaretIndex = tb.Text.Length; tb.ScrollToEnd(); } };
+                timer.Tick += (s, ev) => { lock (_backendLogBuffer) { tb.Text = _backendLogBuffer.ToString(); tb.CaretIndex = tb.Text.Length; tb.ScrollToEnd(); } };
                 win.Closed += (s, ev) => timer.Stop();
                 timer.Start();
 
-                win.Content = grid;
                 win.ShowDialog();
             }
             catch (Exception ex)
@@ -504,18 +735,38 @@ namespace FedTrader
         }
 
         // Public API to update the verdict widget dynamically
-        public void UpdateVerdict(string verdict, string ticker)
+        public void UpdateVerdict(string verdict, string ticker, int confidence = 0)
         {
             var text = string.IsNullOrWhiteSpace(ticker) ? verdict : $"{verdict} {ticker}";
+            // Do not include percentage in the verdict text; show confidence as ring fill and centered number
             VerdictTextBlock.Text = $"Current Verdict: {text}";
 
             // determine color: green for long/buy, red for short/sell, gray otherwise
             var v = verdict?.ToUpperInvariant() ?? string.Empty;
             Brush color = Brushes.Gray;
-            if (v.Contains("LONG") || v.Contains("BUY") || v.Contains("BULL")) color = Brushes.Green;
-            else if (v.Contains("SHORT") || v.Contains("SELL") || v.Contains("BEAR")) color = Brushes.Red;
+            bool isLong = false;
+            bool isShort = false;
+            if (v.Contains("LONG") || v.Contains("BUY") || v.Contains("BULL")) { color = Brushes.Green; isLong = true; }
+            else if (v.Contains("SHORT") || v.Contains("SELL") || v.Contains("BEAR")) { color = Brushes.Red; isShort = true; }
 
-            RingForeground.Stroke = color;
+            // set stroke color on the ring arc path
+            try { RingArc.Stroke = color; } catch { }
+
+            // remember state for UpdateConfidence sweep direction
+            _isLongState = isLong;
+            _isShortState = isShort;
+
+            try
+            {
+                // Ensure no additional rotation is applied here; UpdateConfidence draws arc starting at 3 o'clock.
+                RingArc.RenderTransform = Transform.Identity;
+            }
+            catch { }
+
+            // update the stroke dash to represent confidence (0..100)
+            try {
+                UpdateConfidence(confidence);
+            } catch { }
         }
 
         public void UpdateReason(string reason)
@@ -526,11 +777,55 @@ namespace FedTrader
         public void UpdateConfidence(int value)
         {
             var clamped = Math.Max(0, Math.Min(100, value));
-            ConfidenceTextBlock.Text = $"{clamped}/100";
+            // show centered big bold number with percent sign (no-op)
+            try { ConfidenceCenterText.Text = clamped.ToString() + "%"; } catch { }
 
-            // update stroke dash to show portion of the ring
-            // a simple approach: set dash array to [value, 100-value]
-            RingForeground.StrokeDashArray = new DoubleCollection() { clamped, 100 - clamped };
+            try
+            {
+                // Draw an explicit ArcSegment on RingArc so we map percent -> sweep precisely.
+                double w = RingArc.Width;
+                double h = RingArc.Height;
+                double stroke = RingArc.StrokeThickness;
+                double cx = w / 2.0;
+                double cy = h / 2.0;
+                double radius = Math.Max(0.0, Math.Min(w, h) / 2.0 - stroke / 2.0);
+
+                if (clamped <= 0)
+                {
+                    RingArc.Data = null;
+                }
+                else if (clamped >= 100)
+                {
+                    // full circle: use EllipseGeometry to draw complete ring
+                    RingArc.Data = new EllipseGeometry(new Point(cx, cy), radius, radius);
+                }
+                else
+                {
+                    double percent = clamped / 100.0;
+                    double sweepDeg = 360.0 * percent;
+
+                    // Start at 12 o'clock and sweep by verdict direction.
+                    // LONG: clockwise, SHORT: counterclockwise.
+                    double startDeg = -90.0;
+                    double endDeg = _isShortState ? startDeg - sweepDeg : startDeg + sweepDeg;
+
+                    double startRad = startDeg * Math.PI / 180.0;
+                    double endRad = endDeg * Math.PI / 180.0;
+
+                    var startPoint = new Point(cx + radius * Math.Cos(startRad), cy + radius * Math.Sin(startRad));
+                    var endPoint = new Point(cx + radius * Math.Cos(endRad), cy + radius * Math.Sin(endRad));
+
+                    bool isLargeArc = Math.Abs(sweepDeg) > 180.0;
+                    var pf = new PathFigure { StartPoint = startPoint, IsClosed = false, IsFilled = false };
+                    var seg = new ArcSegment(endPoint, new Size(radius, radius), 0.0, isLargeArc, _isShortState ? SweepDirection.Counterclockwise : SweepDirection.Clockwise, true);
+                    pf.Segments.Clear();
+                    pf.Segments.Add(seg);
+                    var pg = new PathGeometry();
+                    pg.Figures.Add(pf);
+                    RingArc.Data = pg;
+                }
+            }
+            catch { }
         }
 
         // Update ticker row (1..4) with name, value and tendency (e.g. "UP", "DOWN", "SIDEWAYS")
@@ -547,6 +842,9 @@ namespace FedTrader
                 {
                     existing.Value = value ?? string.Empty;
                     existing.Tendency = t;
+                    // try to parse numeric change from value when possible (fallback to empty)
+                    try { existing.Change = existing.Change ?? string.Empty; } catch { }
+                    // no reliable change provided here; keep existing.Change
                     // refresh the collection item by replacing it (simple approach)
                     var idx = _tickers.IndexOf(existing);
                     if (idx >= 0)
@@ -556,8 +854,27 @@ namespace FedTrader
                 }
                 else
                 {
-                    // append new ticker
-                    _tickers.Add(new TickerViewModel { Name = name ?? string.Empty, Value = value ?? string.Empty, Tendency = t });
+                    // append new ticker; infer change and trend color if possible
+                    string changeText = string.Empty;
+                    SolidColorBrush trendColor = Brushes.Gray;
+                    try
+                    {
+                        // attempt to parse change if value contains % or a sign
+                        if (!string.IsNullOrEmpty(value) && value.Contains("%"))
+                        {
+                            changeText = value;
+                        }
+                        else
+                        {
+                            changeText = string.Empty;
+                        }
+                        if (t.Contains("UP")) trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FF4CAF50"));
+                        else if (t.Contains("DOWN")) trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FFF44336"));
+                        else trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FF9E9E9E"));
+                    }
+                    catch { trendColor = Brushes.Gray; }
+
+                    _tickers.Add(new TickerViewModel { Name = name ?? string.Empty, Value = value ?? string.Empty, Change = changeText, Tendency = t, TrendColor = trendColor });
                 }
 
                 // update timestamp whenever tickers are updated
@@ -588,7 +905,7 @@ namespace FedTrader
             }
             else
             {
-                // sideways / neutral
+                // sideways / neutral   
                 side.Visibility = Visibility.Visible;
                 valueText.Foreground = Brushes.Gray;
             }

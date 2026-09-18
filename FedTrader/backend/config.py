@@ -18,6 +18,13 @@ WS_PORT = int(os.getenv("WS_PORT", "8765"))
 
 MARKET_DATA_POLL_SECONDS = int(os.getenv("MARKET_DATA_POLL_SECONDS", "15"))
 
+# Verdict / LLM analyst configuration
+VERDICT_INTERVAL_SECONDS = int(os.getenv("VERDICT_INTERVAL_SECONDS", "90"))
+VERDICT_MAX_REASON_CHARS = int(os.getenv("VERDICT_MAX_REASON_CHARS", "720"))
+VERDICT_CONFIDENCE_SCALE = int(os.getenv("VERDICT_CONFIDENCE_SCALE", "100"))
+# Initial delay before requesting the first verdict (seconds)
+VERDICT_INITIAL_DELAY_SECONDS = int(os.getenv("VERDICT_INITIAL_DELAY_SECONDS", "60"))
+
 # Deepgram expects raw PCM at this rate/format from the ffmpeg transcode step.
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHANNELS = 1

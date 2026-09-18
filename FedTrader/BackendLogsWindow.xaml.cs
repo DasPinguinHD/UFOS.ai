@@ -1,5 +1,7 @@
 using System;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
 
 namespace FedTrader
@@ -14,7 +16,28 @@ namespace FedTrader
         {
             InitializeComponent();
             _getLogs = getLogs ?? throw new ArgumentNullException(nameof(getLogs));
-            // auto-refresh every 500ms
+            // Try to apply the CompactScrollBarStyle from main window so the logs scrollbar matches the transcript
+            try
+            {
+                Style? compact = null;
+                try { compact = Application.Current?.MainWindow?.FindResource("CompactScrollBarStyle") as Style; } catch { }
+                if (compact != null && LogsTextBox != null)
+                {
+                    // set ScrollBar style
+                    LogsTextBox.Resources.Add(typeof(ScrollBar), compact);
+                    // also try to copy the thumb style if available for exact match
+                    try
+                    {
+                        var thumb = Application.Current?.MainWindow?.FindResource("CompactScrollThumbStyle") as Style;
+                        if (thumb != null)
+                        {
+                            LogsTextBox.Resources.Add(typeof(Thumb), thumb);
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
             _timer = new DispatcherTimer(TimeSpan.FromMilliseconds(500), DispatcherPriority.Background, (s, e) => LoadLogs(), Dispatcher.CurrentDispatcher);
             _timer.Start();
             LoadLogs();
@@ -29,9 +52,12 @@ namespace FedTrader
                 // quick check to avoid unnecessary UI updates
                 if (text.Length != _lastLength)
                 {
-                    LogsTextBox.Text = text;
-                    LogsTextBox.CaretIndex = LogsTextBox.Text.Length;
-                    LogsTextBox.ScrollToEnd();
+                    if (LogsTextBox != null)
+                    {
+                        LogsTextBox.Text = text;
+                        LogsTextBox.CaretIndex = LogsTextBox.Text.Length;
+                        LogsTextBox.ScrollToEnd();
+                    }
                     _lastLength = text.Length;
                 }
             }

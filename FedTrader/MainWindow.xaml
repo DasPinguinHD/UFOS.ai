@@ -41,6 +41,87 @@
                         </Setter.Value>
                     </Setter>
                 </Style>
+                <!-- Compact thumb style used by transcript scrollbar (copied into reusable resource) -->
+                <Style x:Key="CompactScrollThumbStyle" TargetType="Thumb">
+                    <Setter Property="Background" Value="#FF4A4A4A" />
+                    <Setter Property="MinHeight" Value="28" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Thumb">
+                                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" RenderTransformOrigin="0.5,0.5">
+                                    <Border.RenderTransform>
+                                        <ScaleTransform ScaleX="1" ScaleY="1" />
+                                    </Border.RenderTransform>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsDragging" Value="True">
+                                        <Setter TargetName="bd" Property="Background" Value="#FF888888" />
+                                        <Trigger.EnterActions>
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.08" />
+                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.08" />
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </Trigger.EnterActions>
+                                        <Trigger.ExitActions>
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.12" />
+                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.12" />
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </Trigger.ExitActions>
+                                    </Trigger>
+                                    <Trigger Property="IsMouseCaptured" Value="True">
+                                        <Setter TargetName="bd" Property="Background" Value="#FF888888" />
+                                        <Trigger.EnterActions>
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.06" />
+                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.06" />
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </Trigger.EnterActions>
+                                        <Trigger.ExitActions>
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.10" />
+                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.10" />
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </Trigger.ExitActions>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+                <!-- Compact scrollbar style to reuse in other windows -->
+                <Style x:Key="CompactScrollBarStyle" TargetType="ScrollBar">
+                    <Setter Property="Width" Value="8" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ScrollBar">
+                                <Grid Background="Transparent">
+                                    <Border Margin="2,0,2,0" Background="#FF242424" CornerRadius="4"/>
+                                    <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                        <Track.DecreaseRepeatButton>
+                                            <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" IsHitTestVisible="False"/>
+                                        </Track.DecreaseRepeatButton>
+                                        <Track.Thumb>
+                                            <Thumb Style="{StaticResource CompactScrollThumbStyle}" />
+                                        </Track.Thumb>
+                                        <Track.IncreaseRepeatButton>
+                                            <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" IsHitTestVisible="False"/>
+                                        </Track.IncreaseRepeatButton>
+                                    </Track>
+                                </Grid>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
             </Grid.Resources>
             <Grid.RowDefinitions>
                 <RowDefinition Height="18" />
@@ -73,25 +154,38 @@
 
             <Grid Grid.Row="1" Background="#141414" Margin="0">
 
-                <!-- Market data rows: bound list for consistent rendering -->
-                <ItemsControl x:Name="TickersItems" HorizontalAlignment="Left" Margin="25,226,0,0" VerticalAlignment="Top">
+                <!-- Market data rows: compact, wrapped layout (1-2 tickers per line) -->
+                <!-- Adjusted size to avoid overlap with header and transcript: aligned vertically with transcript box -->
+                <ItemsControl x:Name="TickersItems" HorizontalAlignment="Left" Margin="25,226,0,0" VerticalAlignment="Top" Width="450" MaxHeight="250">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <StackPanel />
+                            <!-- Use a two-column grid so each row contains 1 or 2 tickers and no items are clipped -->
+                            <UniformGrid Columns="2" />
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Grid Margin="0,0,0,24">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="100" />
-                                    <ColumnDefinition Width="180" />
-                                    <ColumnDefinition Width="24" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="{Binding Name}" Grid.Column="0" VerticalAlignment="Center" Foreground="White"/>
-                                <TextBlock Text="{Binding Value}" Grid.Column="1" VerticalAlignment="Center" Foreground="White"/>
-                                <TextBlock Text="{Binding Tendency}" Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="#FFBFBFBF"/>
-                            </Grid>
+                            <Border Background="#101010" CornerRadius="6" Padding="6" Margin="0,0,8,8" BorderBrush="#202020" BorderThickness="1" MinWidth="216" MinHeight="28">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="48" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Name}" Grid.Column="0" VerticalAlignment="Center" Foreground="White" FontSize="12" FontWeight="SemiBold"/>
+                                    <StackPanel Orientation="Horizontal" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center" MinWidth="92">
+                                        <TextBlock Text="{Binding Value}" Foreground="White" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                        <TextBlock Text="{Binding Change}" Foreground="#FFBFBFBF" FontSize="11" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <Grid Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                        <Polygon Points="6,0 12,12 0,12" Fill="{Binding TrendColor}" Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                            <Polygon.RenderTransform>
+                                                <RotateTransform Angle="{Binding TrendRotation}" />
+                                            </Polygon.RenderTransform>
+                                        </Polygon>
+                                    </Grid>
+                                </Grid>
+                            </Border>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
@@ -110,77 +204,105 @@
                     </StackPanel>
                 </StackPanel>
                 <Grid x:Name="TranscriptGrid" HorizontalAlignment="Left" Margin="479,226,0,0" VerticalAlignment="Top" Width="300" Height="200" MouseEnter="TranscriptGrid_MouseEnter" MouseLeave="TranscriptGrid_MouseLeave">
-                    <Border Background="#FF1B1B1B" CornerRadius="6" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="23*"/>
+                        <ColumnDefinition Width="278*"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Background="#FF1B1B1B" CornerRadius="6" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="6" Grid.ColumnSpan="2">
+                        <Border.Resources>
+                            <Style x:Key="TranscriptThumbStyle" TargetType="Thumb">
+                                <Setter Property="Background" Value="#FF4A4A4A" />
+                                <Setter Property="MinHeight" Value="28" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" RenderTransformOrigin="0.5,0.5">
+                                                <Border.RenderTransform>
+                                                    <ScaleTransform ScaleX="1" ScaleY="1" />
+                                                </Border.RenderTransform>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsDragging" Value="True">
+                                                    <Setter TargetName="bd" Property="Background" Value="#FF888888" />
+                                                    <Trigger.EnterActions>
+                                                        <BeginStoryboard>
+                                                            <Storyboard>
+                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.08" />
+                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.08" />
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </Trigger.EnterActions>
+                                                    <Trigger.ExitActions>
+                                                        <BeginStoryboard>
+                                                            <Storyboard>
+                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.12" />
+                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.12" />
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </Trigger.ExitActions>
+                                                </Trigger>
+                                                <Trigger Property="IsMouseCaptured" Value="True">
+                                                    <Setter TargetName="bd" Property="Background" Value="#FF888888" />
+                                                    <Trigger.EnterActions>
+                                                        <BeginStoryboard>
+                                                            <Storyboard>
+                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.06" />
+                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.06" />
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </Trigger.EnterActions>
+                                                    <Trigger.ExitActions>
+                                                        <BeginStoryboard>
+                                                            <Storyboard>
+                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.10" />
+                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.10" />
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </Trigger.ExitActions>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                            <Style x:Key="TranscriptScrollBarStyle" TargetType="ScrollBar">
+                                <Setter Property="Width" Value="8" />
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ScrollBar">
+                                            <Grid Background="Transparent">
+                                                <Border Margin="2,0,2,0" Background="#FF242424" CornerRadius="4"/>
+                                                <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                                    <Track.DecreaseRepeatButton>
+                                                        <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" IsHitTestVisible="False"/>
+                                                    </Track.DecreaseRepeatButton>
+                                                    <Track.Thumb>
+                                                        <Thumb Style="{StaticResource TranscriptThumbStyle}" />
+                                                    </Track.Thumb>
+                                                    <Track.IncreaseRepeatButton>
+                                                        <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" IsHitTestVisible="False"/>
+                                                    </Track.IncreaseRepeatButton>
+                                                </Track>
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </Border.Resources>
                         <TextBox x:Name="TranscriptTextBox" TextWrapping="Wrap" Text="Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: " VerticalAlignment="Stretch" Background="Transparent" Foreground="#FFF5F5F5" BorderThickness="0" CaretBrush="#FFF5F5F5" VerticalScrollBarVisibility="Auto" AcceptsReturn="True" TextChanged="TextBox_TextChanged">
                             <TextBox.Resources>
-                                <Style TargetType="Thumb">
-                                    <Setter Property="Background" Value="#FF4A4A4A" />
-                                    <Setter Property="MinHeight" Value="28" />
-                                    <Setter Property="Template">
-                                        <Setter.Value>
-                                            <ControlTemplate TargetType="Thumb">
-                                                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" RenderTransformOrigin="0.5,0.5">
-                                                    <Border.RenderTransform>
-                                                        <ScaleTransform ScaleX="1" ScaleY="1" />
-                                                    </Border.RenderTransform>
-                                                </Border>
-                                                <ControlTemplate.Triggers>
-                                                    <Trigger Property="IsDragging" Value="True">
-                                                        <Setter TargetName="bd" Property="Background" Value="#FF888888" />
-                                                        <Trigger.EnterActions>
-                                                            <BeginStoryboard>
-                                                                <Storyboard>
-                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.08" />
-                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.08" />
-                                                                </Storyboard>
-                                                            </BeginStoryboard>
-                                                        </Trigger.EnterActions>
-                                                        <Trigger.ExitActions>
-                                                            <BeginStoryboard>
-                                                                <Storyboard>
-                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.12" />
-                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.12" />
-                                                                </Storyboard>
-                                                            </BeginStoryboard>
-                                                        </Trigger.ExitActions>
-                                                    </Trigger>
-                                                </ControlTemplate.Triggers>
-                                            </ControlTemplate>
-                                        </Setter.Value>
-                                    </Setter>
-                                </Style>
-                                <Style TargetType="ScrollBar">
-                                    <Setter Property="Width" Value="8" />
-                                    <Setter Property="Background" Value="Transparent" />
-                                    <Setter Property="Template">
-                                        <Setter.Value>
-                                            <ControlTemplate TargetType="ScrollBar">
-                                                <Grid Background="Transparent">
-                                                    <Border Margin="2,0,2,0" Background="#FF242424" CornerRadius="4"/>
-                                                    <Track x:Name="PART_Track" IsDirectionReversed="True">
-                                                        <Track.DecreaseRepeatButton>
-                                                            <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" IsHitTestVisible="False"/>
-                                                        </Track.DecreaseRepeatButton>
-                                                        <Track.Thumb>
-                                                            <Thumb />
-                                                        </Track.Thumb>
-                                                        <Track.IncreaseRepeatButton>
-                                                            <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" IsHitTestVisible="False"/>
-                                                        </Track.IncreaseRepeatButton>
-                                                    </Track>
-                                                </Grid>
-                                            </ControlTemplate>
-                                        </Setter.Value>
-                                    </Setter>
-                                </Style>
+                                <Style TargetType="ScrollBar" BasedOn="{StaticResource TranscriptScrollBarStyle}" />
+                                <Style TargetType="Thumb" BasedOn="{StaticResource TranscriptThumbStyle}" />
                             </TextBox.Resources>
                         </TextBox>
                     </Border>
-                    <Rectangle x:Name="TranscriptFadeRect" IsHitTestVisible="False" VerticalAlignment="Bottom" Height="28" Opacity="1">
+                    <Rectangle x:Name="TranscriptFadeRect" IsHitTestVisible="False" VerticalAlignment="Top" Height="28" Opacity="1" Grid.ColumnSpan="2">
                         <Rectangle.Fill>
+                            <!-- solid at top, fade downwards to transparent -->
                             <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                <GradientStop Color="#00141414" Offset="0" />
-                                <GradientStop Color="#FF141414" Offset="1" />
+                                <GradientStop Color="#FF141414" Offset="0" />
+                                <GradientStop Color="#00141414" Offset="1" />
                             </LinearGradientBrush>
                         </Rectangle.Fill>
                     </Rectangle>
@@ -205,15 +327,12 @@
                     <!-- Circular ring: background + foreground arc -->
                     <Grid Grid.Column="0">
                         <Ellipse Width="80" Height="80" Stroke="#FFAAAAAA" StrokeThickness="10"/>
-                        <Ellipse x:Name="RingForeground" Width="80" Height="80" Stroke="Green" StrokeThickness="10" StrokeDashArray="0,100" StrokeStartLineCap="Round" StrokeEndLineCap="Round" RenderTransformOrigin="0.5,0.5">
-                            <Ellipse.RenderTransform>
-                                <RotateTransform Angle="-90" />
-                            </Ellipse.RenderTransform>
-                        </Ellipse>
-                        <!-- inner circle to appear gräulich -->
-                        <Ellipse Width="50" Height="50" Fill="#FFEEEEEE" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        <!-- confidence below ring -->
-                        <TextBlock x:Name="ConfidenceTextBlock" Text="0/100" HorizontalAlignment="Center" Margin="0,90,0,0" Foreground="#FFBFBFBF" />
+                        <!-- Foreground arc rendered as a Path so we draw an exact arc for the percent -->
+                        <Path x:Name="RingArc" Width="80" Height="80" Stroke="Green" StrokeThickness="10" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent" Visibility="Visible" />
+                        <!-- inner circle: dark background -->
+                        <Ellipse Width="50" Height="50" Fill="#FF2B2B2B" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <!-- confidence number centered inside inner circle -->
+                        <TextBlock x:Name="ConfidenceCenterText" Text="0%" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center" FontSize="20" FontWeight="Bold" Foreground="#FFFFFFFF" />
                     </Grid>
 
                     <!-- spacer -->
@@ -224,6 +343,7 @@
                         <TextBlock x:Name="ReasonTextBlock" Text="[REASON]" TextWrapping="Wrap" Foreground="#FFBFBFBF" Margin="0,6,0,0"/>
                     </StackPanel>
                 </Grid>
+                <TextBlock x:Name="LiveTranscriptLabel_Kopieren" Text="Text may contain gaps: This is due to the algorithm compensating slow API calls." HorizontalAlignment="Left" Margin="479,0,0,0" VerticalAlignment="Center" FontSize="8" FontStyle="Italic" Foreground="#FFBFBFBF"/>
 
                 <!-- Verdict history removed to avoid overlap; confidence history moved under Session Data -->
 
