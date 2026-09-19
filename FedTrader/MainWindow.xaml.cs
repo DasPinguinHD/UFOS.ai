@@ -115,8 +115,8 @@ namespace FedTrader
         {
             try
             {
-                PrevVerdictButton.IsEnabled = _verdictHistoryIndex > 0;
-                NextVerdictButton.IsEnabled = _verdictHistoryIndex < _verdictHistory.Count - 1;
+                PrevVerdictButton.Visibility = _verdictHistoryIndex > 0 ? Visibility.Visible : Visibility.Hidden;
+                NextVerdictButton.Visibility = _verdictHistoryIndex < _verdictHistory.Count - 1 ? Visibility.Visible : Visibility.Hidden;
             }
             catch { }
         }
@@ -921,10 +921,27 @@ namespace FedTrader
         private void RenderVerdict(string verdict, string ticker, int confidence, string? reason, DateTime? historyTimestamp)
         {
             var text = string.IsNullOrWhiteSpace(ticker) ? verdict : $"{verdict} {ticker}";
-            // Do not include percentage in the verdict text; show confidence as ring fill and centered number
+            // Do not include percentage in the verdict text; show confidence as ring fill and centered number.
+            // Keep the heading format/position constant regardless of current vs. older verdict; the
+            // timestamp for older verdicts is shown separately in VerdictDateTextBlock.
             VerdictTextBlock.Text = historyTimestamp.HasValue
-                ? $"Older Verdict from {historyTimestamp.Value:yyyy-MM-dd HH:mm:ss}: {text}"
+                ? $"Older Verdict: {text}"
                 : $"Current Verdict: {text}";
+
+            try
+            {
+                if (historyTimestamp.HasValue)
+                {
+                    VerdictDateTextBlock.Text = $"from {historyTimestamp.Value:yyyy-MM-dd HH:mm:ss}";
+                    VerdictDateTextBlock.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    VerdictDateTextBlock.Text = string.Empty;
+                    VerdictDateTextBlock.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch { }
 
             if (reason != null)
             {
