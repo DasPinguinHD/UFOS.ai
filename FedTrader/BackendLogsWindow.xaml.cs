@@ -3,6 +3,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
+using Microsoft.Win32;
+using System.Text;
+using System.IO;
 
 namespace FedTrader
 {
@@ -42,6 +45,15 @@ namespace FedTrader
             _timer.Start();
             LoadLogs();
             this.Closed += (_, __) => { try { _timer.Stop(); } catch { } };
+            // Close on Escape key
+            this.PreviewKeyDown += (s, e) =>
+            {
+                try
+                {
+                    if (e.Key == System.Windows.Input.Key.Escape) this.Close();
+                }
+                catch { }
+            };
         }
 
         private void LoadLogs()
@@ -67,6 +79,32 @@ namespace FedTrader
         private void Refresh_Click(object sender, RoutedEventArgs e)
         {
             LoadLogs();
+        }
+
+        private void Save_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var dlg = new SaveFileDialog()
+                {
+                    Title = "Save Backend Log",
+                    Filter = "Log files (*.log)|*.log|Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                    FileName = $"backend-log-{DateTime.Now:yyyy-MM-dd_HHmmss}.log",
+                    DefaultExt = ".log",
+                    AddExtension = true
+                };
+                var res = dlg.ShowDialog(this);
+                if (res == true)
+                {
+                    var text = _getLogs() ?? string.Empty;
+                    // write with UTF8 without BOM to be safe
+                    File.WriteAllText(dlg.FileName, text, Encoding.UTF8);
+                }
+            }
+            catch (Exception ex)
+            {
+                try { MessageBox.Show(this, "Failed to save log: " + ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error); } catch { }
+            }
         }
 
         private void Close_Click(object sender, RoutedEventArgs e)

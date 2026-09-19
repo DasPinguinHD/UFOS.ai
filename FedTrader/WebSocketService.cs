@@ -4,6 +4,7 @@ using System.IO;
 using System.Net.WebSockets;
 using System.Text;
 using System.Net.NetworkInformation;
+using System.Net.Http;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -71,6 +72,30 @@ namespace FedTrader
                 attempt++;
                 try
                 {
+                    // Quick health-check to avoid futile TCP connect attempts when backend has died.
+                    try
+                    {
+                        using var hc = new HttpClient();
+                        hc.Timeout = TimeSpan.FromSeconds(2);
+                        var hresp = await hc.GetAsync("http://127.0.0.1:8766/health", ct).ConfigureAwait(false);
+                        if (!hresp.IsSuccessStatusCode)
+                        {
+                            EmitRaw($"[WS HEALTH] backend unhealthy, status={hresp.StatusCode}");
+                            try { await Task.Delay(delay, ct).ConfigureAwait(false); } catch { }
+                            delay = TimeSpan.FromSeconds(Math.Min(30, delay.TotalSeconds * 2));
+                            continue;
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception he)
+                    {
+                        // health endpoint not reachable — skip connect attempt and retry after backoff
+                        EmitRaw($"[WS HEALTH ERR] {he.GetType().Name}: {he.Message}");
+                        try { await Task.Delay(delay, ct).ConfigureAwait(false); } catch { }
+                        delay = TimeSpan.FromSeconds(Math.Min(30, delay.TotalSeconds * 2));
+                        continue;
+                    }
+
                     // Ensure we use a fresh ClientWebSocket for each connect attempt.
                     try { _ws?.Dispose(); } catch { }
                     _ws = new ClientWebSocket();

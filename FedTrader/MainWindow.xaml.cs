@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using Microsoft.Win32;
 using System.Windows.Controls;
 using System.Windows.Markup;
 using System.Windows.Data;
@@ -47,6 +48,195 @@ namespace FedTrader
             public double TrendRotation { get; set; } = 90.0;
         }
 
+        // Add a verdict to the in-memory history (newest first)
+        public void AddVerdictToHistory(string verdict, string ticker, int confidence, string reason)
+        {
+            try
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    var rec = new VerdictRecord
+                    {
+                        Timestamp = DateTime.Now,
+                        Verdict = verdict ?? string.Empty,
+                        Ticker = ticker ?? string.Empty,
+                        Confidence = Math.Max(0, Math.Min(100, confidence)),
+                        Reason = reason ?? string.Empty
+                    };
+                    _verdictHistory.Insert(0, rec);
+                    // cap history to reasonable size
+                    while (_verdictHistory.Count > 500) _verdictHistory.RemoveAt(_verdictHistory.Count - 1);
+                });
+            }
+            catch { }
+        }
+
+        private void HistoryButton_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Window? win = null;
+                win = new Window
+                {
+                    Title = "Verdict History",
+                    Width = 700,
+                    Height = 420,
+                    Owner = this,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                    WindowStyle = WindowStyle.None,
+                    AllowsTransparency = true,
+                    Background = Brushes.Transparent
+                };
+
+                var outer = new Border
+                {
+                    Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(0),
+                    SnapsToDevicePixels = true
+                };
+
+                var root = new Grid { Margin = new Thickness(0) };
+                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(18) });
+                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+                var titleBar = new Border { Background = Brushes.Black, CornerRadius = new CornerRadius(8, 8, 0, 0), Height = 18 };
+                titleBar.MouseLeftButtonDown += (s, ev) => { try { if (ev.ButtonState == MouseButtonState.Pressed) win.DragMove(); } catch { } };
+
+                var tbGrid = new Grid();
+                tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                var titleText = new TextBlock { Text = "Verdict History", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), FontSize = 12, FontWeight = FontWeights.SemiBold };
+                Grid.SetColumn(titleText, 0);
+                tbGrid.Children.Add(titleText);
+
+                var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+
+                var roundStyleObj = TryFindResource("RoundButtonStyle");
+                Style roundStyle = roundStyleObj as Style;
+                if (roundStyle == null)
+                {
+                    var template = new ControlTemplate(typeof(Button));
+                    var borderFactory = new FrameworkElementFactory(typeof(Border));
+                    borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(999));
+                    borderFactory.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
+                    borderFactory.SetBinding(Border.WidthProperty, new System.Windows.Data.Binding("Width") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
+                    borderFactory.SetBinding(Border.HeightProperty, new System.Windows.Data.Binding("Height") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
+                    var contentPresenterFactory = new FrameworkElementFactory(typeof(ContentPresenter));
+                    contentPresenterFactory.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                    contentPresenterFactory.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+                    borderFactory.AppendChild(contentPresenterFactory);
+                    template.VisualTree = borderFactory;
+
+                    var style = new Style(typeof(Button));
+                    style.Setters.Add(new Setter(Button.WidthProperty, 14.0));
+                    style.Setters.Add(new Setter(Button.HeightProperty, 14.0));
+                    style.Setters.Add(new Setter(Button.PaddingProperty, new Thickness(0)));
+                    style.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(0)));
+                    style.Setters.Add(new Setter(Button.BackgroundProperty, Brushes.Transparent));
+                    style.Setters.Add(new Setter(Button.TemplateProperty, template));
+
+                    roundStyle = style;
+                }
+
+                var minimizeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6, 0, 0, 0) };
+                if (roundStyle != null) minimizeBtn.Style = roundStyle;
+                try { minimizeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0xB4, 0x00)); } catch { minimizeBtn.Background = Brushes.Gold; }
+                minimizeBtn.Click += (s, ev) => { try { win.WindowState = WindowState.Minimized; } catch { } };
+                minimizeBtn.Content = new TextBlock { Text = "—", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+
+                var closeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6, 0, 0, 0) };
+                if (roundStyle != null) closeBtn.Style = roundStyle;
+                try { closeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0x6A, 0x5A)); } catch { closeBtn.Background = Brushes.IndianRed; }
+                closeBtn.Click += (s, ev) => { try { win.Close(); } catch { } };
+                closeBtn.Content = new TextBlock { Text = "✕", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+
+                btnPanel.Children.Add(minimizeBtn);
+                btnPanel.Children.Add(closeBtn);
+                Grid.SetColumn(btnPanel, 1);
+                tbGrid.Children.Add(btnPanel);
+
+                titleBar.Child = tbGrid;
+                Grid.SetRow(titleBar, 0);
+                root.Children.Add(titleBar);
+
+                // content area
+                var contentGrid = new Grid { Margin = new Thickness(8) };
+                Grid.SetRow(contentGrid, 1);
+
+                var contentBorder = new Border { Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)), CornerRadius = new CornerRadius(6), Padding = new Thickness(8) };
+                var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+                var contentStack = new StackPanel { Orientation = Orientation.Vertical };
+                scroll.Content = contentStack;
+                contentBorder.Child = scroll;
+                contentGrid.Children.Add(contentBorder);
+
+                root.Children.Add(contentGrid);
+                outer.Child = root;
+                win.Content = outer;
+
+                // populate function
+                Action populate = () =>
+                {
+                    try
+                    {
+                        contentStack.Children.Clear();
+                        foreach (var rec in _verdictHistory)
+                        {
+                            var itemBorder = new Border { Padding = new Thickness(8), Margin = new Thickness(0, 0, 0, 8) };
+                            var g = new Grid();
+                            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
+                            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                            var left = new Grid { Width = 64, Height = 64, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                            try
+                            {
+                                // simple fallback visual: outer ring, inner circle and percent text
+                                var outerEllipse = new System.Windows.Shapes.Ellipse { Width = 64, Height = 64, StrokeThickness = 6, Stroke = rec.StrokeBrush ?? Brushes.Gray };
+                                var innerEllipse = new System.Windows.Shapes.Ellipse { Width = 40, Height = 40, Fill = new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2B)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                                var percentText = new TextBlock { Text = (rec.Confidence.ToString() + "%"), Foreground = Brushes.White, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, FontSize = 16 };
+                                left.Children.Add(outerEllipse);
+                                left.Children.Add(innerEllipse);
+                                left.Children.Add(percentText);
+                            }
+                            catch { }
+                            Grid.SetColumn(left, 0);
+                            g.Children.Add(left);
+
+                            var right = new StackPanel { Margin = new Thickness(12, 0, 0, 0) };
+                            var header = new TextBlock { Text = rec.HeaderText, Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 14, TextWrapping = TextWrapping.Wrap };
+                            var reason = new TextBlock { Text = rec.Reason, Foreground = new SolidColorBrush(Color.FromRgb(0xBF, 0xBF, 0xBF)), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
+                            right.Children.Add(header);
+                            right.Children.Add(reason);
+                            Grid.SetColumn(right, 1);
+                            g.Children.Add(right);
+
+                            itemBorder.Child = g;
+                            contentStack.Children.Add(itemBorder);
+                        }
+                    }
+                    catch { }
+                };
+
+                // initial populate
+                populate();
+
+                var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                timer.Tick += (s, ev) => populate();
+                win.Closed += (s, ev) => timer.Stop();
+                // Close with Escape key for dynamic Verdict History window
+                win.PreviewKeyDown += (s, e) => { try { if (e.Key == System.Windows.Input.Key.Escape) win.Close(); } catch { } };
+                timer.Start();
+
+                win.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                try { (Application.Current as App)?.ShowUiException(new Exception("Fehler beim Öffnen der Verdict-History: " + ex.Message)); } catch { }
+            }
+        }
+
         private void ShowLogs_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -56,7 +246,7 @@ namespace FedTrader
             }
             catch (Exception ex)
             {
-                try { MessageBox.Show(this, "Fehler beim Öffnen der Logs: " + ex.Message, "Fehler", MessageBoxButton.OK, MessageBoxImage.Error); } catch { }
+                try { (Application.Current as App)?.ShowUiException(new Exception("Fehler beim Öffnen der Logs: " + ex.Message)); } catch { }
             }
         }
 
@@ -81,6 +271,8 @@ namespace FedTrader
         private bool _transcriptReceived = false;
         private readonly System.Text.StringBuilder _backendLogBuffer = new();
         private const int BackendLogBufferLimit = 1_048_576; // ~1 MB chars
+        // verdict history (newest first)
+        private readonly System.Collections.ObjectModel.ObservableCollection<VerdictRecord> _verdictHistory = new();
         public MainWindow()
         {
             InitializeComponent();
@@ -92,6 +284,40 @@ namespace FedTrader
             UpdateReason("[REASON]");
             // create a simple temp debug file marker so we can detect if UI code runs
             try { DebugLogger.Log("[UI] MainWindow ctor"); } catch { }
+            // wire history button if present
+            try { HistoryButton.Click += HistoryButton_Click; } catch { }
+            // expose a simple public wrapper for showing logs and saving logs for global error dialog
+            try { /* noop - methods exist below */ } catch { }
+        }
+
+        // Public wrapper so App can open the backend log window
+        public void ShowBackendLogsWindow()
+        {
+            try { OpenBackendLogButton_Click(this, null); } catch { }
+        }
+
+        // Public wrapper to trigger save of current backend log buffer via SaveFileDialog
+        public void TriggerSaveBackendLog()
+        {
+            try
+            {
+                var dlg = new Microsoft.Win32.SaveFileDialog()
+                {
+                    Title = "Save Backend Log",
+                    Filter = "Log files (*.log)|*.log|Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                    FileName = $"backend-log-{DateTime.Now:yyyy-MM-dd_HHmmss}.log",
+                    DefaultExt = ".log",
+                    AddExtension = true
+                };
+                var res = dlg.ShowDialog(this);
+                if (res == true)
+                {
+                    var text = string.Empty;
+                    try { lock (_backendLogBuffer) { text = _backendLogBuffer.ToString(); } } catch { }
+                    System.IO.File.WriteAllText(dlg.FileName, text, System.Text.Encoding.UTF8);
+                }
+            }
+            catch { }
         }
 
         // Render a compact list of tickers from MarketUpdateMessage.
@@ -155,7 +381,12 @@ namespace FedTrader
                 _wsService.OnTicker += msg => Dispatcher.Invoke(() => UpdateTicker(msg.Index == 0 ? 1 : msg.Index, msg.Name, msg.Value, msg.Tendency));
                 _wsService.OnMarketUpdate += mu => Dispatcher.Invoke(() => RenderMarketUpdate(mu));
                 _wsService.OnConfidence += v => Dispatcher.Invoke(() => { AddConfidenceSample(v); UpdateConfidence(v); });
-                _wsService.OnVerdict += vm => Dispatcher.Invoke(() => { UpdateVerdict(vm.Verdict, vm.Ticker, vm.Confidence); UpdateReason(vm.Reason); if (vm.Confidence != 0) AddConfidenceSample(vm.Confidence); });
+                _wsService.OnVerdict += vm => Dispatcher.Invoke(() => {
+                    UpdateVerdict(vm.Verdict, vm.Ticker, vm.Confidence);
+                    UpdateReason(vm.Reason);
+                    if (vm.Confidence != 0) AddConfidenceSample(vm.Confidence);
+                    try { AddVerdictToHistory(vm.Verdict, vm.Ticker, vm.Confidence, vm.Reason); } catch { }
+                });
                 _wsService.OnTranscript += t => {
                     // log raw transcript arrival for debugging
                     try { DebugLogger.Log("[UI] OnTranscript raw: " + (t ?? string.Empty).Replace("\n", "\\n")); } catch { }
@@ -195,7 +426,7 @@ namespace FedTrader
                         if (string.IsNullOrEmpty(raw)) return;
                         if (raw.Contains("WS CONNECT ERROR") || raw.Contains("WS RECEIVE ERROR") || raw.Contains("CONNECT ERROR"))
                         {
-                            try { Dispatcher.Invoke(() => MessageBox.Show(this, "WebSocket error:\n" + raw, "WebSocket Error", MessageBoxButton.OK, MessageBoxImage.Error)); } catch { }
+                            try { Dispatcher.Invoke(() => (Application.Current as App)?.ShowUiException(new Exception("WebSocket error:\n" + raw))); } catch { }
                         }
                     }
                     catch { }
@@ -221,7 +452,7 @@ namespace FedTrader
                 }
                 catch { }
                 try { UpdateConnectionStatus("Error"); } catch { }
-                try { MessageBox.Show(this, "Fehler beim Starten der Verbindung:\n" + ex.ToString(), "Fehler", MessageBoxButton.OK, MessageBoxImage.Error); } catch { }
+                try { (Application.Current as App)?.ShowUiException(new Exception("Fehler beim Starten der Verbindung:\n" + ex.ToString())); } catch { }
             }
         }
 
@@ -428,12 +659,25 @@ namespace FedTrader
                 if (_backendProcess == null) return;
                 if (!_backendProcess.HasExited)
                 {
+                    try { lock (_backendLogBuffer) { _backendLogBuffer.AppendLine($"[BACKEND] Attempting to kill backend process PID {_backendProcess.Id}"); } } catch { }
                     try { _backendProcess.Kill(true); } catch { }
                 }
                 _backendProcess.Dispose();
                 _backendProcess = null;
             }
             catch { }
+        }
+
+        private void RestartButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                TryStartBackendHelper();
+            }
+            catch (Exception ex)
+            {
+                try { (Application.Current as App)?.ShowUiException(new Exception("Failed to start backend: " + ex.Message)); } catch { }
+            }
         }
 
         private async Task<bool> WaitForBackendHealthAsync(TimeSpan timeout)
@@ -532,6 +776,34 @@ namespace FedTrader
                     roundStyle = style;
                 }
 
+                // save button (small blue) placed before minimize/close
+                var saveBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6,-2,0,0), VerticalAlignment = VerticalAlignment.Center };
+                if (roundStyle != null) saveBtn.Style = roundStyle;
+                try { saveBtn.Background = new SolidColorBrush(Color.FromRgb(0x00, 0x7A, 0xFF)); } catch { saveBtn.Background = Brushes.DodgerBlue; }
+                saveBtn.ToolTip = "Save log";
+                saveBtn.Click += (s, ev) => {
+                    try
+                    {
+                        var dlg = new SaveFileDialog()
+                        {
+                            Title = "Save Backend Log",
+                            Filter = "Log files (*.log)|*.log|Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                            FileName = $"backend-log-{DateTime.Now:yyyy-MM-dd_HHmmss}.log",
+                            DefaultExt = ".log",
+                            AddExtension = true
+                        };
+                        var res = dlg.ShowDialog(this);
+                        if (res == true)
+                        {
+                            var text = string.Empty;
+                            try { lock (_backendLogBuffer) { text = _backendLogBuffer.ToString(); } } catch { }
+                            System.IO.File.WriteAllText(dlg.FileName, text, System.Text.Encoding.UTF8);
+                        }
+                    }
+                    catch { }
+                };
+                saveBtn.Content = new TextBlock { Text = "💾", Foreground = Brushes.White, FontSize = 8.1, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+
                 var minimizeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6,0,0,0) };
                 if (roundStyle != null) minimizeBtn.Style = roundStyle;
                 // match MainWindow exact amber background color
@@ -548,6 +820,7 @@ namespace FedTrader
                 var closeTxt = new TextBlock { Text = "✕", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                 closeBtn.Content = closeTxt;
 
+                btnPanel.Children.Add(saveBtn);
                 btnPanel.Children.Add(minimizeBtn);
                 btnPanel.Children.Add(closeBtn);
                 Grid.SetColumn(btnPanel, 1);
@@ -624,10 +897,12 @@ namespace FedTrader
                     tb.Text = _backendLogBuffer.ToString();
                 }
 
-                // update periodically while open
+                // update periodically while open (refresh view)
                 var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
                 timer.Tick += (s, ev) => { lock (_backendLogBuffer) { tb.Text = _backendLogBuffer.ToString(); tb.CaretIndex = tb.Text.Length; tb.ScrollToEnd(); } };
                 win.Closed += (s, ev) => timer.Stop();
+                // Close on Escape key when this dynamic window is focused
+                win.PreviewKeyDown += (s, e) => { try { if (e.Key == System.Windows.Input.Key.Escape) win.Close(); } catch { } };
                 timer.Start();
 
                 win.ShowDialog();
@@ -643,7 +918,7 @@ namespace FedTrader
                         if (overflow > 0) _backendLogBuffer.Remove(0, overflow);
                     }
                 }
-                try { MessageBox.Show(this, $"Failed to open backend log window.\n\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error); } catch { }
+                try { (Application.Current as App)?.ShowUiException(new Exception($"Failed to open backend log window.\n\n{ex.Message}")); } catch { }
                 try { win?.Close(); } catch { }
             }
         }
@@ -688,6 +963,19 @@ namespace FedTrader
                 ConnectionIndicator.Fill = color;
                 ConnectionStatusText.Text = text;
                 ConnectionLastText.Text = $"last: {DateTime.Now:HH:mm:ss}";
+                try
+                {
+                    // Show Restart button when status indicates error
+                    if (s.Contains("ERROR"))
+                    {
+                        try { RestartButton.Visibility = Visibility.Visible; } catch { }
+                    }
+                    else
+                    {
+                        try { RestartButton.Visibility = Visibility.Collapsed; } catch { }
+                    }
+                }
+                catch { }
             });
         }
 

@@ -122,21 +122,56 @@ async def main() -> None:
     await health_site.start()
     logger.info("Health endpoint listening on http://127.0.0.1:8766/health")
 
+    # Set a loop-level exception handler so unhandled exceptions are logged instead of silently killing the process.
+    loop = asyncio.get_event_loop()
+    def _handle_loop_exception(loop, context):
+        try:
+            logger.exception("Unhandled exception in event loop: %s", context.get("message"))
+        except Exception:
+            pass
+    try:
+        loop.set_exception_handler(_handle_loop_exception)
+    except Exception:
+        pass
+
+    async def _supervise(coro_factory, name: str):
+        """Run a coroutine factory repeatedly; on exception log and restart after short delay."""
+        while True:
+            try:
+                logger.info("Starting supervised task: %s", name)
+                await coro_factory()
+                # if the coroutine returns normally, break out
+                logger.info("Supervised task %s returned normally", name)
+                break
+            except asyncio.CancelledError:
+                logger.info("Supervised task %s cancelled", name)
+                break
+            except Exception as ex:
+                logger.exception("Supervised task %s crashed: %s", name, ex)
+                try:
+                    log_event("task_crash", {"task": name, "error": str(ex)})
+                except Exception:
+                    pass
+                # small backoff before restart
+                try:
+                    await asyncio.sleep(2)
+                except asyncio.CancelledError:
+                    break
+
     tasks = [
-        asyncio.create_task(market_feed.run(), name="market_data"),
-        asyncio.create_task(_run_market_broadcast(market_feed, broadcaster), name="market_broadcast"),
-        asyncio.create_task(_run_transcription(transcript_queue), name="transcription"),
-        asyncio.create_task(
-            _run_analysis_loop(transcript_queue, market_feed, analyst, broadcaster), name="analysis"
-        ),
-        asyncio.create_task(_run_verdict_loop(analyst, market_feed, broadcaster), name="verdict_loop"),
+        asyncio.create_task(_supervise(market_feed.run, "market_data")),
+        asyncio.create_task(_supervise(lambda: _run_market_broadcast(market_feed, broadcaster), "market_broadcast")),
+        asyncio.create_task(_supervise(lambda: _run_transcription(transcript_queue), "transcription")),
+        asyncio.create_task(_supervise(lambda: _run_analysis_loop(transcript_queue, market_feed, analyst, broadcaster), "analysis")),
+        asyncio.create_task(_supervise(lambda: _run_verdict_loop(analyst, market_feed, broadcaster), "verdict_loop")),
     ]
 
     try:
         await asyncio.gather(*tasks)
     finally:
         for task in tasks:
-            task.cancel()
+            try: task.cancel()
+            except Exception: pass
         await asyncio.gather(*tasks, return_exceptions=True)
         await broadcaster.stop()
 
