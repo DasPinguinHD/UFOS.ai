@@ -71,6 +71,45 @@ namespace FedTrader
             catch { }
         }
 
+        // Applies the exact flat/compact scrollbar visuals used by the Live Transcript textbox to a
+        // dynamically-created ScrollViewer. Overrides the whole ScrollViewer control template (instead of
+        // just assigning an implicit ScrollBar style) because the active Windows theme assigns its own
+        // explicit style to the internally generated ScrollBar, which otherwise takes precedence.
+        private void ApplyTranscriptScrollViewerTemplate(ScrollViewer scrollViewer)
+        {
+            try
+            {
+                var scrollBarStyle = TryFindResource("TranscriptScrollBarStyle") as Style;
+                if (scrollBarStyle == null) return;
+
+                var template = new ControlTemplate(typeof(ScrollViewer));
+
+                var dockFactory = new FrameworkElementFactory(typeof(DockPanel));
+
+                var scrollBarFactory = new FrameworkElementFactory(typeof(ScrollBar), "PART_VerticalScrollBar");
+                scrollBarFactory.SetValue(DockPanel.DockProperty, Dock.Right);
+                scrollBarFactory.SetValue(ScrollBar.OrientationProperty, Orientation.Vertical);
+                scrollBarFactory.SetValue(Control.StyleProperty, scrollBarStyle);
+                scrollBarFactory.SetBinding(ScrollBar.ValueProperty, new System.Windows.Data.Binding("VerticalOffset") { RelativeSource = RelativeSource.TemplatedParent });
+                scrollBarFactory.SetBinding(ScrollBar.MaximumProperty, new System.Windows.Data.Binding("ScrollableHeight") { RelativeSource = RelativeSource.TemplatedParent });
+                scrollBarFactory.SetBinding(ScrollBar.ViewportSizeProperty, new System.Windows.Data.Binding("ViewportHeight") { RelativeSource = RelativeSource.TemplatedParent });
+                scrollBarFactory.SetBinding(UIElement.VisibilityProperty, new System.Windows.Data.Binding("ComputedVerticalScrollBarVisibility") { RelativeSource = RelativeSource.TemplatedParent });
+
+                var contentPresenterFactory = new FrameworkElementFactory(typeof(ScrollContentPresenter), "PART_ScrollContentPresenter");
+                contentPresenterFactory.SetBinding(ContentPresenter.ContentProperty, new System.Windows.Data.Binding("Content") { RelativeSource = RelativeSource.TemplatedParent });
+                contentPresenterFactory.SetBinding(ContentPresenter.ContentTemplateProperty, new System.Windows.Data.Binding("ContentTemplate") { RelativeSource = RelativeSource.TemplatedParent });
+                contentPresenterFactory.SetBinding(ScrollContentPresenter.CanContentScrollProperty, new System.Windows.Data.Binding("CanContentScroll") { RelativeSource = RelativeSource.TemplatedParent });
+                contentPresenterFactory.SetBinding(FrameworkElement.MarginProperty, new System.Windows.Data.Binding("Padding") { RelativeSource = RelativeSource.TemplatedParent });
+
+                dockFactory.AppendChild(scrollBarFactory);
+                dockFactory.AppendChild(contentPresenterFactory);
+
+                template.VisualTree = dockFactory;
+                scrollViewer.Template = template;
+            }
+            catch { }
+        }
+
         private void HistoryButton_Click(object? sender, RoutedEventArgs e)
         {
             try
@@ -167,6 +206,7 @@ namespace FedTrader
 
                 var contentBorder = new Border { Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)), CornerRadius = new CornerRadius(6), Padding = new Thickness(8) };
                 var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+                ApplyTranscriptScrollViewerTemplate(scroll);
                 var contentStack = new StackPanel { Orientation = Orientation.Vertical };
                 scroll.Content = contentStack;
                 contentBorder.Child = scroll;
@@ -192,11 +232,54 @@ namespace FedTrader
                             var left = new Grid { Width = 64, Height = 64, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                             try
                             {
-                                // simple fallback visual: outer ring, inner circle and percent text
-                                var outerEllipse = new System.Windows.Shapes.Ellipse { Width = 64, Height = 64, StrokeThickness = 6, Stroke = rec.StrokeBrush ?? Brushes.Gray };
+                                // outer static ring
+                                var outerEllipse = new System.Windows.Shapes.Ellipse { Width = 64, Height = 64, StrokeThickness = 6, Stroke = new SolidColorBrush(Color.FromRgb(0xAA,0xAA,0xAA)) };
+
+                                // arc path showing confidence percent
+                                var arcPath = new System.Windows.Shapes.Path { Width = 64, Height = 64, Stroke = rec.StrokeBrush ?? Brushes.Gray, StrokeThickness = 6, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, Fill = Brushes.Transparent };
+                                try
+                                {
+                                    int clamped = Math.Max(0, Math.Min(100, rec.Confidence));
+                                    double w = arcPath.Width;
+                                    double stroke = arcPath.StrokeThickness;
+                                    double cx = w / 2.0;
+                                    double cy = w / 2.0;
+                                    double radius = Math.Max(0.0, Math.Min(w, w) / 2.0 - stroke / 2.0);
+
+                                    if (clamped <= 0)
+                                    {
+                                        arcPath.Data = null;
+                                    }
+                                    else if (clamped >= 100)
+                                    {
+                                        arcPath.Data = new EllipseGeometry(new Point(cx, cy), radius, radius);
+                                    }
+                                    else
+                                    {
+                                        double percent = clamped / 100.0;
+                                        double sweepDeg = 360.0 * percent;
+                                        double startDeg = -90.0;
+                                        double endDeg = rec.IsShort ? startDeg - sweepDeg : startDeg + sweepDeg;
+                                        double startRad = startDeg * Math.PI / 180.0;
+                                        double endRad = endDeg * Math.PI / 180.0;
+                                        var startPoint = new Point(cx + radius * Math.Cos(startRad), cy + radius * Math.Sin(startRad));
+                                        var endPoint = new Point(cx + radius * Math.Cos(endRad), cy + radius * Math.Sin(endRad));
+                                        bool isLargeArc = Math.Abs(sweepDeg) > 180.0;
+                                        var pf = new PathFigure { StartPoint = startPoint, IsClosed = false, IsFilled = false };
+                                        var seg = new ArcSegment(endPoint, new Size(radius, radius), 0.0, isLargeArc, rec.IsShort ? SweepDirection.Counterclockwise : SweepDirection.Clockwise, true);
+                                        pf.Segments.Add(seg);
+                                        var pg = new PathGeometry();
+                                        pg.Figures.Add(pf);
+                                        arcPath.Data = pg;
+                                    }
+                                }
+                                catch { }
+
                                 var innerEllipse = new System.Windows.Shapes.Ellipse { Width = 40, Height = 40, Fill = new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2B)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                                 var percentText = new TextBlock { Text = (rec.Confidence.ToString() + "%"), Foreground = Brushes.White, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, FontSize = 16 };
+
                                 left.Children.Add(outerEllipse);
+                                left.Children.Add(arcPath);
                                 left.Children.Add(innerEllipse);
                                 left.Children.Add(percentText);
                             }
