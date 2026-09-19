@@ -1,10 +1,11 @@
 """Entrypoint: wires audio ingestion, transcription, market data, LLM analysis, and broadcast."""
 import asyncio
 import logging
+from aiohttp import web
 
 from audio_stream import pcm_chunks
 from broadcast import Broadcaster
-from config import YOUTUBE_URL
+from config import YOUTUBE_URL, VERDICT_INTERVAL_SECONDS, VERDICT_MAX_REASON_CHARS, VERDICT_INITIAL_DELAY_SECONDS
 from llm_analyst import LLMAnalyst
 from logger import log_event
 from market_data import MarketDataFeed
@@ -65,6 +66,39 @@ async def _run_market_broadcast(market_feed: MarketDataFeed, broadcaster: Broadc
             await broadcaster.broadcast("market_update", payload)
 
 
+async def _run_verdict_loop(analyst: LLMAnalyst, market_feed: MarketDataFeed, broadcaster: Broadcaster) -> None:
+    """Periodically request a short verdict from the analyst and broadcast it."""
+    logger.info("Verdict loop started (interval=%s seconds)", VERDICT_INTERVAL_SECONDS)
+    log_event("verdict_loop", {"action": "started", "interval": VERDICT_INTERVAL_SECONDS})
+    # optional initial delay before first verdict so system can gather data; does not affect transcription
+    try:
+        if VERDICT_INITIAL_DELAY_SECONDS and VERDICT_INITIAL_DELAY_SECONDS > 0:
+            logger.info("Delaying first verdict for %s seconds", VERDICT_INITIAL_DELAY_SECONDS)
+            await asyncio.sleep(VERDICT_INITIAL_DELAY_SECONDS)
+    except Exception:
+        pass
+    while True:
+        try:
+            # run immediately, then sleep at end of loop
+            snapshot = await market_feed.get_snapshot()
+            logger.debug("Requesting verdict from analyst...")
+            verdict = await analyst.generate_verdict(snapshot, max_reason_chars=VERDICT_MAX_REASON_CHARS)
+            # ensure we always log what we got for offline inspection
+            log_event("verdict", verdict if isinstance(verdict, dict) else {"raw": str(verdict)})
+            logger.info("Broadcasting verdict: %s", verdict)
+            await broadcaster.broadcast("verdict", verdict)
+        except Exception as ex:
+            logger.exception("Verdict loop error: %s", ex)
+            try:
+                log_event("verdict_error", {"error": str(ex)})
+            except Exception:
+                pass
+        try:
+            await asyncio.sleep(VERDICT_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            break
+
+
 async def main() -> None:
     if not YOUTUBE_URL:
         raise SystemExit("YOUTUBE_URL is not set; configure it in your .env file")
@@ -76,20 +110,68 @@ async def main() -> None:
 
     await broadcaster.start()
 
+    # start a small health endpoint so external scripts can verify backend readiness
+    async def _health(request):
+        return web.Response(text="ok")
+
+    health_app = web.Application()
+    health_app.router.add_get('/health', _health)
+    health_runner = web.AppRunner(health_app)
+    await health_runner.setup()
+    health_site = web.TCPSite(health_runner, '127.0.0.1', 8766)
+    await health_site.start()
+    logger.info("Health endpoint listening on http://127.0.0.1:8766/health")
+
+    # Set a loop-level exception handler so unhandled exceptions are logged instead of silently killing the process.
+    loop = asyncio.get_event_loop()
+    def _handle_loop_exception(loop, context):
+        try:
+            logger.exception("Unhandled exception in event loop: %s", context.get("message"))
+        except Exception:
+            pass
+    try:
+        loop.set_exception_handler(_handle_loop_exception)
+    except Exception:
+        pass
+
+    async def _supervise(coro_factory, name: str):
+        """Run a coroutine factory repeatedly; on exception log and restart after short delay."""
+        while True:
+            try:
+                logger.info("Starting supervised task: %s", name)
+                await coro_factory()
+                # if the coroutine returns normally, break out
+                logger.info("Supervised task %s returned normally", name)
+                break
+            except asyncio.CancelledError:
+                logger.info("Supervised task %s cancelled", name)
+                break
+            except Exception as ex:
+                logger.exception("Supervised task %s crashed: %s", name, ex)
+                try:
+                    log_event("task_crash", {"task": name, "error": str(ex)})
+                except Exception:
+                    pass
+                # small backoff before restart
+                try:
+                    await asyncio.sleep(2)
+                except asyncio.CancelledError:
+                    break
+
     tasks = [
-        asyncio.create_task(market_feed.run(), name="market_data"),
-        asyncio.create_task(_run_market_broadcast(market_feed, broadcaster), name="market_broadcast"),
-        asyncio.create_task(_run_transcription(transcript_queue), name="transcription"),
-        asyncio.create_task(
-            _run_analysis_loop(transcript_queue, market_feed, analyst, broadcaster), name="analysis"
-        ),
+        asyncio.create_task(_supervise(market_feed.run, "market_data")),
+        asyncio.create_task(_supervise(lambda: _run_market_broadcast(market_feed, broadcaster), "market_broadcast")),
+        asyncio.create_task(_supervise(lambda: _run_transcription(transcript_queue), "transcription")),
+        asyncio.create_task(_supervise(lambda: _run_analysis_loop(transcript_queue, market_feed, analyst, broadcaster), "analysis")),
+        asyncio.create_task(_supervise(lambda: _run_verdict_loop(analyst, market_feed, broadcaster), "verdict_loop")),
     ]
 
     try:
         await asyncio.gather(*tasks)
     finally:
         for task in tasks:
-            task.cancel()
+            try: task.cancel()
+            except Exception: pass
         await asyncio.gather(*tasks, return_exceptions=True)
         await broadcaster.stop()
 

@@ -36,6 +36,15 @@ Respond with ONLY a JSON object (no prose, no markdown fences) with this exact s
 Use exactly these category keys: treasury_yields, bond_proxies, reits, utilities, \
 homebuilders, tech_giants, unprofitable_growth, financials."""
 
+SYSTEM_PROMPT_VERDICT = """You are a pragmatic market analyst. Given a transcript excerpt and a market snapshot, recommend exactly ONE action for a single ticker: either LONG or SHORT. Provide a concise verdict and a substantive rationale. The rationale should be evidence-based, include multiple supporting points when available, and end with a clear weighing statement (e.g., "Overall: favor LONG because ..." or "Overall: favor SHORT because ..."). Return ONLY a JSON object with the exact shape:
+{
+  "verdict": "LONG"|"SHORT",
+  "ticker": "<SYMBOL>",
+  "confidence": 0-100,
+  "reason": "<detailed explanation, up to configurable length>"
+}
+No extra text, no markdown. Make the reason as informative as possible while staying factual and concise."""
+
 
 def _load_scenarios() -> str:
     parts = []
@@ -65,6 +74,56 @@ class LLMAnalyst:
     def note(self, transcript_segment: str) -> None:
         """Record a segment in the rolling context without triggering an LLM call."""
         self._recent_transcript.append(transcript_segment)
+
+    async def generate_verdict(self, snapshot: MarketSnapshot, max_reason_chars: int = 300) -> dict:
+        """Ask the LLM for a single verdict JSON. Return a validated dict or an error dict."""
+        # build concise user prompt
+        transcript_text = chr(10).join(self._recent_transcript)
+        if not transcript_text:
+            transcript_text = "(no transcript yet)"
+
+        user_prompt = (
+            f"RECENT_TRANSCRIPT:\n{transcript_text}\n\n"
+            f"MARKET_SNAPSHOT ({snapshot.timestamp}):\n{_format_snapshot(snapshot)}\n\n"
+            f"Provide an evidence-based, multi-point rationale and conclude with an explicit overall weighing sentence."
+            f"Respond with JSON only. Limit 'reason' to {max_reason_chars} characters."
+        )
+
+        try:
+            response = await self._client.chat.completions.create(
+                model=OPENROUTER_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT_VERDICT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.0,
+                max_tokens=512,
+                response_format={"type": "json_object"},
+            )
+            raw = response.choices[0].message.content
+            # parse and validate
+            parsed = json.loads(raw)
+            # basic validation and normalization
+            verdict = parsed.get("verdict")
+            ticker = parsed.get("ticker")
+            confidence = parsed.get("confidence")
+            reason = parsed.get("reason", "")
+            if not isinstance(verdict, str) or verdict.upper() not in ("LONG", "SHORT"):
+                raise ValueError("invalid verdict")
+            if not isinstance(ticker, str) or not ticker:
+                raise ValueError("invalid ticker")
+            try:
+                confidence = int(float(confidence))
+            except Exception:
+                confidence = 0
+            reason = (reason or "").strip()
+            if len(reason) > max_reason_chars:
+                reason = reason[:max_reason_chars].rstrip()
+
+            return {"verdict": verdict.upper(), "ticker": ticker, "confidence": confidence, "reason": reason}
+        except Exception as ex:
+            logger.exception("LLM generate_verdict failed: %s", ex)
+            return {"error": "llm_failed", "detail": str(ex)}
 
     async def analyze(self, transcript_segment: str, snapshot: MarketSnapshot) -> dict:
         self._recent_transcript.append(transcript_segment)
