@@ -71,253 +71,54 @@ namespace FedTrader
             catch { }
         }
 
-        // Applies the exact flat/compact scrollbar visuals used by the Live Transcript textbox to a
-        // dynamically-created ScrollViewer. Overrides the whole ScrollViewer control template (instead of
-        // just assigning an implicit ScrollBar style) because the active Windows theme assigns its own
-        // explicit style to the internally generated ScrollBar, which otherwise takes precedence.
-        private void ApplyTranscriptScrollViewerTemplate(ScrollViewer scrollViewer)
+        // Index into _verdictHistory of the verdict currently displayed in the main widget.
+        // 0 = current/newest verdict, 1 = one older, etc. -1 = no verdict yet displayed via history navigation.
+        private int _verdictHistoryIndex = 0;
+
+        private void PrevVerdictButton_Click(object? sender, RoutedEventArgs e)
         {
-            try
+            if (_verdictHistoryIndex > 0)
             {
-                var scrollBarStyle = TryFindResource("TranscriptScrollBarStyle") as Style;
-                if (scrollBarStyle == null) return;
-
-                var template = new ControlTemplate(typeof(ScrollViewer));
-
-                var dockFactory = new FrameworkElementFactory(typeof(DockPanel));
-
-                var scrollBarFactory = new FrameworkElementFactory(typeof(ScrollBar), "PART_VerticalScrollBar");
-                scrollBarFactory.SetValue(DockPanel.DockProperty, Dock.Right);
-                scrollBarFactory.SetValue(ScrollBar.OrientationProperty, Orientation.Vertical);
-                scrollBarFactory.SetValue(Control.StyleProperty, scrollBarStyle);
-                scrollBarFactory.SetBinding(ScrollBar.ValueProperty, new System.Windows.Data.Binding("VerticalOffset") { RelativeSource = RelativeSource.TemplatedParent });
-                scrollBarFactory.SetBinding(ScrollBar.MaximumProperty, new System.Windows.Data.Binding("ScrollableHeight") { RelativeSource = RelativeSource.TemplatedParent });
-                scrollBarFactory.SetBinding(ScrollBar.ViewportSizeProperty, new System.Windows.Data.Binding("ViewportHeight") { RelativeSource = RelativeSource.TemplatedParent });
-                scrollBarFactory.SetBinding(UIElement.VisibilityProperty, new System.Windows.Data.Binding("ComputedVerticalScrollBarVisibility") { RelativeSource = RelativeSource.TemplatedParent });
-
-                var contentPresenterFactory = new FrameworkElementFactory(typeof(ScrollContentPresenter), "PART_ScrollContentPresenter");
-                contentPresenterFactory.SetBinding(ContentPresenter.ContentProperty, new System.Windows.Data.Binding("Content") { RelativeSource = RelativeSource.TemplatedParent });
-                contentPresenterFactory.SetBinding(ContentPresenter.ContentTemplateProperty, new System.Windows.Data.Binding("ContentTemplate") { RelativeSource = RelativeSource.TemplatedParent });
-                contentPresenterFactory.SetBinding(ScrollContentPresenter.CanContentScrollProperty, new System.Windows.Data.Binding("CanContentScroll") { RelativeSource = RelativeSource.TemplatedParent });
-                contentPresenterFactory.SetBinding(FrameworkElement.MarginProperty, new System.Windows.Data.Binding("Padding") { RelativeSource = RelativeSource.TemplatedParent });
-
-                dockFactory.AppendChild(scrollBarFactory);
-                dockFactory.AppendChild(contentPresenterFactory);
-
-                template.VisualTree = dockFactory;
-                scrollViewer.Template = template;
+                _verdictHistoryIndex--;
+                DisplayVerdictAtHistoryIndex(_verdictHistoryIndex);
             }
-            catch { }
         }
 
-        private void HistoryButton_Click(object? sender, RoutedEventArgs e)
+        private void NextVerdictButton_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_verdictHistoryIndex < _verdictHistory.Count - 1)
+            {
+                _verdictHistoryIndex++;
+                DisplayVerdictAtHistoryIndex(_verdictHistoryIndex);
+            }
+        }
+
+        // Displays the verdict at the given index in _verdictHistory (0 = newest) in the main widget
+        // and updates the enabled state of the navigation buttons accordingly.
+        private void DisplayVerdictAtHistoryIndex(int index)
         {
             try
             {
-                Window? win = null;
-                win = new Window
-                {
-                    Title = "Verdict History",
-                    Width = 700,
-                    Height = 420,
-                    Owner = this,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    WindowStyle = WindowStyle.None,
-                    AllowsTransparency = true,
-                    Background = Brushes.Transparent
-                };
-
-                var outer = new Border
-                {
-                    Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)),
-                    CornerRadius = new CornerRadius(8),
-                    Padding = new Thickness(0),
-                    SnapsToDevicePixels = true
-                };
-
-                var root = new Grid { Margin = new Thickness(0) };
-                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(18) });
-                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-                var titleBar = new Border { Background = Brushes.Black, CornerRadius = new CornerRadius(8, 8, 0, 0), Height = 18 };
-                titleBar.MouseLeftButtonDown += (s, ev) => { try { if (ev.ButtonState == MouseButtonState.Pressed) win.DragMove(); } catch { } };
-
-                var tbGrid = new Grid();
-                tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-                var titleText = new TextBlock { Text = "Verdict History", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), FontSize = 12, FontWeight = FontWeights.SemiBold };
-                Grid.SetColumn(titleText, 0);
-                tbGrid.Children.Add(titleText);
-
-                var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
-
-                var roundStyleObj = TryFindResource("RoundButtonStyle");
-                Style roundStyle = roundStyleObj as Style;
-                if (roundStyle == null)
-                {
-                    var template = new ControlTemplate(typeof(Button));
-                    var borderFactory = new FrameworkElementFactory(typeof(Border));
-                    borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(999));
-                    borderFactory.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
-                    borderFactory.SetBinding(Border.WidthProperty, new System.Windows.Data.Binding("Width") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
-                    borderFactory.SetBinding(Border.HeightProperty, new System.Windows.Data.Binding("Height") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
-                    var contentPresenterFactory = new FrameworkElementFactory(typeof(ContentPresenter));
-                    contentPresenterFactory.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-                    contentPresenterFactory.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-                    borderFactory.AppendChild(contentPresenterFactory);
-                    template.VisualTree = borderFactory;
-
-                    var style = new Style(typeof(Button));
-                    style.Setters.Add(new Setter(Button.WidthProperty, 14.0));
-                    style.Setters.Add(new Setter(Button.HeightProperty, 14.0));
-                    style.Setters.Add(new Setter(Button.PaddingProperty, new Thickness(0)));
-                    style.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(0)));
-                    style.Setters.Add(new Setter(Button.BackgroundProperty, Brushes.Transparent));
-                    style.Setters.Add(new Setter(Button.TemplateProperty, template));
-
-                    roundStyle = style;
-                }
-
-                var minimizeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6, 0, 0, 0) };
-                if (roundStyle != null) minimizeBtn.Style = roundStyle;
-                try { minimizeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0xB4, 0x00)); } catch { minimizeBtn.Background = Brushes.Gold; }
-                minimizeBtn.Click += (s, ev) => { try { win.WindowState = WindowState.Minimized; } catch { } };
-                minimizeBtn.Content = new TextBlock { Text = "—", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-
-                var closeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6, 0, 0, 0) };
-                if (roundStyle != null) closeBtn.Style = roundStyle;
-                try { closeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0x6A, 0x5A)); } catch { closeBtn.Background = Brushes.IndianRed; }
-                closeBtn.Click += (s, ev) => { try { win.Close(); } catch { } };
-                closeBtn.Content = new TextBlock { Text = "✕", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-
-                btnPanel.Children.Add(minimizeBtn);
-                btnPanel.Children.Add(closeBtn);
-                Grid.SetColumn(btnPanel, 1);
-                tbGrid.Children.Add(btnPanel);
-
-                titleBar.Child = tbGrid;
-                Grid.SetRow(titleBar, 0);
-                root.Children.Add(titleBar);
-
-                // content area
-                var contentGrid = new Grid { Margin = new Thickness(8) };
-                Grid.SetRow(contentGrid, 1);
-
-                var contentBorder = new Border { Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)), CornerRadius = new CornerRadius(6), Padding = new Thickness(8) };
-                var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-                ApplyTranscriptScrollViewerTemplate(scroll);
-                var contentStack = new StackPanel { Orientation = Orientation.Vertical };
-                scroll.Content = contentStack;
-                contentBorder.Child = scroll;
-                contentGrid.Children.Add(contentBorder);
-
-                root.Children.Add(contentGrid);
-                outer.Child = root;
-                win.Content = outer;
-
-                // populate function
-                Action populate = () =>
-                {
-                    try
-                    {
-                        contentStack.Children.Clear();
-                        foreach (var rec in _verdictHistory)
-                        {
-                            var itemBorder = new Border { Padding = new Thickness(8), Margin = new Thickness(0, 0, 0, 8) };
-                            var g = new Grid();
-                            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-                            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-                            var left = new Grid { Width = 64, Height = 64, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-                            try
-                            {
-                                // outer static ring
-                                var outerEllipse = new System.Windows.Shapes.Ellipse { Width = 64, Height = 64, StrokeThickness = 6, Stroke = new SolidColorBrush(Color.FromRgb(0xAA,0xAA,0xAA)) };
-
-                                // arc path showing confidence percent
-                                var arcPath = new System.Windows.Shapes.Path { Width = 64, Height = 64, Stroke = rec.StrokeBrush ?? Brushes.Gray, StrokeThickness = 6, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, Fill = Brushes.Transparent };
-                                try
-                                {
-                                    int clamped = Math.Max(0, Math.Min(100, rec.Confidence));
-                                    double w = arcPath.Width;
-                                    double stroke = arcPath.StrokeThickness;
-                                    double cx = w / 2.0;
-                                    double cy = w / 2.0;
-                                    double radius = Math.Max(0.0, Math.Min(w, w) / 2.0 - stroke / 2.0);
-
-                                    if (clamped <= 0)
-                                    {
-                                        arcPath.Data = null;
-                                    }
-                                    else if (clamped >= 100)
-                                    {
-                                        arcPath.Data = new EllipseGeometry(new Point(cx, cy), radius, radius);
-                                    }
-                                    else
-                                    {
-                                        double percent = clamped / 100.0;
-                                        double sweepDeg = 360.0 * percent;
-                                        double startDeg = -90.0;
-                                        double endDeg = rec.IsShort ? startDeg - sweepDeg : startDeg + sweepDeg;
-                                        double startRad = startDeg * Math.PI / 180.0;
-                                        double endRad = endDeg * Math.PI / 180.0;
-                                        var startPoint = new Point(cx + radius * Math.Cos(startRad), cy + radius * Math.Sin(startRad));
-                                        var endPoint = new Point(cx + radius * Math.Cos(endRad), cy + radius * Math.Sin(endRad));
-                                        bool isLargeArc = Math.Abs(sweepDeg) > 180.0;
-                                        var pf = new PathFigure { StartPoint = startPoint, IsClosed = false, IsFilled = false };
-                                        var seg = new ArcSegment(endPoint, new Size(radius, radius), 0.0, isLargeArc, rec.IsShort ? SweepDirection.Counterclockwise : SweepDirection.Clockwise, true);
-                                        pf.Segments.Add(seg);
-                                        var pg = new PathGeometry();
-                                        pg.Figures.Add(pf);
-                                        arcPath.Data = pg;
-                                    }
-                                }
-                                catch { }
-
-                                var innerEllipse = new System.Windows.Shapes.Ellipse { Width = 40, Height = 40, Fill = new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2B)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-                                var percentText = new TextBlock { Text = (rec.Confidence.ToString() + "%"), Foreground = Brushes.White, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, FontSize = 16 };
-
-                                left.Children.Add(outerEllipse);
-                                left.Children.Add(arcPath);
-                                left.Children.Add(innerEllipse);
-                                left.Children.Add(percentText);
-                            }
-                            catch { }
-                            Grid.SetColumn(left, 0);
-                            g.Children.Add(left);
-
-                            var right = new StackPanel { Margin = new Thickness(12, 0, 0, 0) };
-                            var header = new TextBlock { Text = rec.HeaderText, Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 14, TextWrapping = TextWrapping.Wrap };
-                            var reason = new TextBlock { Text = rec.Reason, Foreground = new SolidColorBrush(Color.FromRgb(0xBF, 0xBF, 0xBF)), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
-                            right.Children.Add(header);
-                            right.Children.Add(reason);
-                            Grid.SetColumn(right, 1);
-                            g.Children.Add(right);
-
-                            itemBorder.Child = g;
-                            contentStack.Children.Add(itemBorder);
-                        }
-                    }
-                    catch { }
-                };
-
-                // initial populate
-                populate();
-
-                var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-                timer.Tick += (s, ev) => populate();
-                win.Closed += (s, ev) => timer.Stop();
-                // Close with Escape key for dynamic Verdict History window
-                win.PreviewKeyDown += (s, e) => { try { if (e.Key == System.Windows.Input.Key.Escape) win.Close(); } catch { } };
-                timer.Start();
-
-                win.ShowDialog();
+                if (index < 0 || index >= _verdictHistory.Count) return;
+                var rec = _verdictHistory[index];
+                bool isCurrent = index == 0;
+                RenderVerdict(rec.Verdict, rec.Ticker, rec.Confidence, rec.Reason, isCurrent ? (DateTime?)null : rec.Timestamp);
             }
-            catch (Exception ex)
+            catch { }
+            finally
             {
-                try { (Application.Current as App)?.ShowUiException(new Exception("Fehler beim Öffnen der Verdict-History: " + ex.Message)); } catch { }
+                UpdateVerdictNavButtons();
             }
+        }
+
+        private void UpdateVerdictNavButtons()
+        {
+            try
+            {
+                PrevVerdictButton.IsEnabled = _verdictHistoryIndex > 0;
+                NextVerdictButton.IsEnabled = _verdictHistoryIndex < _verdictHistory.Count - 1;
+            }
+            catch { }
         }
 
         private void ShowLogs_Click(object sender, RoutedEventArgs e)
@@ -367,8 +168,10 @@ namespace FedTrader
             UpdateReason("[REASON]");
             // create a simple temp debug file marker so we can detect if UI code runs
             try { DebugLogger.Log("[UI] MainWindow ctor"); } catch { }
-            // wire history button if present
-            try { HistoryButton.Click += HistoryButton_Click; } catch { }
+            // wire verdict navigation buttons if present
+            try { PrevVerdictButton.Click += PrevVerdictButton_Click; } catch { }
+            try { NextVerdictButton.Click += NextVerdictButton_Click; } catch { }
+            try { UpdateVerdictNavButtons(); } catch { }
             // expose a simple public wrapper for showing logs and saving logs for global error dialog
             try { /* noop - methods exist below */ } catch { }
         }
@@ -465,10 +268,12 @@ namespace FedTrader
                 _wsService.OnMarketUpdate += mu => Dispatcher.Invoke(() => RenderMarketUpdate(mu));
                 _wsService.OnConfidence += v => Dispatcher.Invoke(() => { AddConfidenceSample(v); UpdateConfidence(v); });
                 _wsService.OnVerdict += vm => Dispatcher.Invoke(() => {
+                    try { AddVerdictToHistory(vm.Verdict, vm.Ticker, vm.Confidence, vm.Reason); } catch { }
+                    _verdictHistoryIndex = 0;
                     UpdateVerdict(vm.Verdict, vm.Ticker, vm.Confidence);
                     UpdateReason(vm.Reason);
                     if (vm.Confidence != 0) AddConfidenceSample(vm.Confidence);
-                    try { AddVerdictToHistory(vm.Verdict, vm.Ticker, vm.Confidence, vm.Reason); } catch { }
+                    UpdateVerdictNavButtons();
                 });
                 _wsService.OnTranscript += t => {
                     // log raw transcript arrival for debugging
@@ -1108,9 +913,23 @@ namespace FedTrader
         // Public API to update the verdict widget dynamically
         public void UpdateVerdict(string verdict, string ticker, int confidence = 0)
         {
+            RenderVerdict(verdict, ticker, confidence, null, null);
+        }
+
+        // Renders a verdict into the widget. If historyTimestamp is set, the header uses the
+        // "Older Verdict from [DATETIME]: [VERDICT]" format instead of the current-verdict format.
+        private void RenderVerdict(string verdict, string ticker, int confidence, string? reason, DateTime? historyTimestamp)
+        {
             var text = string.IsNullOrWhiteSpace(ticker) ? verdict : $"{verdict} {ticker}";
             // Do not include percentage in the verdict text; show confidence as ring fill and centered number
-            VerdictTextBlock.Text = $"Current Verdict: {text}";
+            VerdictTextBlock.Text = historyTimestamp.HasValue
+                ? $"Older Verdict from {historyTimestamp.Value:yyyy-MM-dd HH:mm:ss}: {text}"
+                : $"Current Verdict: {text}";
+
+            if (reason != null)
+            {
+                try { UpdateReason(reason); } catch { }
+            }
 
             // determine color: green for long/buy, red for short/sell, gray otherwise
             var v = verdict?.ToUpperInvariant() ?? string.Empty;
