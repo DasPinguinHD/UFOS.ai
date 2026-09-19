@@ -1,4 +1,10 @@
-# FedTrader
+# UFOS
+
+# Features:
+
+**More will come here soon, dw**
+
+
 
 **FedTrader** is a real-time trading-signal assistant that listens to a live Federal Reserve press conference or FOMC statement, transcribes it as it happens, and asks an LLM to interpret the Chair's remarks — alongside live market data — into a structured long/short read across key asset categories. A WPF desktop app displays the live transcript, market tickers, a rolling verdict history, and a confidence "ring" gauge, all fed over a WebSocket connection from a Python backend.
 
