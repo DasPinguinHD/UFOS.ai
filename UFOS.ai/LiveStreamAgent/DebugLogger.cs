@@ -2,12 +2,12 @@ using System;
 using System.IO;
 using System.Text;
 
-namespace FedTrader
+namespace UFOS.ai
 {
     internal static class DebugLogger
     {
-        private static readonly string TempPath = Path.Combine(Path.GetTempPath(), "fedtrader_ws_debug.log");
-        private static readonly string RepoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory ?? ".", "fedtrader_ws_debug_repo.log");
+        private static readonly string TempPath = Path.Combine(Path.GetTempPath(), "UFOS.ai_ws_debug.log");
+        private static readonly string RepoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory ?? ".", "UFOS.ai_ws_debug_repo.log");
 
         public static void Log(string text)
         {
@@ -32,3 +32,4 @@ namespace FedTrader
         }
     }
 }
+

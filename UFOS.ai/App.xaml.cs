@@ -5,7 +5,7 @@ using System.IO;
 using System.Text;
 using System.Windows;
 
-namespace FedTrader
+namespace UFOS.ai
 {
     /// <summary>
     /// Interaction logic for App.xaml
