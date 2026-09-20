@@ -1,7 +1,7 @@
 using System;
 using System.Windows.Media;
 
-namespace FedTrader
+namespace UFOS.ai
 {
     public class VerdictRecord
     {
@@ -27,3 +27,4 @@ namespace FedTrader
         }
     }
 }
+

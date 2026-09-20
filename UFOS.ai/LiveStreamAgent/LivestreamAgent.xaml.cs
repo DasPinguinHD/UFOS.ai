@@ -1,4 +1,4 @@
-ï»¿using System;
+using System;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,12 +23,12 @@ using System.Windows.Navigation;
 using System.Windows.Shapes;
 using System.Windows.Media.Animation;
 
-namespace FedTrader
+namespace UFOS.ai
 {
     /// <summary>
-    /// Interaction logic for MainWindow.xaml
+    /// Interaction logic for LivestreamAgent.xaml
     /// </summary>
-    public partial class MainWindow : Window
+    public partial class LivestreamAgent : Window
     {
         // state to control arc sweep direction
         private bool _isLongState = false;
@@ -147,12 +147,12 @@ namespace FedTrader
         {
             try
             {
-                // Redirect to the custom log popup builder so the UI chrome matches MainWindow
+                // Redirect to the custom log popup builder so the UI chrome matches LivestreamAgent
                 OpenBackendLogButton_Click(sender, e);
             }
             catch (Exception ex)
             {
-                try { (Application.Current as App)?.ShowUiException(new Exception("Fehler beim Ã–ffnen der Logs: " + ex.Message)); } catch { }
+                try { (Application.Current as App)?.ShowUiException(new Exception("Fehler beim Öffnen der Logs: " + ex.Message)); } catch { }
             }
         }
 
@@ -228,25 +228,25 @@ namespace FedTrader
         {
             return symbol.ToUpperInvariant() switch
             {
-                "BIL" => "SPDR Bloomberg 1-3 Month T-Bill ETF Â· Short-term government bonds\nLow risk / cash proxy Â· Usually steady around Fed moves",
-                "^TNX" => "CBOE 10-Year Treasury Yield Index Â· U.S. Treasury yields\nMacro risk indicator Â· Very sensitive to rate decisions",
-                "^TYX" => "CBOE 30-Year Treasury Yield Index Â· U.S. Treasury yields\nLong-duration / rate sensitivity Â· Strongly impacted by Fed outlook",
-                "UUP" => "Invesco DB US Dollar Index Bullish Fund Â· U.S. dollar\nHedging asset / low risk Â· Often reacts to rate differentials",
-                "GLD" => "SPDR Gold Shares Â· Gold / commodities\nSafe haven / hedging asset Â· Often benefits from easing expectations",
-                "QQQ" => "Invesco QQQ Trust Â· Nasdaq-100 / technology\nGrowth-oriented / high risk Â· Rate-sensitive and valuation-driven",
-                "IWM" => "iShares Russell 2000 ETF Â· U.S. small caps\nCyclical / high risk Â· Often reacts to financing conditions",
-                "KRE" => "SPDR S&P Regional Banking ETF Â· Regional banks / financials\nCyclical / risk-sensitive Â· Very exposed to rate policy shifts",
-                "TLT" => "iShares 20+ Year Treasury Bond ETF Â· Long-dated U.S. Treasuries\nSafe haven / rate hedge Â· Usually rises when yields fall",
-                "AGG" => "iShares Core U.S. Aggregate Bond ETF Â· U.S. bond market\nLow risk / diversification Â· Typically benefits from rate cuts",
-                "VNQ" => "Vanguard Real Estate ETF Â· Real estate / REITs\nIncome-oriented / rate-sensitive Â· Often prefers lower rates",
-                "XLU" => "Utilities Select Sector SPDR Fund Â· Utilities\nDefensive / low risk Â· Usually resilient in uncertain policy cycles",
-                "XHB" => "SPDR S&P Homebuilders ETF Â· Homebuilding / housing\nCyclical / high risk Â· Sensitive to mortgage-rate expectations",
-                "ITB" => "iShares U.S. Home Construction ETF Â· Homebuilding / housing\nCyclical / high risk Â· Sensitive to mortgage-rate expectations",
-                "MAGS" => "Roundhill Magnificent Seven ETF Â· U.S. mega-cap tech\nMomentum / high risk Â· Usually reacts strongly to discount-rate moves",
-                "ARKK" => "ARK Innovation ETF Â· Innovation / high growth\nHighly volatile / high risk Â· Often benefits from easier policy",
-                "XLF" => "Financial Select Sector SPDR Fund Â· Financials\nCyclical / market-sensitive Â· Can react to yield-curve changes",
-                "HYG" => "iShares iBoxx USD High Yield Corporate Bond ETF Â· High-yield bonds\nYield-oriented / high risk Â· Tends to improve with easier financial conditions",
-                _ => "Unknown market proxy Â· Macro sensitivity\nBroad market observation Â· Reaction to Fed moves depends on asset type"
+                "BIL" => "SPDR Bloomberg 1-3 Month T-Bill ETF · Short-term government bonds\nLow risk / cash proxy · Usually steady around Fed moves",
+                "^TNX" => "CBOE 10-Year Treasury Yield Index · U.S. Treasury yields\nMacro risk indicator · Very sensitive to rate decisions",
+                "^TYX" => "CBOE 30-Year Treasury Yield Index · U.S. Treasury yields\nLong-duration / rate sensitivity · Strongly impacted by Fed outlook",
+                "UUP" => "Invesco DB US Dollar Index Bullish Fund · U.S. dollar\nHedging asset / low risk · Often reacts to rate differentials",
+                "GLD" => "SPDR Gold Shares · Gold / commodities\nSafe haven / hedging asset · Often benefits from easing expectations",
+                "QQQ" => "Invesco QQQ Trust · Nasdaq-100 / technology\nGrowth-oriented / high risk · Rate-sensitive and valuation-driven",
+                "IWM" => "iShares Russell 2000 ETF · U.S. small caps\nCyclical / high risk · Often reacts to financing conditions",
+                "KRE" => "SPDR S&P Regional Banking ETF · Regional banks / financials\nCyclical / risk-sensitive · Very exposed to rate policy shifts",
+                "TLT" => "iShares 20+ Year Treasury Bond ETF · Long-dated U.S. Treasuries\nSafe haven / rate hedge · Usually rises when yields fall",
+                "AGG" => "iShares Core U.S. Aggregate Bond ETF · U.S. bond market\nLow risk / diversification · Typically benefits from rate cuts",
+                "VNQ" => "Vanguard Real Estate ETF · Real estate / REITs\nIncome-oriented / rate-sensitive · Often prefers lower rates",
+                "XLU" => "Utilities Select Sector SPDR Fund · Utilities\nDefensive / low risk · Usually resilient in uncertain policy cycles",
+                "XHB" => "SPDR S&P Homebuilders ETF · Homebuilding / housing\nCyclical / high risk · Sensitive to mortgage-rate expectations",
+                "ITB" => "iShares U.S. Home Construction ETF · Homebuilding / housing\nCyclical / high risk · Sensitive to mortgage-rate expectations",
+                "MAGS" => "Roundhill Magnificent Seven ETF · U.S. mega-cap tech\nMomentum / high risk · Usually reacts strongly to discount-rate moves",
+                "ARKK" => "ARK Innovation ETF · Innovation / high growth\nHighly volatile / high risk · Often benefits from easier policy",
+                "XLF" => "Financial Select Sector SPDR Fund · Financials\nCyclical / market-sensitive · Can react to yield-curve changes",
+                "HYG" => "iShares iBoxx USD High Yield Corporate Bond ETF · High-yield bonds\nYield-oriented / high risk · Tends to improve with easier financial conditions",
+                _ => "Unknown market proxy · Macro sensitivity\nBroad market observation · Reaction to Fed moves depends on asset type"
             };
         }
 
@@ -321,7 +321,7 @@ namespace FedTrader
 
             return sections;
         }
-        public MainWindow()
+        public LivestreamAgent()
         {
             InitializeComponent();
             // bind tickers collection to ItemsControl
@@ -350,7 +350,7 @@ namespace FedTrader
             UpdateVerdict("NONE", "");
             UpdateReason(string.Empty);
             // create a simple temp debug file marker so we can detect if UI code runs
-            try { DebugLogger.Log("[UI] MainWindow ctor"); } catch { }
+            try { DebugLogger.Log("[UI] LivestreamAgent ctor"); } catch { }
             // wire verdict navigation buttons if present
             try { PrevVerdictButton.Click += PrevVerdictButton_Click; } catch { }
             try { NextVerdictButton.Click += NextVerdictButton_Click; } catch { }
@@ -922,7 +922,7 @@ namespace FedTrader
                 script = System.IO.Path.GetFullPath(script);
                 if (!File.Exists(script))
                 {
-                    // backend script not present â€” append a diagnostic note and try to load latest backend logs if any
+                    // backend script not present — append a diagnostic note and try to load latest backend logs if any
                     lock (_backendLogBuffer)
                     {
                         _backendLogBuffer.AppendLine($"[BACKEND] run_backend.ps1 not found at {script}");
@@ -1146,7 +1146,7 @@ namespace FedTrader
             Window? win = null;
             try
             {
-                // Create a non-standard window that matches the MainWindow look: dark border and custom title bar
+                // Create a non-standard window that matches the LivestreamAgent look: dark border and custom title bar
                 win = new Window
                 {
                     Title = "Backend Log",
@@ -1159,7 +1159,7 @@ namespace FedTrader
                     Background = Brushes.Transparent
                 };
 
-                // Outer border to emulate MainWindow chrome
+                // Outer border to emulate LivestreamAgent chrome
                 var outer = new Border
                 {
                     Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)),
@@ -1242,22 +1242,22 @@ namespace FedTrader
                     }
                     catch { }
                 };
-                saveBtn.Content = new TextBlock { Text = "ðŸ’¾", Foreground = Brushes.White, FontSize = 8.1, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                saveBtn.Content = new TextBlock { Text = "??", Foreground = Brushes.White, FontSize = 8.1, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
 
                 var minimizeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6,0,0,0) };
                 if (roundStyle != null) minimizeBtn.Style = roundStyle;
-                // match MainWindow exact amber background color
+                // match LivestreamAgent exact amber background color
                 try { minimizeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0xB4, 0x00)); } catch { minimizeBtn.Background = Brushes.Gold; }
                 minimizeBtn.Click += (s, ev) => { try { win.WindowState = WindowState.Minimized; } catch { } };
-                var minTxt = new TextBlock { Text = "â€”", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                var minTxt = new TextBlock { Text = "—", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                 minimizeBtn.Content = minTxt;
 
                 var closeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6,0,0,0) };
                 if (roundStyle != null) closeBtn.Style = roundStyle;
-                // match MainWindow exact red background color
+                // match LivestreamAgent exact red background color
                 try { closeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0x6A, 0x5A)); } catch { closeBtn.Background = Brushes.IndianRed; }
                 closeBtn.Click += (s, ev) => { try { win.Close(); } catch { } };
-                var closeTxt = new TextBlock { Text = "âœ•", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                var closeTxt = new TextBlock { Text = "?", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                 closeBtn.Content = closeTxt;
 
                 btnPanel.Children.Add(saveBtn);
