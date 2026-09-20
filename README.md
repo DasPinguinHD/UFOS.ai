@@ -36,10 +36,10 @@ The long-term goal of UFOS.ai is a single umbrella program made up of self-conta
 
 | Module | Folder | Status | Description |
 |---|---|---|---|
-| **LiveStreamAgent** | `UFOS.ai/LiveStreamAgent/` | 🟢 First working version | Listens to a live Fed press conference / FOMC stream, transcribes it in real time, and asks an LLM to turn the remarks plus live market data into a structured long/short read. Full WPF desktop client + Python backend. |
-| **Multi-Agent Hedge Fund** | `UFOS.ai/HedgeFund/` | ⚪ Planned | A coordinated set of specialized trading agents intended to research and simulate a small multi-strategy fund. |
-| **Market Sentiment Portfolio Optimizer** | `UFOS.ai/SentimentOptimization/` | ⚪ Planned | Portfolio allocation research driven by aggregated market/news sentiment signals. |
-| **Automatic Trading Strategy Discovery Pipeline** | `UFOS.ai/TradingStrategyDiscovery/` | ⚪ Planned | An automated pipeline for generating, backtesting, and evaluating candidate trading strategies. |
+| **LiveStreamAgent** | `UFOS.ai/LiveStreamAgent/` |  First working version | Listens to a live Fed press conference / FOMC stream, transcribes it in real time, and asks an LLM to turn the remarks plus live market data into a structured long/short read. Full WPF desktop client + Python backend. |
+| **Multi-Agent Hedge Fund** | `UFOS.ai/HedgeFund/` | Being developed | A coordinated set of specialized trading agents intended to research and simulate a small multi-strategy fund. |
+| **Market Sentiment Portfolio Optimizer** | `UFOS.ai/SentimentOptimization/` |  Planned | Portfolio allocation research driven by aggregated market/news sentiment signals. |
+| **Automatic Trading Strategy Discovery Pipeline** | `UFOS.ai/TradingStrategyDiscovery/` |  Planned | An automated pipeline for generating, backtesting, and evaluating candidate trading strategies. |
 
 The three planned modules currently exist only as empty, reserved folders (`.keep` placeholders) — see [Planned modules](#planned-modules) below.
 
