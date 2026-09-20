@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using Microsoft.Win32;
 using System.Windows.Controls;
@@ -32,6 +33,18 @@ namespace FedTrader
         // state to control arc sweep direction
         private bool _isLongState = false;
         private bool _isShortState = false;
+        private readonly System.Windows.Threading.DispatcherTimer _liveDisclaimerTimer = new();
+        private int _liveDisclaimerDots = 0;
+        private bool _liveDisclaimerHidden = false;
+        private readonly DoubleAnimation _confidenceRingBrushAnimation = new()
+        {
+            From = -1.2,
+            To = 1.2,
+            Duration = TimeSpan.FromMilliseconds(1300),
+            RepeatBehavior = RepeatBehavior.Forever,
+            AutoReverse = false
+        };
+        private bool _confidenceRingAnimating = false;
         // view model for each ticker row shown in the UI
         private class TickerViewModel
         {
@@ -42,10 +55,19 @@ namespace FedTrader
             public string Change { get; set; } = string.Empty;
             // original tendency string (optional)
             public string Tendency { get; set; } = string.Empty;
+            // short tooltip keywords describing the ticker
+            public string TooltipText { get; set; } = string.Empty;
+            public object? TooltipControl { get; set; }
             // color indicator for trend rectangle
             public SolidColorBrush TrendColor { get; set; } = Brushes.Transparent;
             // rotation for triangle: 0 = up, 180 = down, 90 = right (sideways)
             public double TrendRotation { get; set; } = 90.0;
+        }
+
+        private class ExpandedMarketSectionViewModel
+        {
+            public string Header { get; set; } = string.Empty;
+            public System.Collections.Generic.List<TickerViewModel> Tickers { get; set; } = new();
         }
 
         // Add a verdict to the in-memory history (newest first)
@@ -71,253 +93,54 @@ namespace FedTrader
             catch { }
         }
 
-        // Applies the exact flat/compact scrollbar visuals used by the Live Transcript textbox to a
-        // dynamically-created ScrollViewer. Overrides the whole ScrollViewer control template (instead of
-        // just assigning an implicit ScrollBar style) because the active Windows theme assigns its own
-        // explicit style to the internally generated ScrollBar, which otherwise takes precedence.
-        private void ApplyTranscriptScrollViewerTemplate(ScrollViewer scrollViewer)
+        // Index into _verdictHistory of the verdict currently displayed in the main widget.
+        // 0 = current/newest verdict, 1 = one older, etc. -1 = no verdict yet displayed via history navigation.
+        private int _verdictHistoryIndex = 0;
+
+        private void PrevVerdictButton_Click(object? sender, RoutedEventArgs e)
         {
-            try
+            if (_verdictHistoryIndex > 0)
             {
-                var scrollBarStyle = TryFindResource("TranscriptScrollBarStyle") as Style;
-                if (scrollBarStyle == null) return;
-
-                var template = new ControlTemplate(typeof(ScrollViewer));
-
-                var dockFactory = new FrameworkElementFactory(typeof(DockPanel));
-
-                var scrollBarFactory = new FrameworkElementFactory(typeof(ScrollBar), "PART_VerticalScrollBar");
-                scrollBarFactory.SetValue(DockPanel.DockProperty, Dock.Right);
-                scrollBarFactory.SetValue(ScrollBar.OrientationProperty, Orientation.Vertical);
-                scrollBarFactory.SetValue(Control.StyleProperty, scrollBarStyle);
-                scrollBarFactory.SetBinding(ScrollBar.ValueProperty, new System.Windows.Data.Binding("VerticalOffset") { RelativeSource = RelativeSource.TemplatedParent });
-                scrollBarFactory.SetBinding(ScrollBar.MaximumProperty, new System.Windows.Data.Binding("ScrollableHeight") { RelativeSource = RelativeSource.TemplatedParent });
-                scrollBarFactory.SetBinding(ScrollBar.ViewportSizeProperty, new System.Windows.Data.Binding("ViewportHeight") { RelativeSource = RelativeSource.TemplatedParent });
-                scrollBarFactory.SetBinding(UIElement.VisibilityProperty, new System.Windows.Data.Binding("ComputedVerticalScrollBarVisibility") { RelativeSource = RelativeSource.TemplatedParent });
-
-                var contentPresenterFactory = new FrameworkElementFactory(typeof(ScrollContentPresenter), "PART_ScrollContentPresenter");
-                contentPresenterFactory.SetBinding(ContentPresenter.ContentProperty, new System.Windows.Data.Binding("Content") { RelativeSource = RelativeSource.TemplatedParent });
-                contentPresenterFactory.SetBinding(ContentPresenter.ContentTemplateProperty, new System.Windows.Data.Binding("ContentTemplate") { RelativeSource = RelativeSource.TemplatedParent });
-                contentPresenterFactory.SetBinding(ScrollContentPresenter.CanContentScrollProperty, new System.Windows.Data.Binding("CanContentScroll") { RelativeSource = RelativeSource.TemplatedParent });
-                contentPresenterFactory.SetBinding(FrameworkElement.MarginProperty, new System.Windows.Data.Binding("Padding") { RelativeSource = RelativeSource.TemplatedParent });
-
-                dockFactory.AppendChild(scrollBarFactory);
-                dockFactory.AppendChild(contentPresenterFactory);
-
-                template.VisualTree = dockFactory;
-                scrollViewer.Template = template;
+                _verdictHistoryIndex--;
+                DisplayVerdictAtHistoryIndex(_verdictHistoryIndex);
             }
-            catch { }
         }
 
-        private void HistoryButton_Click(object? sender, RoutedEventArgs e)
+        private void NextVerdictButton_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_verdictHistoryIndex < _verdictHistory.Count - 1)
+            {
+                _verdictHistoryIndex++;
+                DisplayVerdictAtHistoryIndex(_verdictHistoryIndex);
+            }
+        }
+
+        // Displays the verdict at the given index in _verdictHistory (0 = newest) in the main widget
+        // and updates the enabled state of the navigation buttons accordingly.
+        private void DisplayVerdictAtHistoryIndex(int index)
         {
             try
             {
-                Window? win = null;
-                win = new Window
-                {
-                    Title = "Verdict History",
-                    Width = 700,
-                    Height = 420,
-                    Owner = this,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    WindowStyle = WindowStyle.None,
-                    AllowsTransparency = true,
-                    Background = Brushes.Transparent
-                };
-
-                var outer = new Border
-                {
-                    Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)),
-                    CornerRadius = new CornerRadius(8),
-                    Padding = new Thickness(0),
-                    SnapsToDevicePixels = true
-                };
-
-                var root = new Grid { Margin = new Thickness(0) };
-                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(18) });
-                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-                var titleBar = new Border { Background = Brushes.Black, CornerRadius = new CornerRadius(8, 8, 0, 0), Height = 18 };
-                titleBar.MouseLeftButtonDown += (s, ev) => { try { if (ev.ButtonState == MouseButtonState.Pressed) win.DragMove(); } catch { } };
-
-                var tbGrid = new Grid();
-                tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-                var titleText = new TextBlock { Text = "Verdict History", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), FontSize = 12, FontWeight = FontWeights.SemiBold };
-                Grid.SetColumn(titleText, 0);
-                tbGrid.Children.Add(titleText);
-
-                var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
-
-                var roundStyleObj = TryFindResource("RoundButtonStyle");
-                Style roundStyle = roundStyleObj as Style;
-                if (roundStyle == null)
-                {
-                    var template = new ControlTemplate(typeof(Button));
-                    var borderFactory = new FrameworkElementFactory(typeof(Border));
-                    borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(999));
-                    borderFactory.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
-                    borderFactory.SetBinding(Border.WidthProperty, new System.Windows.Data.Binding("Width") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
-                    borderFactory.SetBinding(Border.HeightProperty, new System.Windows.Data.Binding("Height") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
-                    var contentPresenterFactory = new FrameworkElementFactory(typeof(ContentPresenter));
-                    contentPresenterFactory.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-                    contentPresenterFactory.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-                    borderFactory.AppendChild(contentPresenterFactory);
-                    template.VisualTree = borderFactory;
-
-                    var style = new Style(typeof(Button));
-                    style.Setters.Add(new Setter(Button.WidthProperty, 14.0));
-                    style.Setters.Add(new Setter(Button.HeightProperty, 14.0));
-                    style.Setters.Add(new Setter(Button.PaddingProperty, new Thickness(0)));
-                    style.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(0)));
-                    style.Setters.Add(new Setter(Button.BackgroundProperty, Brushes.Transparent));
-                    style.Setters.Add(new Setter(Button.TemplateProperty, template));
-
-                    roundStyle = style;
-                }
-
-                var minimizeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6, 0, 0, 0) };
-                if (roundStyle != null) minimizeBtn.Style = roundStyle;
-                try { minimizeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0xB4, 0x00)); } catch { minimizeBtn.Background = Brushes.Gold; }
-                minimizeBtn.Click += (s, ev) => { try { win.WindowState = WindowState.Minimized; } catch { } };
-                minimizeBtn.Content = new TextBlock { Text = "—", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-
-                var closeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6, 0, 0, 0) };
-                if (roundStyle != null) closeBtn.Style = roundStyle;
-                try { closeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0x6A, 0x5A)); } catch { closeBtn.Background = Brushes.IndianRed; }
-                closeBtn.Click += (s, ev) => { try { win.Close(); } catch { } };
-                closeBtn.Content = new TextBlock { Text = "✕", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-
-                btnPanel.Children.Add(minimizeBtn);
-                btnPanel.Children.Add(closeBtn);
-                Grid.SetColumn(btnPanel, 1);
-                tbGrid.Children.Add(btnPanel);
-
-                titleBar.Child = tbGrid;
-                Grid.SetRow(titleBar, 0);
-                root.Children.Add(titleBar);
-
-                // content area
-                var contentGrid = new Grid { Margin = new Thickness(8) };
-                Grid.SetRow(contentGrid, 1);
-
-                var contentBorder = new Border { Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)), CornerRadius = new CornerRadius(6), Padding = new Thickness(8) };
-                var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-                ApplyTranscriptScrollViewerTemplate(scroll);
-                var contentStack = new StackPanel { Orientation = Orientation.Vertical };
-                scroll.Content = contentStack;
-                contentBorder.Child = scroll;
-                contentGrid.Children.Add(contentBorder);
-
-                root.Children.Add(contentGrid);
-                outer.Child = root;
-                win.Content = outer;
-
-                // populate function
-                Action populate = () =>
-                {
-                    try
-                    {
-                        contentStack.Children.Clear();
-                        foreach (var rec in _verdictHistory)
-                        {
-                            var itemBorder = new Border { Padding = new Thickness(8), Margin = new Thickness(0, 0, 0, 8) };
-                            var g = new Grid();
-                            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
-                            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-                            var left = new Grid { Width = 64, Height = 64, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-                            try
-                            {
-                                // outer static ring
-                                var outerEllipse = new System.Windows.Shapes.Ellipse { Width = 64, Height = 64, StrokeThickness = 6, Stroke = new SolidColorBrush(Color.FromRgb(0xAA,0xAA,0xAA)) };
-
-                                // arc path showing confidence percent
-                                var arcPath = new System.Windows.Shapes.Path { Width = 64, Height = 64, Stroke = rec.StrokeBrush ?? Brushes.Gray, StrokeThickness = 6, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, Fill = Brushes.Transparent };
-                                try
-                                {
-                                    int clamped = Math.Max(0, Math.Min(100, rec.Confidence));
-                                    double w = arcPath.Width;
-                                    double stroke = arcPath.StrokeThickness;
-                                    double cx = w / 2.0;
-                                    double cy = w / 2.0;
-                                    double radius = Math.Max(0.0, Math.Min(w, w) / 2.0 - stroke / 2.0);
-
-                                    if (clamped <= 0)
-                                    {
-                                        arcPath.Data = null;
-                                    }
-                                    else if (clamped >= 100)
-                                    {
-                                        arcPath.Data = new EllipseGeometry(new Point(cx, cy), radius, radius);
-                                    }
-                                    else
-                                    {
-                                        double percent = clamped / 100.0;
-                                        double sweepDeg = 360.0 * percent;
-                                        double startDeg = -90.0;
-                                        double endDeg = rec.IsShort ? startDeg - sweepDeg : startDeg + sweepDeg;
-                                        double startRad = startDeg * Math.PI / 180.0;
-                                        double endRad = endDeg * Math.PI / 180.0;
-                                        var startPoint = new Point(cx + radius * Math.Cos(startRad), cy + radius * Math.Sin(startRad));
-                                        var endPoint = new Point(cx + radius * Math.Cos(endRad), cy + radius * Math.Sin(endRad));
-                                        bool isLargeArc = Math.Abs(sweepDeg) > 180.0;
-                                        var pf = new PathFigure { StartPoint = startPoint, IsClosed = false, IsFilled = false };
-                                        var seg = new ArcSegment(endPoint, new Size(radius, radius), 0.0, isLargeArc, rec.IsShort ? SweepDirection.Counterclockwise : SweepDirection.Clockwise, true);
-                                        pf.Segments.Add(seg);
-                                        var pg = new PathGeometry();
-                                        pg.Figures.Add(pf);
-                                        arcPath.Data = pg;
-                                    }
-                                }
-                                catch { }
-
-                                var innerEllipse = new System.Windows.Shapes.Ellipse { Width = 40, Height = 40, Fill = new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2B)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-                                var percentText = new TextBlock { Text = (rec.Confidence.ToString() + "%"), Foreground = Brushes.White, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, FontSize = 16 };
-
-                                left.Children.Add(outerEllipse);
-                                left.Children.Add(arcPath);
-                                left.Children.Add(innerEllipse);
-                                left.Children.Add(percentText);
-                            }
-                            catch { }
-                            Grid.SetColumn(left, 0);
-                            g.Children.Add(left);
-
-                            var right = new StackPanel { Margin = new Thickness(12, 0, 0, 0) };
-                            var header = new TextBlock { Text = rec.HeaderText, Foreground = Brushes.White, FontWeight = FontWeights.Bold, FontSize = 14, TextWrapping = TextWrapping.Wrap };
-                            var reason = new TextBlock { Text = rec.Reason, Foreground = new SolidColorBrush(Color.FromRgb(0xBF, 0xBF, 0xBF)), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
-                            right.Children.Add(header);
-                            right.Children.Add(reason);
-                            Grid.SetColumn(right, 1);
-                            g.Children.Add(right);
-
-                            itemBorder.Child = g;
-                            contentStack.Children.Add(itemBorder);
-                        }
-                    }
-                    catch { }
-                };
-
-                // initial populate
-                populate();
-
-                var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-                timer.Tick += (s, ev) => populate();
-                win.Closed += (s, ev) => timer.Stop();
-                // Close with Escape key for dynamic Verdict History window
-                win.PreviewKeyDown += (s, e) => { try { if (e.Key == System.Windows.Input.Key.Escape) win.Close(); } catch { } };
-                timer.Start();
-
-                win.ShowDialog();
+                if (index < 0 || index >= _verdictHistory.Count) return;
+                var rec = _verdictHistory[index];
+                bool isCurrent = index == 0;
+                RenderVerdict(rec.Verdict, rec.Ticker, rec.Confidence, rec.Reason, isCurrent ? (DateTime?)null : rec.Timestamp);
             }
-            catch (Exception ex)
+            catch { }
+            finally
             {
-                try { (Application.Current as App)?.ShowUiException(new Exception("Fehler beim Öffnen der Verdict-History: " + ex.Message)); } catch { }
+                UpdateVerdictNavButtons();
             }
+        }
+
+        private void UpdateVerdictNavButtons()
+        {
+            try
+            {
+                PrevVerdictButton.Visibility = _verdictHistoryIndex > 0 ? Visibility.Visible : Visibility.Hidden;
+                NextVerdictButton.Visibility = _verdictHistoryIndex < _verdictHistory.Count - 1 ? Visibility.Visible : Visibility.Hidden;
+            }
+            catch { }
         }
 
         private void ShowLogs_Click(object sender, RoutedEventArgs e)
@@ -334,17 +157,26 @@ namespace FedTrader
         }
 
         private readonly System.Collections.ObjectModel.ObservableCollection<TickerViewModel> _tickers = new();
-        // ordered groups as in screenshot (preserve grouping)
-        private static readonly System.Collections.Generic.List<(string Key, string[] Symbols)> TickerGroups = new()
+        private readonly System.Collections.ObjectModel.ObservableCollection<ExpandedMarketSectionViewModel> _expandedGridSections = new();
+
+        private static readonly System.Collections.Generic.List<(string Key, string[] Symbols)> SmallGridGroups = new()
         {
-            ("treasury_yields", new[] { "^TNX", "^TYX" }),
+            ("treasury_yields_core", new[] { "BIL", "^TNX", "^TYX" }),
+            ("liquidity_anchors", new[] { "UUP", "GLD" }),
+            ("equity_indices", new[] { "QQQ", "IWM" }),
+            ("banking_stress", new[] { "KRE" })
+        };
+
+        private static readonly System.Collections.Generic.List<(string Key, string[] Symbols)> ExpandedGridExtraGroups = new()
+        {
             ("bond_proxies", new[] { "TLT", "AGG" }),
             ("reits", new[] { "VNQ" }),
             ("utilities", new[] { "XLU" }),
             ("homebuilders", new[] { "XHB", "ITB" }),
-            ("tech_giants", new[] { "QQQ", "MAGS" }),
+            ("tech_giants_extended", new[] { "MAGS" }),
             ("unprofitable_growth", new[] { "ARKK" }),
-            ("financials", new[] { "XLF" })
+            ("financials_broad", new[] { "XLF" }),
+            ("credit_risk", new[] { "HYG" })
         };
 
         private WebSocketService? _wsService;
@@ -352,23 +184,177 @@ namespace FedTrader
         private Process? _backendProcess;
         // flag to detect first real transcript input from backend
         private bool _transcriptReceived = false;
+        private MarketUpdateMessage? _latestMarketUpdate;
+        private readonly System.Windows.Threading.DispatcherTimer _marketDataPopupCloseTimer = new();
+        private bool _isMarketDataPopupOpen = false;
         private readonly System.Text.StringBuilder _backendLogBuffer = new();
         private const int BackendLogBufferLimit = 1_048_576; // ~1 MB chars
         // verdict history (newest first)
         private readonly System.Collections.ObjectModel.ObservableCollection<VerdictRecord> _verdictHistory = new();
+
+        private Button? ExpandMarketButtonElement => FindName("ExpandMarketButton") as Button;
+        private Popup? MarketDataPopupElement => FindName("MarketDataPopup") as Popup;
+        private Border? MarketDataPopupBorderElement => FindName("MarketDataPopupBorder") as Border;
+        private Grid? ExpandedMarketGridElement => FindName("ExpandedMarketGrid") as Grid;
+
+        private static string ToExpandedCategoryTitle(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return string.Empty;
+            }
+
+            var parts = key.Split('_', StringSplitOptions.RemoveEmptyEntries);
+            for (var i = 0; i < parts.Length; i++)
+            {
+                var part = parts[i];
+                parts[i] = part.Length == 0 ? part : char.ToUpperInvariant(part[0]) + part[1..];
+            }
+
+            return string.Join(" ", parts);
+        }
+
+        private static string FormatMarketPrice(double price)
+        {
+            return Math.Abs(price) < 0.0000001 ? "No Data Available" : $"{price:0.000}";
+        }
+
+        private static string FormatMarketChange(double changePercent)
+        {
+            return Math.Abs(changePercent) < 0.0000001 ? "No Data Available" : $"{changePercent:+0.000;-0.000;0.000}%";
+        }
+
+        private static string GetTickerTooltipText(string symbol)
+        {
+            return symbol.ToUpperInvariant() switch
+            {
+                "BIL" => "SPDR Bloomberg 1-3 Month T-Bill ETF · Short-term government bonds\nLow risk / cash proxy · Usually steady around Fed moves",
+                "^TNX" => "CBOE 10-Year Treasury Yield Index · U.S. Treasury yields\nMacro risk indicator · Very sensitive to rate decisions",
+                "^TYX" => "CBOE 30-Year Treasury Yield Index · U.S. Treasury yields\nLong-duration / rate sensitivity · Strongly impacted by Fed outlook",
+                "UUP" => "Invesco DB US Dollar Index Bullish Fund · U.S. dollar\nHedging asset / low risk · Often reacts to rate differentials",
+                "GLD" => "SPDR Gold Shares · Gold / commodities\nSafe haven / hedging asset · Often benefits from easing expectations",
+                "QQQ" => "Invesco QQQ Trust · Nasdaq-100 / technology\nGrowth-oriented / high risk · Rate-sensitive and valuation-driven",
+                "IWM" => "iShares Russell 2000 ETF · U.S. small caps\nCyclical / high risk · Often reacts to financing conditions",
+                "KRE" => "SPDR S&P Regional Banking ETF · Regional banks / financials\nCyclical / risk-sensitive · Very exposed to rate policy shifts",
+                "TLT" => "iShares 20+ Year Treasury Bond ETF · Long-dated U.S. Treasuries\nSafe haven / rate hedge · Usually rises when yields fall",
+                "AGG" => "iShares Core U.S. Aggregate Bond ETF · U.S. bond market\nLow risk / diversification · Typically benefits from rate cuts",
+                "VNQ" => "Vanguard Real Estate ETF · Real estate / REITs\nIncome-oriented / rate-sensitive · Often prefers lower rates",
+                "XLU" => "Utilities Select Sector SPDR Fund · Utilities\nDefensive / low risk · Usually resilient in uncertain policy cycles",
+                "XHB" => "SPDR S&P Homebuilders ETF · Homebuilding / housing\nCyclical / high risk · Sensitive to mortgage-rate expectations",
+                "ITB" => "iShares U.S. Home Construction ETF · Homebuilding / housing\nCyclical / high risk · Sensitive to mortgage-rate expectations",
+                "MAGS" => "Roundhill Magnificent Seven ETF · U.S. mega-cap tech\nMomentum / high risk · Usually reacts strongly to discount-rate moves",
+                "ARKK" => "ARK Innovation ETF · Innovation / high growth\nHighly volatile / high risk · Often benefits from easier policy",
+                "XLF" => "Financial Select Sector SPDR Fund · Financials\nCyclical / market-sensitive · Can react to yield-curve changes",
+                "HYG" => "iShares iBoxx USD High Yield Corporate Bond ETF · High-yield bonds\nYield-oriented / high risk · Tends to improve with easier financial conditions",
+                _ => "Unknown market proxy · Macro sensitivity\nBroad market observation · Reaction to Fed moves depends on asset type"
+            };
+        }
+
+        private static ToolTip CreateTickerToolTip(string tooltipText)
+        {
+            return new ToolTip
+            {
+                Background = new SolidColorBrush(Color.FromRgb(16, 16, 16)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(32, 32, 32)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(8, 6, 8, 6),
+                Content = new TextBlock
+                {
+                    Text = tooltipText ?? string.Empty,
+                    Foreground = Brushes.White,
+                    FontSize = 11,
+                    TextWrapping = TextWrapping.Wrap
+                }
+            };
+        }
+
+        private TickerViewModel CreateTickerViewModel(string symbol, Quote q)
+        {
+            var valueText = FormatMarketPrice(q.Price);
+            var changeText = FormatMarketChange(q.ChangePercent);
+            var tendency = Math.Abs(q.Price) < 0.0000001 && Math.Abs(q.ChangePercent) < 0.0000001
+                ? "NO DATA"
+                : q.ChangePercent > 0.0001 ? "UP" : (q.ChangePercent < -0.0001 ? "DOWN" : "SIDEWAYS");
+            SolidColorBrush trendColor = Brushes.Gray;
+            double trendRotation = 90.0;
+
+            try
+            {
+                if (Math.Abs(q.Price) < 0.0000001 && Math.Abs(q.ChangePercent) < 0.0000001)
+                {
+                    trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FF9E9E9E"));
+                    trendRotation = 90.0;
+                }
+                else if (q.ChangePercent > 0.0001) trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FF4CAF50"));
+                else if (q.ChangePercent < -0.0001) trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FFF44336"));
+                else trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FF9E9E9E"));
+
+                if (q.ChangePercent > 0.0001) trendRotation = 0.0;
+                else if (q.ChangePercent < -0.0001) trendRotation = 180.0;
+                else trendRotation = 90.0;
+            }
+            catch { trendColor = Brushes.Gray; }
+
+            var tooltipText = GetTickerTooltipText(symbol);
+            return new TickerViewModel { Name = symbol, Value = valueText, Change = changeText, Tendency = tendency, TooltipText = tooltipText, TooltipControl = CreateTickerToolTip(tooltipText), TrendColor = trendColor, TrendRotation = trendRotation };
+        }
+
+        private System.Collections.Generic.List<ExpandedMarketSectionViewModel> BuildMarketSections(
+            MarketUpdateMessage mu,
+            System.Collections.Generic.IEnumerable<(string Key, string[] Symbols)> groups)
+        {
+            var sections = new System.Collections.Generic.List<ExpandedMarketSectionViewModel>();
+
+            foreach (var group in groups)
+            {
+                var section = new ExpandedMarketSectionViewModel { Header = ToExpandedCategoryTitle(group.Key) };
+
+                foreach (var symbol in group.Symbols)
+                {
+                    mu.Quotes.TryGetValue(symbol, out var q);
+                    q ??= new Quote { Price = 0, ChangePercent = 0 };
+                    section.Tickers.Add(CreateTickerViewModel(symbol, q));
+                }
+
+                sections.Add(section);
+            }
+
+            return sections;
+        }
         public MainWindow()
         {
             InitializeComponent();
             // bind tickers collection to ItemsControl
             try { TickersItems.ItemsSource = _tickers; } catch { }
+            try
+            {
+                _marketDataPopupCloseTimer.Interval = TimeSpan.FromSeconds(3);
+                _marketDataPopupCloseTimer.Tick += (_, __) => CloseMarketDataPopup();
+                if (MarketDataPopupElement != null)
+                {
+                    MarketDataPopupElement.Closed += (_, __) => OnMarketDataPopupClosed();
+                }
+
+                _liveDisclaimerTimer.Interval = TimeSpan.FromMilliseconds(450);
+                _liveDisclaimerTimer.Tick += (_, __) => AnimateLiveDisclaimerDots();
+                if (TopLiveMarketDisclaimer2 != null)
+                {
+                    TopLiveMarketDisclaimer2.Text = "Nothing to see here yet. Give us a moment.";
+                }
+                _liveDisclaimerTimer.Start();
+
+            }
+            catch { }
             // initialize default UI for verdict widget
             UpdateConfidence(0);
             UpdateVerdict("NONE", "");
-            UpdateReason("[REASON]");
+            UpdateReason(string.Empty);
             // create a simple temp debug file marker so we can detect if UI code runs
             try { DebugLogger.Log("[UI] MainWindow ctor"); } catch { }
-            // wire history button if present
-            try { HistoryButton.Click += HistoryButton_Click; } catch { }
+            // wire verdict navigation buttons if present
+            try { PrevVerdictButton.Click += PrevVerdictButton_Click; } catch { }
+            try { NextVerdictButton.Click += NextVerdictButton_Click; } catch { }
+            try { UpdateVerdictNavButtons(); } catch { }
             // expose a simple public wrapper for showing logs and saving logs for global error dialog
             try { /* noop - methods exist below */ } catch { }
         }
@@ -408,38 +394,406 @@ namespace FedTrader
         {
             try
             {
-                // update observable collection for ItemsControl
-                _tickers.Clear();
-                foreach (var group in TickerGroups)
+                HideLiveDisclaimer();
+                _latestMarketUpdate = mu;
+                _expandedGridSections.Clear();
+                foreach (var section in BuildMarketSections(mu, SmallGridGroups.Concat(ExpandedGridExtraGroups)))
                 {
-                    // add only actual ticker symbols (no category headers)
+                    _expandedGridSections.Add(section);
+                }
+
+                // update observable collection for the compact 4x2 market grid
+                _tickers.Clear();
+                foreach (var group in SmallGridGroups)
+                {
                     foreach (var symbol in group.Symbols)
                     {
                         mu.Quotes.TryGetValue(symbol, out var q);
                         q ??= new Quote { Price = 0, ChangePercent = 0 };
-                        // show prices with three decimals to capture precision for treasury yields
-                        var valueText = q.Price != 0 ? $"{q.Price:0.000}" : string.Empty;
-                        var changeText = $"{q.ChangePercent:+0.000;-0.000;0.000}%";
-                        var tendency = q.ChangePercent > 0.0001 ? "UP" : (q.ChangePercent < -0.0001 ? "DOWN" : "SIDEWAYS");
-                        SolidColorBrush trendColor = Brushes.Gray;
-                        double trendRotation = 90.0; // default sideways
-                        try {
-                            if (q.ChangePercent > 0.0001) trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FF4CAF50"));
-                            else if (q.ChangePercent < -0.0001) trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FFF44336"));
-                            else trendColor = (SolidColorBrush)(new BrushConverter().ConvertFromString("#FF9E9E9E"));
-                            if (q.ChangePercent > 0.0001) trendRotation = 0.0;
-                            else if (q.ChangePercent < -0.0001) trendRotation = 180.0;
-                            else trendRotation = 90.0;
-                        } catch { trendColor = Brushes.Gray; }
-
-                        _tickers.Add(new TickerViewModel { Name = symbol, Value = valueText, Change = changeText, Tendency = tendency, TrendColor = trendColor, TrendRotation = trendRotation });
+                        _tickers.Add(CreateTickerViewModel(symbol, q));
                     }
                 }
 
                 // update timestamp
                 try { TimestampRun.Text = mu.Timestamp.ToString("yyyy-MM-dd HH:mm:ss"); } catch { }
+                try { if (_isMarketDataPopupOpen) RefreshExpandedMarketPopup(); } catch { }
             }
             catch { }
+        }
+
+        private void AnimateLiveDisclaimerDots()
+        {
+            try
+            {
+                if (_liveDisclaimerHidden)
+                {
+                    _liveDisclaimerTimer.Stop();
+                    return;
+                }
+
+                _liveDisclaimerDots = (_liveDisclaimerDots + 1) % 3;
+                var dots = new string('.', _liveDisclaimerDots + 1);
+                if (TopLiveMarketDisclaimer2 != null)
+                {
+                    TopLiveMarketDisclaimer2.Text = $"Nothing to see here yet. Give us a moment{dots}";
+                }
+            }
+            catch { }
+        }
+
+        private void HideLiveDisclaimer()
+        {
+            try
+            {
+                _liveDisclaimerHidden = true;
+                _liveDisclaimerTimer.Stop();
+                if (TopLiveMarketDisclaimer2 != null)
+                {
+                    TopLiveMarketDisclaimer2.Visibility = Visibility.Hidden;
+                }
+            }
+            catch { }
+        }
+
+        private void ExpandMarketButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_isMarketDataPopupOpen)
+                {
+                    CloseMarketDataPopup();
+                }
+                else
+                {
+                    OpenMarketDataPopup();
+                }
+            }
+            catch { }
+        }
+
+        private void CollapseMarketButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloseMarketDataPopup();
+        }
+
+        private void MarketDataPopupRoot_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            try { _marketDataPopupCloseTimer.Stop(); } catch { }
+        }
+
+        private void MarketDataPopupRoot_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            try
+            {
+                if (_isMarketDataPopupOpen)
+                {
+                    _marketDataPopupCloseTimer.Stop();
+                    _marketDataPopupCloseTimer.Start();
+                }
+            }
+            catch { }
+        }
+
+        private void OpenMarketDataPopup()
+        {
+            if (_isMarketDataPopupOpen)
+            {
+                return;
+            }
+
+            RefreshExpandedMarketPopup();
+            var anchor = GetMarketDataAnchorRect();
+            _isMarketDataPopupOpen = true;
+            try { if (TickersItems != null) TickersItems.Visibility = Visibility.Hidden; } catch { }
+            try { if (ExpandMarketButtonElement != null) ExpandMarketButtonElement.Content = "Collapse"; } catch { }
+            try
+            {
+                if (MarketDataPopupBorderElement != null)
+                {
+                    MarketDataPopupBorderElement.Width = anchor.Width;
+                    MarketDataPopupBorderElement.Height = anchor.Height;
+                }
+            }
+            catch { }
+            try
+            {
+                if (MarketDataPopupElement != null)
+                {
+                    MarketDataPopupElement.PlacementTarget = this;
+                    MarketDataPopupElement.Placement = System.Windows.Controls.Primitives.PlacementMode.Relative;
+                    MarketDataPopupElement.HorizontalOffset = anchor.X;
+                    MarketDataPopupElement.VerticalOffset = anchor.Y;
+                    MarketDataPopupElement.IsOpen = true;
+                }
+            }
+            catch { }
+            try
+            {
+                _marketDataPopupCloseTimer.Stop();
+                _marketDataPopupCloseTimer.Start();
+            }
+            catch { }
+
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(AnimateMarketDataPopupOpen), System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+            catch { }
+        }
+
+        private void CloseMarketDataPopup()
+        {
+            try { _marketDataPopupCloseTimer.Stop(); } catch { }
+            try { if (MarketDataPopupElement != null) MarketDataPopupElement.IsOpen = false; } catch { }
+            OnMarketDataPopupClosed();
+        }
+
+        private void OnMarketDataPopupClosed()
+        {
+            _isMarketDataPopupOpen = false;
+            try { if (TickersItems != null) TickersItems.Visibility = Visibility.Visible; } catch { }
+            try { if (ExpandMarketButtonElement != null) ExpandMarketButtonElement.Content = "Expand"; } catch { }
+            try { _marketDataPopupCloseTimer.Stop(); } catch { }
+        }
+
+        private void RefreshExpandedMarketPopup()
+        {
+            try
+            {
+                if (_latestMarketUpdate == null)
+                {
+                    if (ExpandedMarketGridElement != null)
+                    {
+                        ExpandedMarketGridElement.Children.Clear();
+                        ExpandedMarketGridElement.RowDefinitions.Clear();
+                    }
+                    return;
+                }
+
+                BuildExpandedMarketGrid(_latestMarketUpdate);
+            }
+            catch { }
+        }
+
+        private System.Windows.Rect GetMarketDataAnchorRect()
+        {
+            try
+            {
+                if (TickersItems != null && IsLoaded)
+                {
+                    var anchor = TickersItems.TransformToAncestor(this).Transform(new Point(0, 0));
+                    return new System.Windows.Rect(anchor.X, anchor.Y, Math.Max(1, TickersItems.ActualWidth), Math.Max(1, TickersItems.ActualHeight));
+                }
+            }
+            catch { }
+
+            return new System.Windows.Rect(25, 226, 450, 250);
+        }
+
+        private System.Windows.Size GetExpandedMarketTargetSize()
+        {
+            try
+            {
+                var grid = ExpandedMarketGridElement;
+                if (grid == null)
+                {
+                    return new System.Windows.Size(640, 320);
+                }
+
+                grid.Measure(new System.Windows.Size(double.PositiveInfinity, double.PositiveInfinity));
+                var desired = grid.DesiredSize;
+                var borderPadding = 20.0;
+                var borderThickness = 2.0;
+                return new System.Windows.Size(Math.Max(640, desired.Width + borderPadding + borderThickness), Math.Max(260, desired.Height + borderPadding + borderThickness));
+            }
+            catch
+            {
+                return new System.Windows.Size(640, 320);
+            }
+        }
+
+        private void AnimateMarketDataPopupOpen()
+        {
+            try
+            {
+                var popup = MarketDataPopupElement;
+                var border = MarketDataPopupBorderElement;
+                if (popup == null || border == null)
+                {
+                    return;
+                }
+
+                var targetSize = GetExpandedMarketTargetSize();
+
+                var widthAnimation = new DoubleAnimation
+                {
+                    From = Math.Max(1, border.ActualWidth),
+                    To = targetSize.Width,
+                    Duration = TimeSpan.FromMilliseconds(220),
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                };
+
+                var heightAnimation = new DoubleAnimation
+                {
+                    From = Math.Max(1, border.ActualHeight),
+                    To = targetSize.Height,
+                    Duration = TimeSpan.FromMilliseconds(220),
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                };
+
+                border.BeginAnimation(FrameworkElement.WidthProperty, widthAnimation);
+                border.BeginAnimation(FrameworkElement.HeightProperty, heightAnimation);
+            }
+            catch { }
+        }
+
+        private void BuildExpandedMarketGrid(MarketUpdateMessage mu)
+        {
+            var expandedGrid = ExpandedMarketGridElement;
+            if (expandedGrid == null)
+            {
+                return;
+            }
+
+            expandedGrid.Children.Clear();
+            expandedGrid.RowDefinitions.Clear();
+
+            var sectionIndex = 0;
+            var row = 0;
+            while (sectionIndex < _expandedGridSections.Count)
+            {
+                expandedGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+                var rowGrid = new Grid
+                {
+                    Margin = new Thickness(0, row == 0 ? 0 : 8, 0, 0)
+                };
+                rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                for (var col = 0; col < 2 && sectionIndex < _expandedGridSections.Count; col++, sectionIndex++)
+                {
+                    var section = _expandedGridSections[sectionIndex];
+                    var sectionPanel = CreateExpandedSectionPanel(section);
+                    Grid.SetColumn(sectionPanel, col);
+                    rowGrid.Children.Add(sectionPanel);
+                }
+
+                Grid.SetRow(rowGrid, row++);
+                expandedGrid.Children.Add(rowGrid);
+            }
+        }
+
+        private Border CreateExpandedSectionPanel(ExpandedMarketSectionViewModel section)
+        {
+            var sectionBorder = new Border
+            {
+                Background = Brushes.Transparent,
+                Margin = new Thickness(0, 0, 12, 0),
+                Padding = new Thickness(0)
+            };
+
+            var sectionStack = new StackPanel
+            {
+                Orientation = Orientation.Vertical
+            };
+
+            sectionStack.Children.Add(new TextBlock
+            {
+                Text = section.Header,
+                Foreground = Brushes.White,
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 4)
+            });
+
+            var items = new UniformGrid
+            {
+                Columns = 1,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+
+            foreach (var ticker in section.Tickers)
+            {
+                items.Children.Add(CreateExpandedTickerCard(ticker));
+            }
+
+            sectionStack.Children.Add(items);
+            sectionBorder.Child = sectionStack;
+            return sectionBorder;
+        }
+
+        private Border CreateExpandedTickerCard(TickerViewModel ticker)
+        {
+            var card = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(16, 16, 16)),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(6),
+                Margin = new Thickness(0, 0, 8, 0),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(32, 32, 32)),
+                BorderThickness = new Thickness(1),
+                MinHeight = 28,
+                MinWidth = 0,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                ToolTip = CreateTickerToolTip(ticker.TooltipText)
+            };
+
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(48) });
+
+            grid.Children.Add(new TextBlock
+            {
+                Text = ticker.Name,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = Brushes.White,
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold
+            });
+
+            var values = new Grid { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+            values.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) });
+            values.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(48) });
+            Grid.SetColumn(values, 1);
+            values.Children.Add(new TextBlock
+            {
+                Text = ticker.Value,
+                Foreground = Brushes.White,
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment = TextAlignment.Right,
+                Margin = new Thickness(0, 0, 6, 0)
+            });
+            Grid.SetColumn(values.Children[0], 0);
+            values.Children.Add(new TextBlock
+            {
+                Text = ticker.Change,
+                Foreground = new SolidColorBrush(Color.FromRgb(191, 191, 191)),
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment = TextAlignment.Left
+            });
+            Grid.SetColumn(values.Children[1], 1);
+            grid.Children.Add(values);
+
+            var triangle = new Polygon
+            {
+                Points = new PointCollection(new[] { new Point(6, 0), new Point(12, 12), new Point(0, 12) }),
+                Fill = ticker.TrendColor,
+                Width = 12,
+                Height = 12,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                RenderTransformOrigin = new Point(0.5, 0.5),
+                RenderTransform = new RotateTransform(ticker.TrendRotation)
+            };
+            Grid.SetColumn(triangle, 2);
+            grid.Children.Add(triangle);
+
+            card.Child = grid;
+            return card;
         }
 
 
@@ -465,10 +819,12 @@ namespace FedTrader
                 _wsService.OnMarketUpdate += mu => Dispatcher.Invoke(() => RenderMarketUpdate(mu));
                 _wsService.OnConfidence += v => Dispatcher.Invoke(() => { AddConfidenceSample(v); UpdateConfidence(v); });
                 _wsService.OnVerdict += vm => Dispatcher.Invoke(() => {
+                    try { AddVerdictToHistory(vm.Verdict, vm.Ticker, vm.Confidence, vm.Reason); } catch { }
+                    _verdictHistoryIndex = 0;
                     UpdateVerdict(vm.Verdict, vm.Ticker, vm.Confidence);
                     UpdateReason(vm.Reason);
                     if (vm.Confidence != 0) AddConfidenceSample(vm.Confidence);
-                    try { AddVerdictToHistory(vm.Verdict, vm.Ticker, vm.Confidence, vm.Reason); } catch { }
+                    UpdateVerdictNavButtons();
                 });
                 _wsService.OnTranscript += t => {
                     // log raw transcript arrival for debugging
@@ -543,6 +899,7 @@ namespace FedTrader
         {
             try
             {
+                CloseMarketDataPopup();
                 _wsCts?.Cancel();
                 if (_wsService != null)
                 {
@@ -988,7 +1345,12 @@ namespace FedTrader
                 win.PreviewKeyDown += (s, e) => { try { if (e.Key == System.Windows.Input.Key.Escape) win.Close(); } catch { } };
                 timer.Start();
 
-                win.ShowDialog();
+                //Block Ownership
+
+                win.Owner = null;
+
+                // Instead of secondaryWindow.ShowDialog(); (which blocks the owner/main window)
+                win.Show();
             }
             catch (Exception ex)
             {
@@ -1108,9 +1470,40 @@ namespace FedTrader
         // Public API to update the verdict widget dynamically
         public void UpdateVerdict(string verdict, string ticker, int confidence = 0)
         {
+            RenderVerdict(verdict, ticker, confidence, null, null);
+        }
+
+        // Renders a verdict into the widget. If historyTimestamp is set, the header uses the
+        // "Older Verdict from [DATETIME]: [VERDICT]" format instead of the current-verdict format.
+        private void RenderVerdict(string verdict, string ticker, int confidence, string? reason, DateTime? historyTimestamp)
+        {
             var text = string.IsNullOrWhiteSpace(ticker) ? verdict : $"{verdict} {ticker}";
-            // Do not include percentage in the verdict text; show confidence as ring fill and centered number
-            VerdictTextBlock.Text = $"Current Verdict: {text}";
+            // Do not include percentage in the verdict text; show confidence as ring fill and centered number.
+            // Keep the heading format/position constant regardless of current vs. older verdict; the
+            // timestamp for older verdicts is shown separately in VerdictDateTextBlock.
+            VerdictTextBlock.Text = historyTimestamp.HasValue
+                ? $"Older Verdict: {text}"
+                : $"Current Verdict: {text}";
+
+            try
+            {
+                if (historyTimestamp.HasValue)
+                {
+                    VerdictDateTextBlock.Text = $"from {historyTimestamp.Value:yyyy-MM-dd HH:mm:ss}";
+                    VerdictDateTextBlock.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    VerdictDateTextBlock.Text = string.Empty;
+                    VerdictDateTextBlock.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch { }
+
+            if (reason != null)
+            {
+                try { UpdateReason(reason); } catch { }
+            }
 
             // determine color: green for long/buy, red for short/sell, gray otherwise
             var v = verdict?.ToUpperInvariant() ?? string.Empty;
@@ -1150,6 +1543,25 @@ namespace FedTrader
             var clamped = Math.Max(0, Math.Min(100, value));
             // show centered big bold number with percent sign (no-op)
             try { ConfidenceCenterText.Text = clamped.ToString() + "%"; } catch { }
+
+            try
+            {
+                if (RingArc?.Stroke is LinearGradientBrush brush && brush.RelativeTransform is TranslateTransform tt)
+                {
+                    if (clamped > 0 && !_confidenceRingAnimating)
+                    {
+                        tt.BeginAnimation(TranslateTransform.XProperty, _confidenceRingBrushAnimation);
+                        _confidenceRingAnimating = true;
+                    }
+                    else if (clamped <= 0 && _confidenceRingAnimating)
+                    {
+                        tt.BeginAnimation(TranslateTransform.XProperty, null);
+                        tt.X = -1.2;
+                        _confidenceRingAnimating = false;
+                    }
+                }
+            }
+            catch { }
 
             try
             {
@@ -1245,7 +1657,8 @@ namespace FedTrader
                     }
                     catch { trendColor = Brushes.Gray; }
 
-                    _tickers.Add(new TickerViewModel { Name = name ?? string.Empty, Value = value ?? string.Empty, Change = changeText, Tendency = t, TrendColor = trendColor });
+                    var tooltipText = GetTickerTooltipText(name ?? string.Empty);
+                    _tickers.Add(new TickerViewModel { Name = name ?? string.Empty, Value = value ?? string.Empty, Change = changeText, Tendency = t, TooltipText = tooltipText, TooltipControl = CreateTickerToolTip(tooltipText), TrendColor = trendColor });
                 }
 
                 // update timestamp whenever tickers are updated

@@ -13,5 +13,6 @@ openai>=1.10.0
 # System- & Utilities
 python-dotenv>=1.0.0
 yt-dlp>=2024.3.10
+yfinance>=0.2.65
 
 # Requires ffmpeg installed and available on PATH (not a pip package).

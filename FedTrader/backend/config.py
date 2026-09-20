@@ -32,17 +32,45 @@ AUDIO_CHANNELS = 1
 LOG_DIR = os.path.join(os.path.dirname(__file__), "data", "logs")
 SCENARIOS_DIR = os.path.join(os.path.dirname(__file__), "data", "scenarios")
 
-# category -> tickers used as market proxies for that asset class
-TICKERS: dict[str, list[str]] = {
-    "treasury_yields": ["^TNX", "^TYX"],
-    "bond_proxies": ["TLT", "AGG"],
-    "reits": ["VNQ"],
-    "utilities": ["XLU"],
-    "homebuilders": ["XHB", "ITB"],
-    "tech_giants": ["QQQ", "MAGS"],
-    "unprofitable_growth": ["ARKK"],
-    "financials": ["XLF"],
+# nested market-data groups used by the live UI and analyst prompts
+TICKERS: dict[str, dict[str, list[str]]] = {
+    "small_grid": {
+        "treasury_yields_core": ["BIL", "^TNX", "^TYX"],
+        "liquidity_anchors": ["UUP", "GLD"],
+        "equity_indices": ["QQQ", "IWM"],
+        "banking_stress": ["KRE"],
+    },
+    "expanded_grid_extras": {
+        "bond_proxies": ["TLT", "AGG"],
+        "reits": ["VNQ"],
+        "utilities": ["XLU"],
+        "homebuilders": ["XHB", "ITB"],
+        "tech_giants_extended": ["MAGS"],
+        "unprofitable_growth": ["ARKK"],
+        "financials_broad": ["XLF"],
+        "credit_risk": ["HYG"],
+    },
 }
+
+
+def iter_ticker_groups() -> list[tuple[str, str, list[str]]]:
+    groups: list[tuple[str, str, list[str]]] = []
+    for section_name, sections in TICKERS.items():
+        for group_name, symbols in sections.items():
+            groups.append((section_name, group_name, symbols))
+    return groups
+
+
+def all_ticker_symbols() -> list[str]:
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for _, _, group_symbols in iter_ticker_groups():
+        for symbol in group_symbols:
+            if symbol not in seen:
+                seen.add(symbol)
+                symbols.append(symbol)
+    return symbols
+
 
 
 @dataclass
