@@ -10,14 +10,14 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace FedTrader
+namespace UFOS.ai
 {
     public class WebSocketService : IDisposable
     {
         private readonly Uri _uri;
         private ClientWebSocket? _ws;
         private CancellationTokenSource? _cts;
-        private static readonly string _debugLogPath = Path.Combine(Path.GetTempPath(), "fedtrader_ws_debug.log");
+        private static readonly string _debugLogPath = Path.Combine(Path.GetTempPath(), "UFOS.ai_ws_debug.log");
 
         // Typed events
         public event Action<TickerMessage>? OnTicker;
@@ -332,3 +332,4 @@ namespace FedTrader
     public class Quote { public double Price { get; set; } public double ChangePercent { get; set; } }
     public class MarketUpdateMessage { public System.DateTime Timestamp { get; set; } public System.Collections.Generic.Dictionary<string, Quote> Quotes { get; set; } = new(); }
 }
+

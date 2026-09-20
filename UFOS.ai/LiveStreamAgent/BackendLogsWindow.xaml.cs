@@ -7,7 +7,7 @@ using Microsoft.Win32;
 using System.Text;
 using System.IO;
 
-namespace FedTrader
+namespace UFOS.ai
 {
     public partial class BackendLogsWindow : Window
     {
@@ -113,3 +113,4 @@ namespace FedTrader
         }
     }
 }
+

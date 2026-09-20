@@ -1,15 +1,15 @@
 param(
-	[string]$UiExe = '.\FedTrader\bin\Debug\net10.0-windows\FedTrader.exe',
-	[string]$BackendScript = '.\backend\run_backend.ps1',
-	[string]$SmokeScript = '.\tools\ws_smoke.ps1'
+	[string]$UiExe = '.\UFOS.ai\bin\Debug\net10.0-windows\UFOS.ai.exe',
+	[string]$BackendScript = '.\UFOS.ai\LiveStreamAgent\backend\run_backend.ps1',
+	[string]$SmokeScript = '.\UFOS.ai\LiveStreamAgent\tools\ws_smoke.ps1'
 )
 
-Write-Host "Stopping existing FedTrader processes..."
-Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq 'FedTrader' } | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+Write-Host "Stopping existing UFOS.ai processes..."
+Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq 'UFOS.ai' } | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Milliseconds 300
 
 Write-Host "Building UI..."
-dotnet build .\FedTrader\FedTrader.csproj -c Debug | Out-Null
+dotnet build .\UFOS.ai\UFOS.ai.csproj -c Debug | Out-Null
 
 Write-Host "Starting backend..."
 Start-Process -FilePath powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File', $BackendScript -WindowStyle Hidden
@@ -27,7 +27,7 @@ Start-Process -FilePath $UiExe -WorkingDirectory (Split-Path $UiExe) -WindowStyl
 Start-Sleep -Milliseconds 500
 
 Write-Host "Tailing ws debug log in temp (last 200 lines):"
-$log = Join-Path $env:TEMP 'fedtrader_ws_debug.log'
+$log = Join-Path $env:TEMP 'ufos_ai_ws_debug.log'
 if (Test-Path $log) { Get-Content -Path $log -Tail 200 } else { Write-Host 'NO LOG FILE' }
 
 Write-Host "Done."
