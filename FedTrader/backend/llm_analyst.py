@@ -14,7 +14,7 @@ from config import (
     OPENROUTER_BASE_URL,
     OPENROUTER_MODEL,
     SCENARIOS_DIR,
-    TICKERS,
+    iter_ticker_groups,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,8 @@ Respond with ONLY a JSON object (no prose, no markdown fences) with this exact s
   },
   "summary": "<one sentence overall read on the latest remarks>"
 }
-Use exactly these category keys: treasury_yields, bond_proxies, reits, utilities, \
-homebuilders, tech_giants, unprofitable_growth, financials."""
+Use exactly these category keys: treasury_yields_core, liquidity_anchors, equity_indices, banking_stress, \
+bond_proxies, reits, utilities, homebuilders, tech_giants_extended, unprofitable_growth, financials_broad, credit_risk."""
 
 SYSTEM_PROMPT_VERDICT = """You are a pragmatic market analyst. Given a transcript excerpt and a market snapshot, recommend exactly ONE action for a single ticker: either LONG or SHORT. Provide a concise verdict and a substantive rationale. The rationale should be evidence-based, include multiple supporting points when available, and end with a clear weighing statement (e.g., "Overall: favor LONG because ..." or "Overall: favor SHORT because ..."). Return ONLY a JSON object with the exact shape:
 {
@@ -56,12 +56,12 @@ def _load_scenarios() -> str:
 
 def _format_snapshot(snapshot: MarketSnapshot) -> str:
     lines = []
-    for category, symbols in TICKERS.items():
+    for section_name, group_name, symbols in iter_ticker_groups():
         for symbol in symbols:
             quote = snapshot.quotes.get(symbol)
             if quote is None:
                 continue
-            lines.append(f"{category}/{symbol}: price={quote.price} change%={quote.change_percent}")
+            lines.append(f"{section_name}/{group_name}/{symbol}: price={quote.price} change%={quote.change_percent}")
     return "\n".join(lines) if lines else "(no market data available yet)"
 
 
