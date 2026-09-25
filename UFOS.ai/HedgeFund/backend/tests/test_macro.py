@@ -144,7 +144,7 @@ class ContextTest(unittest.TestCase):
 class PollTest(unittest.TestCase):
     def test_full_poll_with_fake_api(self):
         async def fake_series(session, sid, units, points_wanted=24, frequency=None):
-            base = {"T10Y2Y": 0.3, SAHM: -0.05}.get(sid, 3.0)
+            base = {"T10Y2Y": 0.3, fred.SAHM_SERIES: -0.05}.get(sid, 3.0)
             return monthly([base + 0.001 * i for i in range(points_wanted)], 2023)
 
         async def fake_long(session, sid, units):
