@@ -55,7 +55,7 @@ LOCALNEWS_CACHE_SECONDS = int(os.getenv("LOCALNEWS_CACHE_SECONDS", "1800"))
 LOCALNEWS_ERROR_CACHE_SECONDS = int(os.getenv("LOCALNEWS_ERROR_CACHE_SECONDS", "45"))
 
 # --- Networking ---
-WS_HOST = os.getenv("WS_HOST", "0.0.0.0")
+WS_HOST = os.getenv("WS_HOST", "127.0.0.1")
 WS_PORT = int(os.getenv("WS_PORT", "8767"))
 HEALTH_PORT = int(os.getenv("HEALTH_PORT", "8768"))
 
