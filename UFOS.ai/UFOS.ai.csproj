@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -7,5 +7,36 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="LiveStreamAgent\**\*.cs" />
+    <Page Remove="LiveStreamAgent\**\*.xaml" />
+    <ApplicationDefinition Remove="LiveStreamAgent\**\App.xaml" />
+    <Compile Remove="HedgeFund\**\*.cs" />
+    <Page Remove="HedgeFund\**\*.xaml" />
+    <ApplicationDefinition Remove="HedgeFund\**\App.xaml" />
+    <Compile Remove="Global Monitoring\**\*.cs" />
+    <Page Remove="Global Monitoring\**\*.xaml" />
+    <ApplicationDefinition Remove="Global Monitoring\**\App.xaml" />
+    <Compile Remove="UFOS.ai.Logging\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="HedgeFund\MultiAgentHedgeFund.csproj" />
+    <None Include="Global Monitoring\GlobalMonitoring.csproj" />
+    <None Include="UFOS.ai.Logging\UFOS.ai.Logging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="LiveStreamAgent\LiveStreamAgent.csproj" />
+    <ProjectReference Include="HedgeFund\MultiAgentHedgeFund.csproj" />
+    <ProjectReference Include="Global Monitoring\GlobalMonitoring.csproj" />
+    <ProjectReference Include="UFOS.ai.Logging\UFOS.ai.Logging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+    <PackageReference Include="System.ServiceModel.Syndication" Version="10.0.12" />
+  </ItemGroup>
 
 </Project>

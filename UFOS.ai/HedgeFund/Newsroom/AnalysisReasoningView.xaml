@@ -1,0 +1,332 @@
+<UserControl x:Class="UFOS.ai.HedgeFund.Newsroom.AnalysisReasoningView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Loaded="View_Loaded">
+    <!-- Financial Newsroom section "Analysis & Reasoning" (2026-09-25): every item of
+         Insider Trades, Macro Indicators and the Economic Calendar as a square tile
+         (GET /newsroom/overview); pick two or more and let the AI connect them
+         (POST /newsroom/analysis). Neutral grey = data and controls; green = the
+         user's selection; violet = ONLY AI elements (AI content labelling, EU AI Act Art. 50). -->
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="HighEmphasisForegroundBrush" Color="#FFF2F2F2" />
+        <SolidColorBrush x:Key="TertiaryForegroundBrush" Color="#FFBFBFBF" />
+        <SolidColorBrush x:Key="QuietForegroundBrush" Color="#FF8A8A8A" />
+        <SolidColorBrush x:Key="NeutralAccentBrush" Color="#FFE6E6E6" />
+        <SolidColorBrush x:Key="NeutralBorderBrush" Color="#FF8A8A8A" />
+        <SolidColorBrush x:Key="ChipBorderBrush" Color="#FF3A3A3A" />
+        <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF1A1A1A" />
+        <SolidColorBrush x:Key="CardBorderBrush" Color="#FF2A2A2A" />
+        <SolidColorBrush x:Key="SelectedBackgroundBrush" Color="#FF242424" />
+        <SolidColorBrush x:Key="SelectedGreenBrush" Color="#FF3ECF8E" />
+        <SolidColorBrush x:Key="WatchOrangeBrush" Color="#FFF39C4A" />
+        <SolidColorBrush x:Key="AiAccentBrush" Color="#FFB98CE8" />
+        <SolidColorBrush x:Key="AiSurfaceBrush" Color="#14B98CE8" />
+
+        <!-- Refresh: same shape as the other sections, neutral grey/white accent. -->
+        <ControlTemplate x:Key="RefreshButtonTemplate" TargetType="Button">
+            <Border x:Name="bd" Background="Transparent" BorderBrush="{StaticResource NeutralBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="10,4">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#22FFFFFF" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- Identical to InsiderTradesView's "✦ Sum up most notable" button. -->
+        <ControlTemplate x:Key="AiButtonTemplate" TargetType="Button">
+            <Border x:Name="bd" Background="{StaticResource AiSurfaceBrush}" BorderBrush="{StaticResource AiAccentBrush}" BorderThickness="1" CornerRadius="4" Padding="10,4">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#33B98CE8" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter TargetName="bd" Property="Opacity" Value="0.5" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- Small neutral chip (templates row, Copy / Save). -->
+        <ControlTemplate x:Key="ChipButtonTemplate" TargetType="Button">
+            <Border x:Name="bd" Background="Transparent" BorderBrush="{StaticResource ChipBorderBrush}" BorderThickness="1" CornerRadius="4" Padding="9,3">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#FF222222" />
+                    <Setter TargetName="bd" Property="BorderBrush" Value="#FF5A5A5A" />
+                </Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter TargetName="bd" Property="BorderBrush" Value="#FF8A8A8A" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- Link-style button ("Clear selection"). -->
+        <ControlTemplate x:Key="LinkButtonTemplate" TargetType="Button">
+            <Border Background="Transparent" Padding="2,1">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource HighEmphasisForegroundBrush}" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- Segmented model tier switch (Standard / Premium) — part of the AI trigger, hence violet. -->
+        <Style x:Key="TierToggleStyle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="#FF9A9A9A" />
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="bd" Background="Transparent" BorderBrush="#FF333333" BorderThickness="1"
+                                CornerRadius="4" Padding="9,3" Margin="0,0,4,0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF1C1C1C" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource AiSurfaceBrush}" />
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource AiAccentBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource AiAccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Square, selectable tile. ToggleButton = focusable, Space/Enter toggle it. -->
+        <Style x:Key="TileToggleStyle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="150" />
+            <Setter Property="Height" Value="150" />
+            <Setter Property="Margin" Value="0,0,10,10" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Grid>
+                            <Border x:Name="bd" Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource CardBorderBrush}"
+                                    BorderThickness="1" CornerRadius="6">
+                                <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+                            </Border>
+                            <TextBlock x:Name="check" Text="✓" Visibility="Collapsed" FontSize="13" FontWeight="Bold"
+                                       HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,8,0"
+                                       Foreground="{StaticResource SelectedGreenBrush}" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF1F1F1F" />
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#FF3A3A3A" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#FF8A8A8A" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{StaticResource SelectedBackgroundBrush}" />
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource SelectedGreenBrush}" />
+                                <Setter TargetName="bd" Property="BorderThickness" Value="2" />
+                                <Setter TargetName="check" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <DataTemplate x:Key="TileTemplate">
+            <ToggleButton Style="{StaticResource TileToggleStyle}" IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                          Click="Tile_Click" AutomationProperties.Name="{Binding AutomationName}">
+                <ToggleButton.ToolTip>
+                    <TextBlock Text="{Binding TooltipText}" MaxWidth="380" TextWrapping="Wrap" />
+                </ToggleButton.ToolTip>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="3" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <!-- Level: thin top bar + dot (ok green, watch orange, alert red, info blue). -->
+                    <Border Grid.Row="0" Background="{Binding LevelBrush}" CornerRadius="5,5,0,0" />
+                    <StackPanel Grid.Row="1" Margin="10,7,10,0" ClipToBounds="True">
+                        <TextBlock Text="{Binding Title}" FontSize="11" FontWeight="SemiBold" Margin="0,0,12,0"
+                                   Foreground="{StaticResource TertiaryForegroundBrush}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
+                                   LineStackingStrategy="BlockLineHeight" LineHeight="14" MaxHeight="28" />
+                        <TextBlock Text="{Binding Value}" FontFamily="Consolas" FontSize="18" FontWeight="Bold" Margin="0,3,0,0"
+                                   Foreground="{StaticResource HighEmphasisForegroundBrush}" TextTrimming="CharacterEllipsis" />
+                        <DockPanel Margin="0,1,0,0" LastChildFill="True">
+                            <Ellipse DockPanel.Dock="Left" Width="7" Height="7" Margin="0,0,5,0" VerticalAlignment="Center"
+                                     Fill="{Binding LevelBrush}" />
+                            <TextBlock Text="{Binding TrendText}" FontFamily="Consolas" FontSize="10.5" TextTrimming="CharacterEllipsis"
+                                       Foreground="{StaticResource QuietForegroundBrush}" />
+                        </DockPanel>
+                        <TextBlock Text="{Binding Subtitle}" FontSize="9.5" Margin="0,3,0,0" Foreground="#FF9A9A9A"
+                                   TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
+                                   LineStackingStrategy="BlockLineHeight" LineHeight="12" MaxHeight="36" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="2" Text="{Binding AsOfDisplay}" FontFamily="Consolas" FontSize="9" Margin="10,2,10,7"
+                               Foreground="#FF6E6E6E" TextTrimming="CharacterEllipsis" />
+                </Grid>
+            </ToggleButton>
+        </DataTemplate>
+
+        <DataTemplate x:Key="GroupTemplate">
+            <StackPanel Margin="0,0,0,8">
+                <TextBlock Text="{Binding Header}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"
+                           Foreground="{StaticResource QuietForegroundBrush}" />
+                <ItemsControl ItemsSource="{Binding Tiles}" ItemTemplate="{StaticResource TileTemplate}" Focusable="False">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                </ItemsControl>
+            </StackPanel>
+        </DataTemplate>
+
+        <DataTemplate x:Key="TemplateChipTemplate">
+            <Button Content="{Binding Label}" ToolTip="{Binding Description}" Click="Template_Click"
+                    AutomationProperties.HelpText="{Binding Description}"
+                    Template="{StaticResource ChipButtonTemplate}" Foreground="{StaticResource TertiaryForegroundBrush}"
+                    FontSize="10.5" Margin="0,0,6,6" Cursor="Hand" />
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid Margin="22,18,22,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Analysis &amp; Reasoning" FontSize="16" FontWeight="Bold" Foreground="{StaticResource HighEmphasisForegroundBrush}" />
+                <TextBlock Text="Everything from Insider Trades, Macro Indicators and the Economic Calendar at a glance — pick two or more items and let the AI connect them. Proof of concept, not investment advice."
+                           FontSize="10.5" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
+                <TextBlock x:Name="LastUpdatedText" Text="" FontSize="9.5" Margin="0,3,0,0" FontFamily="Consolas"
+                           Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <Button x:Name="RefreshButton" Grid.Column="1" Content="↻ Refresh" Click="RefreshButton_Click" VerticalAlignment="Top"
+                    Template="{StaticResource RefreshButtonTemplate}" Foreground="{StaticResource NeutralAccentBrush}"
+                    FontSize="11" Margin="12,0,0,0" />
+        </Grid>
+
+        <!-- Templates + selection counter -->
+        <Grid Grid.Row="1" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="TemplatesLabel" Grid.Column="0" Text="Quick picks:" FontSize="10.5" Margin="0,4,8,0" VerticalAlignment="Top"
+                       Foreground="{StaticResource QuietForegroundBrush}" Visibility="Collapsed" />
+            <ItemsControl x:Name="TemplatesList" Grid.Column="1" ItemTemplate="{StaticResource TemplateChipTemplate}" Focusable="False">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top" Margin="12,3,0,0">
+                <TextBlock x:Name="SelectionCountText" Text="Nothing selected" FontSize="10.5" FontFamily="Consolas" VerticalAlignment="Center"
+                           Foreground="{StaticResource TertiaryForegroundBrush}" />
+                <Button x:Name="ClearSelectionButton" Click="ClearSelectionButton_Click" Visibility="Collapsed"
+                        Template="{StaticResource LinkButtonTemplate}" Foreground="{StaticResource QuietForegroundBrush}"
+                        FontSize="10.5" Margin="10,0,0,0" Cursor="Hand" VerticalAlignment="Center"
+                        AutomationProperties.Name="Clear selection">
+                    <TextBlock Text="Clear selection" TextDecorations="Underline" />
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <!-- Action bar (visible with >= 2 selected): AI trigger + model tier. -->
+        <Border x:Name="ActionBar" Grid.Row="2" Margin="0,8,0,0" Visibility="Collapsed"
+                Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource CardBorderBrush}"
+                BorderThickness="1" CornerRadius="6" Padding="10,8">
+            <WrapPanel Orientation="Horizontal">
+                <Button x:Name="AnalyseButton" Content="✦ Let AI analyse this" Click="AnalyseButton_Click"
+                        Template="{StaticResource AiButtonTemplate}" Foreground="{StaticResource AiAccentBrush}"
+                        FontSize="11" Margin="0,0,14,0" VerticalAlignment="Center" />
+                <TextBlock Text="Model:" FontSize="10.5" Margin="0,0,6,0" VerticalAlignment="Center"
+                           Foreground="{StaticResource QuietForegroundBrush}" />
+                <RadioButton x:Name="StandardTierRadio" Content="Standard" GroupName="AnalysisTier"
+                             Style="{StaticResource TierToggleStyle}" Checked="TierRadio_Checked" VerticalAlignment="Center" />
+                <RadioButton x:Name="PremiumTierRadio" Content="Premium" GroupName="AnalysisTier"
+                             Style="{StaticResource TierToggleStyle}" Checked="TierRadio_Checked" VerticalAlignment="Center" />
+                <TextBlock x:Name="ActionHintText" FontSize="10" Margin="10,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap"
+                           Foreground="{StaticResource QuietForegroundBrush}" />
+            </WrapPanel>
+        </Border>
+
+        <!-- AI output: violet left accent, badge header, text, caveat, "Based on", Copy / Save. -->
+        <Border x:Name="AnalysisCard" Grid.Row="3" Margin="0,10,0,0" Visibility="Collapsed"
+                Background="{StaticResource AiSurfaceBrush}" BorderBrush="{StaticResource AiAccentBrush}"
+                BorderThickness="3,0,0,0" CornerRadius="2" Padding="12,10">
+            <StackPanel>
+                <Grid Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="AnalysisHeader" Grid.Column="0" FontSize="9.5" FontFamily="Consolas" VerticalAlignment="Center"
+                               Foreground="{StaticResource AiAccentBrush}" TextWrapping="Wrap" />
+                    <StackPanel x:Name="AnalysisActions" Grid.Column="1" Orientation="Horizontal" Visibility="Collapsed" Margin="10,0,0,0">
+                        <TextBlock x:Name="ActionStatusText" FontSize="10" Margin="0,0,8,0" VerticalAlignment="Center"
+                                   Foreground="{StaticResource QuietForegroundBrush}" />
+                        <Button x:Name="CopyButton" Content="Copy" Click="CopyButton_Click"
+                                Template="{StaticResource ChipButtonTemplate}" Foreground="{StaticResource TertiaryForegroundBrush}"
+                                FontSize="10.5" Margin="0,0,6,0" Cursor="Hand"
+                                ToolTip="Copy the analysis with its AI label, caveat and the items it is based on" />
+                        <Button x:Name="SaveButton" Content="Save as Markdown…" Click="SaveButton_Click"
+                                Template="{StaticResource ChipButtonTemplate}" Foreground="{StaticResource TertiaryForegroundBrush}"
+                                FontSize="10.5" Cursor="Hand"
+                                ToolTip="Save the analysis as a Markdown file (keeps the AI label and provenance)" />
+                    </StackPanel>
+                </Grid>
+                <TextBlock x:Name="SelectionChangedHint" Text="Selection changed — run again to update" Visibility="Collapsed"
+                           FontSize="10" Margin="0,0,0,6" Foreground="{StaticResource WatchOrangeBrush}" />
+                <!-- Read-only TextBox styled as text, so the analysis can be selected and copied. -->
+                <TextBox x:Name="AnalysisText" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
+                         BorderThickness="0" Background="Transparent" Padding="0" FontSize="11.5"
+                         Foreground="{StaticResource HighEmphasisForegroundBrush}" CaretBrush="{StaticResource HighEmphasisForegroundBrush}"
+                         MaxHeight="300" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" />
+                <TextBlock x:Name="AnalysisCaveat" Visibility="Collapsed" FontSize="10" FontStyle="Italic" TextWrapping="Wrap"
+                           Foreground="{StaticResource QuietForegroundBrush}" Margin="0,8,0,0" />
+                <TextBlock x:Name="AnalysisBasedOn" FontSize="10" TextWrapping="Wrap" Margin="0,4,0,0"
+                           Foreground="{StaticResource QuietForegroundBrush}" />
+                <!-- What OpenRouter charged for this request (usage.cost, credits = USD) + tokens. -->
+                <TextBlock x:Name="AnalysisCost" FontSize="10" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,4,0,0"
+                           Foreground="{StaticResource QuietForegroundBrush}" Visibility="Collapsed" />
+            </StackPanel>
+        </Border>
+
+        <!-- Tiles, grouped -->
+        <Grid Grid.Row="4" Margin="0,12,0,0">
+            <ScrollViewer x:Name="ListScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
+                <ItemsControl x:Name="GroupsList" ItemTemplate="{StaticResource GroupTemplate}" Focusable="False" />
+            </ScrollViewer>
+            <StackPanel x:Name="StatusPanel" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock x:Name="StatusText" Text="Loading the overview…" FontFamily="Consolas" FontSize="12"
+                           Foreground="{StaticResource TertiaryForegroundBrush}" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="460" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

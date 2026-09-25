@@ -1,0 +1,331 @@
+<UserControl x:Class="UFOS.ai.HedgeFund.Newsroom.MacroIndicatorsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Loaded="View_Loaded" Unloaded="View_Unloaded">
+    <!-- Financial Newsroom section "Macro Indicators" (moved from Global Monitoring's
+         globe sidebar ticker on 2026-09-24). Source data only — no AI text here. -->
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="HighEmphasisForegroundBrush" Color="#FFF2F2F2" />
+        <SolidColorBrush x:Key="TertiaryForegroundBrush" Color="#FFBFBFBF" />
+        <SolidColorBrush x:Key="QuietForegroundBrush" Color="#FF8A8A8A" />
+        <SolidColorBrush x:Key="MacroGreenBrush" Color="#FF3ECF8E" />
+        <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF1A1A1A" />
+        <SolidColorBrush x:Key="CardBorderBrush" Color="#FF2A2A2A" />
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <!-- Segmented range switcher (Recent / 5Y / Since 2000). -->
+        <Style x:Key="RangeToggleStyle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="#FF9A9A9A" />
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="bd" Background="Transparent" BorderBrush="#FF333333" BorderThickness="1"
+                                CornerRadius="4" Padding="9,3" Margin="0,0,4,0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF1C1C1C" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF242424" />
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#FF3ECF8E" />
+                                <Setter Property="Foreground" Value="#FFE6E6E6" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <ControlTemplate x:Key="RefreshButtonTemplate" TargetType="Button">
+            <Border x:Name="bd" Background="Transparent" BorderBrush="{StaticResource MacroGreenBrush}" BorderThickness="1" CornerRadius="4" Padding="10,4">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#223ECF8E" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <DataTemplate x:Key="MacroCardTemplate">
+            <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource CardBorderBrush}"
+                    BorderThickness="1" CornerRadius="6" Padding="14,12" Margin="0,0,10,10" Width="300">
+                <StackPanel>
+                    <TextBlock Text="{Binding Label}" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TertiaryForegroundBrush}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="{Binding ValueDisplay}" FontFamily="Consolas" FontSize="24" FontWeight="Bold"
+                                   Foreground="{StaticResource HighEmphasisForegroundBrush}" />
+                        <TextBlock Text="{Binding ChangeDisplay}" FontFamily="Consolas" FontSize="11.5" Margin="10,0,0,4"
+                                   VerticalAlignment="Bottom" Foreground="{StaticResource QuietForegroundBrush}" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding DateDisplay}" FontSize="10" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" />
+                    <TextBlock Text="{Binding Formula}" FontSize="10" FontFamily="Consolas" Margin="0,4,0,0" TextWrapping="Wrap"
+                               Foreground="#FF7A7A7A" Visibility="{Binding HasFormula, Converter={StaticResource BoolToVis}}" />
+                    <!-- Stability signal (backend rule of thumb, see newsroom/fred_collector.py):
+                         green = stable, orange = watch, red = alert. Text too, not colour only. -->
+                    <TextBlock Text="{Binding SignalText}" FontSize="10" Margin="0,6,0,0" TextWrapping="Wrap"
+                               Foreground="{Binding SignalBrush}" />
+                    <!-- Historical context from the monthly history since 2000 (backend history_context()). -->
+                    <TextBlock Text="{Binding ContextText}" FontSize="10" FontFamily="Consolas" Margin="0,3,0,0" TextWrapping="Wrap"
+                               Foreground="#FF9A9A9A" Visibility="{Binding HasContext, Converter={StaticResource BoolToVis}}" />
+
+                    <!-- Sparkline of the last observations; dashed zero line where the series crosses 0. -->
+                    <Grid Width="270" Height="44" Margin="0,10,0,0" HorizontalAlignment="Left">
+                        <Line X1="0" X2="270" Y1="{Binding ZeroLineY}" Y2="{Binding ZeroLineY}" Stroke="#FF444444"
+                              StrokeThickness="1" StrokeDashArray="3 3"
+                              Visibility="{Binding ShowZeroLine, Converter={StaticResource BoolToVis}}" />
+                        <Line X1="0" X2="270" Y1="{Binding RefLineY}" Y2="{Binding RefLineY}" Stroke="#FF8A5A3A"
+                              StrokeThickness="1" StrokeDashArray="2 3"
+                              Visibility="{Binding ShowRefLine, Converter={StaticResource BoolToVis}}" />
+                        <Polyline Points="{Binding SparkPoints}" Stroke="{Binding SignalBrush}" StrokeThickness="1.6"
+                                  StrokeLineJoin="Round" IsHitTestVisible="False" />
+                        <!-- One invisible full-height hover column per observation: hovering shows the
+                             point's dot and a tooltip with its date and value. -->
+                        <ItemsControl ItemsSource="{Binding SparkDots}" Focusable="False">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <Canvas />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemContainerStyle>
+                                <Style TargetType="ContentPresenter">
+                                    <Setter Property="Canvas.Left" Value="{Binding HitLeft}" />
+                                    <Setter Property="Canvas.Top" Value="0" />
+                                </Style>
+                            </ItemsControl.ItemContainerStyle>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border x:Name="hit" Width="{Binding HitWidth}" Height="44" Background="Transparent"
+                                            ToolTipService.InitialShowDelay="0" ToolTipService.BetweenShowDelay="0"
+                                            ToolTipService.Placement="Top">
+                                        <Border.ToolTip>
+                                            <ToolTip Background="#FF1A1A1A" BorderBrush="#FF333333" Foreground="#FFE6E6E6"
+                                                     Padding="7,4" FontFamily="Consolas" FontSize="10.5">
+                                                <TextBlock Text="{Binding Label}" />
+                                            </ToolTip>
+                                        </Border.ToolTip>
+                                        <Canvas>
+                                            <Line x:Name="guide" X1="{Binding HitCenter}" X2="{Binding HitCenter}" Y1="0" Y2="44"
+                                                  Stroke="#FF3A3A3A" StrokeThickness="1" Visibility="Hidden" />
+                                            <Ellipse x:Name="dot" Width="7" Height="7" Fill="{Binding Brush}"
+                                                     Stroke="#FF1A1A1A" StrokeThickness="1.5"
+                                                     Canvas.Left="{Binding DotLeft}" Canvas.Top="{Binding DotTop}" Visibility="Hidden" />
+                                        </Canvas>
+                                    </Border>
+                                    <DataTemplate.Triggers>
+                                        <Trigger SourceName="hit" Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="dot" Property="Visibility" Value="Visible" />
+                                            <Setter TargetName="guide" Property="Visibility" Value="Visible" />
+                                        </Trigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Grid>
+                    <TextBlock Text="{Binding RangeDisplay}" FontSize="9.5" Margin="0,3,0,0" Foreground="#FF5A5A5A" TextWrapping="Wrap" />
+
+                    <TextBlock Text="{Binding Note}" FontSize="10.5" Margin="0,8,0,0" TextWrapping="Wrap"
+                               Foreground="{StaticResource QuietForegroundBrush}" />
+                    <TextBlock FontSize="10" Margin="0,8,0,0" Visibility="{Binding HasUrl, Converter={StaticResource BoolToVis}}">
+                        <Hyperlink NavigateUri="{Binding UrlUri}" RequestNavigate="Series_RequestNavigate"
+                                   Foreground="{StaticResource MacroGreenBrush}"><Run Text="{Binding SourceDisplay, Mode=OneWay}" /></Hyperlink>
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid Margin="22,18,22,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Macro Indicators" FontSize="16" FontWeight="Bold" Foreground="{StaticResource HighEmphasisForegroundBrush}" />
+                    <!-- "i" info element: hovering shows the colour-rules popup, leaving the "i" closes it.
+                         A click pins it: it then closes 3 s after the pointer is off the "i", or on a
+                         second click. -->
+                    <Button x:Name="SignalInfoButton" Width="16" Height="16" Margin="8,2,0,0" VerticalAlignment="Center"
+                            Cursor="Help" Focusable="True" AutomationProperties.Name="Stability colour rules"
+                            MouseEnter="SignalInfo_MouseEnter" MouseLeave="SignalInfo_MouseLeave" Click="SignalInfoButton_Click">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="#FF242424" BorderBrush="#FF3A3A3A" BorderThickness="1" CornerRadius="999">
+                                    <TextBlock Text="i" FontSize="10" FontWeight="Bold" FontFamily="Georgia" Foreground="#FF9A9A9A"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-1,0,0" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="BorderBrush" Value="#FF6A6A6A" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <Popup x:Name="SignalInfoPopup" PlacementTarget="{Binding ElementName=SignalInfoButton}" Placement="Bottom"
+                           HorizontalOffset="-8" VerticalOffset="8" StaysOpen="True" AllowsTransparency="True">
+                        <Border Background="#FF1A1A1A" BorderBrush="#FF333333" BorderThickness="1" CornerRadius="10" Width="440" Padding="16"
+                                Margin="0,0,24,24">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="24" ShadowDepth="6" Opacity="0.5" Color="Black" />
+                            </Border.Effect>
+                            <StackPanel>
+                                <TextBlock Text="Stability colours" FontSize="14" FontWeight="SemiBold" Foreground="#FFBFBFBF" Margin="0,0,0,8" />
+                                <TextBlock FontSize="11" TextWrapping="Wrap" Foreground="#FF8A8A8A" Margin="0,0,0,10"
+                                           Text="Each chart is coloured by simple rules of thumb for how calm or stressed the series looks. If several rules apply, the worst colour wins." />
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                    <Ellipse Width="8" Height="8" Fill="#FF3ECF8E" VerticalAlignment="Center" />
+                                    <TextBlock Text="Stable" FontSize="11" Foreground="#FFBFBFBF" Margin="6,0,16,0" />
+                                    <Ellipse Width="8" Height="8" Fill="#FFF39C4A" VerticalAlignment="Center" />
+                                    <TextBlock Text="Watch" FontSize="11" Foreground="#FFBFBFBF" Margin="6,0,16,0" />
+                                    <Ellipse Width="8" Height="8" Fill="#FFED6A5A" VerticalAlignment="Center" />
+                                    <TextBlock Text="Alert" FontSize="11" Foreground="#FFBFBFBF" Margin="6,0,0,0" />
+                                </StackPanel>
+
+                                <!-- Header row -->
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="SERIES" FontSize="9.5" FontWeight="SemiBold" Foreground="#FF6A6A6A" />
+                                    <TextBlock Grid.Column="1" Text="WATCH (ORANGE)" FontSize="9.5" FontWeight="SemiBold" Foreground="#FFF39C4A" />
+                                    <TextBlock Grid.Column="2" Text="ALERT (RED)" FontSize="9.5" FontWeight="SemiBold" Foreground="#FFED6A5A" Margin="8,0,0,0" />
+                                </Grid>
+                                <!-- Rows come from the backend (newsroom/fred_collector.py SIGNAL_RULES). -->
+                                <ItemsControl x:Name="SignalRulesList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,4,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="130" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="{Binding Label}" FontSize="11" Foreground="#FFE6E6E6" TextWrapping="Wrap" Margin="0,0,8,0" />
+                                                <TextBlock Grid.Column="1" Text="{Binding WatchRule}" FontSize="11" Foreground="#FFBFBFBF" TextWrapping="Wrap" />
+                                                <TextBlock Grid.Column="2" Text="{Binding AlertRule}" FontSize="11" Foreground="#FFBFBFBF" TextWrapping="Wrap" Margin="8,0,0,0" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock x:Name="SignalRulesEmptyText" Text="The rules appear here once the macro data has loaded."
+                                           FontSize="11" Foreground="#FF6A6A6A" Margin="0,4,0,0" Visibility="Collapsed" />
+
+                                <TextBlock FontSize="10" FontStyle="Italic" TextWrapping="Wrap" Foreground="#FF6A6A6A" Margin="0,12,0,0"
+                                           Text="Daily series (yields, spreads, VIX) compare against ~5 weeks, weekly jobless claims against ~6 months, monthly series against 12 months. A reading aid, not a forecast — not investment advice." />
+                            </StackPanel>
+                        </Border>
+                    </Popup>
+                </StackPanel>
+                <TextBlock Text="US and euro-area rates, inflation, jobs and market stress from FRED (Federal Reserve Bank of St. Louis) — proof-of-concept data, not investment advice."
+                           FontSize="10.5" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
+                <TextBlock x:Name="LastUpdatedText" Text="" FontSize="9.5" Margin="0,3,0,0" FontFamily="Consolas"
+                           Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                <!-- Chart range: value, change and colour always use the recent data. -->
+                <TextBlock Text="Charts:" FontSize="10.5" Foreground="#FF6A6A6A" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <RadioButton x:Name="RangeRecent" GroupName="ChartRange" Content="Recent" IsChecked="True"
+                             Style="{StaticResource RangeToggleStyle}" Checked="RangeButton_Checked"
+                             ToolTip="Last 24 observations (≈5 weeks for daily series, 6 months weekly, 2 years monthly)" />
+                <RadioButton x:Name="RangeFiveYears" GroupName="ChartRange" Content="5Y"
+                             Style="{StaticResource RangeToggleStyle}" Checked="RangeButton_Checked"
+                             ToolTip="Last 5 years, monthly averages" />
+                <RadioButton x:Name="RangeSince2000" GroupName="ChartRange" Content="Since 2000"
+                             Style="{StaticResource RangeToggleStyle}" Checked="RangeButton_Checked"
+                             ToolTip="Monthly averages since 2000" />
+                <Button x:Name="RefreshButton" Content="↻ Refresh" Click="RefreshButton_Click" Margin="10,0,0,0"
+                        Template="{StaticResource RefreshButtonTemplate}" Foreground="{StaticResource MacroGreenBrush}" FontSize="11" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1">
+            <ScrollViewer x:Name="ListScrollViewer" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <!-- Macro regime map (backend: newsroom/macro_derived.py regime()). Growth momentum ×
+                         inflation momentum, current month + 12-month trail. Drawn in code (DrawRegime). -->
+                    <Border x:Name="RegimeCard" Visibility="Collapsed" Background="{StaticResource CardBackgroundBrush}"
+                            BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="6"
+                            Padding="16,14" Margin="0,0,10,14" HorizontalAlignment="Left">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Canvas x:Name="RegimeCanvas" Width="420" Height="270" ClipToBounds="True" />
+                            <StackPanel Grid.Column="1" Width="440" Margin="22,0,0,0">
+                                <TextBlock Text="MACRO REGIME" FontSize="9.5" FontWeight="SemiBold" Foreground="#FF6A6A6A" />
+                                <TextBlock x:Name="RegimeLabel" FontSize="24" FontWeight="Bold" Margin="0,4,0,0" />
+                                <TextBlock x:Name="RegimeSince" FontSize="10.5" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" />
+                                <TextBlock x:Name="RegimeDescription" FontSize="11.5" Margin="0,10,0,0" TextWrapping="Wrap"
+                                           Foreground="{StaticResource TertiaryForegroundBrush}" />
+                                <TextBlock x:Name="RegimeGrowth" FontSize="10.5" FontFamily="Consolas" Margin="0,12,0,0" TextWrapping="Wrap"
+                                           Foreground="{StaticResource TertiaryForegroundBrush}" />
+                                <TextBlock x:Name="RegimeInflation" FontSize="10.5" FontFamily="Consolas" Margin="0,4,0,0" TextWrapping="Wrap"
+                                           Foreground="{StaticResource TertiaryForegroundBrush}" />
+                                <TextBlock x:Name="RegimeMethod" FontSize="10" FontStyle="Italic" Margin="0,12,0,0" TextWrapping="Wrap"
+                                           Foreground="#FF6A6A6A" />
+                                <TextBlock Text="Hover the dots for each month. Grey trail = last 12 months, big dot = latest."
+                                           FontSize="10" Margin="0,6,0,0" Foreground="#FF5A5A5A" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <ItemsControl x:Name="SeriesList" ItemTemplate="{StaticResource MacroCardTemplate}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+
+                    <!-- Euro area (ECB rate, Bund yield, HICP) — group "europe" in fred_collector.py. -->
+                    <StackPanel x:Name="EuropeHeader" Margin="0,14,0,12" Visibility="Collapsed">
+                        <TextBlock Text="Euro Area" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource HighEmphasisForegroundBrush}" />
+                        <TextBlock Text="ECB policy rate, German 10-year Bund and euro-area inflation (HICP) — the view from Europe."
+                                   FontSize="10.5" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ItemsControl x:Name="EuropeList" ItemTemplate="{StaticResource MacroCardTemplate}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+
+                    <!-- Derived indicators: computed by the backend from the series above
+                         (newsroom/macro_derived.py). -->
+                    <StackPanel x:Name="DerivedHeader" Margin="0,14,0,12" Visibility="Collapsed">
+                        <TextBlock Text="Derived Indicators" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource HighEmphasisForegroundBrush}" />
+                        <TextBlock Text="Calculated from the FRED series above — combinations that say more than each series on its own."
+                                   FontSize="10.5" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ItemsControl x:Name="DerivedList" ItemTemplate="{StaticResource MacroCardTemplate}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
+            <StackPanel x:Name="StatusPanel" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock x:Name="StatusText" Text="Loading macro indicators…" FontFamily="Consolas" FontSize="12"
+                           Foreground="{StaticResource TertiaryForegroundBrush}" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="460" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

@@ -85,8 +85,13 @@ async def _run_verdict_loop(analyst: LLMAnalyst, market_feed: MarketDataFeed, br
             verdict = await analyst.generate_verdict(snapshot, max_reason_chars=VERDICT_MAX_REASON_CHARS)
             # ensure we always log what we got for offline inspection
             log_event("verdict", verdict if isinstance(verdict, dict) else {"raw": str(verdict)})
-            logger.info("Broadcasting verdict: %s", verdict)
-            await broadcaster.broadcast("verdict", verdict)
+            # A failed LLM call must never reach the UI dressed up as a verdict
+            # (project convention "AI content labelling", rule 7) — log it only.
+            if not isinstance(verdict, dict) or verdict.get("error") or not verdict.get("verdict"):
+                logger.warning("Skipping broadcast of failed/empty verdict: %s", verdict)
+            else:
+                logger.info("Broadcasting verdict: %s", verdict)
+                await broadcaster.broadcast("verdict", verdict)
         except Exception as ex:
             logger.exception("Verdict loop error: %s", ex)
             try:

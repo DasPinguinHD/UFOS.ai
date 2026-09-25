@@ -1,9 +1,15 @@
 using System;
 using System.IO;
 using System.Text;
+using UFOS.ai.Logging;
 
 namespace UFOS.ai
 {
+    /// <summary>
+    /// Dünner Kompatibilitäts-Wrapper: bestehende Aufrufe von DebugLogger.Log(...) landen
+    /// weiterhin (zusätzlich zu den alten Debug-Dateien) im zentralen AppLog und sind damit
+    /// im globalen Log-Fenster sichtbar.
+    /// </summary>
     internal static class DebugLogger
     {
         private static readonly string TempPath = Path.Combine(Path.GetTempPath(), "UFOS.ai_ws_debug.log");
@@ -14,6 +20,7 @@ namespace UFOS.ai
             var line = DateTime.Now.ToString("o") + " " + text + Environment.NewLine;
             TryAppend(TempPath, line);
             TryAppend(RepoPath, line);
+            try { AppLog.Info("Debug", text); } catch { }
         }
 
         private static void TryAppend(string path, string data)

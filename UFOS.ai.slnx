@@ -1,4 +1,7 @@
 <Solution>
   <Project Path="UFOS.ai/UFOS.ai.csproj" />
+  <Project Path="UFOS.ai/LiveStreamAgent/LiveStreamAgent.csproj" />
+  <Project Path="UFOS.ai/HedgeFund/MultiAgentHedgeFund.csproj" />
+  <Project Path="UFOS.ai/Global Monitoring/GlobalMonitoring.csproj" />
+  <Project Path="UFOS.ai/UFOS.ai.Logging/UFOS.ai.Logging.csproj" />
 </Solution>
-

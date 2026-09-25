@@ -9,6 +9,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using UFOS.ai.Logging;
 
 namespace UFOS.ai
 {
@@ -36,12 +37,20 @@ namespace UFOS.ai
         private void EmitConnectionStatus(string s)
         {
             try { File.AppendAllText(_debugLogPath, DateTime.Now.ToString("o") + " [WS STATUS] " + s + "\n"); } catch { }
+            try { AppLog.Info("WebSocket", "[STATUS] " + s); } catch { }
             try { OnConnectionStatus?.Invoke(s); } catch { }
         }
 
         private void EmitRaw(string raw)
         {
             try { File.AppendAllText(_debugLogPath, DateTime.Now.ToString("o") + " [WS RAW] " + raw + "\n"); } catch { }
+            var isError = raw != null && raw.Contains("ERROR", StringComparison.OrdinalIgnoreCase);
+            try
+            {
+                if (isError) AppLog.Error("WebSocket", raw ?? string.Empty);
+                else AppLog.Info("WebSocket", raw ?? string.Empty);
+            }
+            catch { }
             try { OnRawMessage?.Invoke(raw); } catch { }
         }
 
@@ -76,7 +85,7 @@ namespace UFOS.ai
                     try
                     {
                         using var hc = new HttpClient();
-                        hc.Timeout = TimeSpan.FromSeconds(2);
+                        hc.Timeout = TimeSpan.FromSeconds(7);
                         var hresp = await hc.GetAsync("http://127.0.0.1:8766/health", ct).ConfigureAwait(false);
                         if (!hresp.IsSuccessStatusCode)
                         {
@@ -188,6 +197,7 @@ namespace UFOS.ai
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
+                try { AppLog.Error("WebSocket", "[RECEIVE ERROR] " + ex.Message, ex); } catch { }
                 try { OnRawMessage?.Invoke($"[WS RECEIVE ERROR] {ex.GetType().Name}: {ex.Message}"); } catch { }
                 OnConnectionStatus?.Invoke("Error");
             }
@@ -274,6 +284,9 @@ namespace UFOS.ai
                             if (src.TryGetProperty("ticker", out var tt)) vm.Ticker = tt.GetString() ?? string.Empty;
                             if (src.TryGetProperty("reason", out var rr)) vm.Reason = rr.GetString() ?? string.Empty;
                             if (src.TryGetProperty("confidence", out var cv) && cv.TryGetInt32(out var civ)) vm.Confidence = civ;
+                            // Machine-readable AI marking from the backend (llm_analyst.provenance()).
+                            if (UFOS.ai.Shared.AiContent.TryReadProvenance(src, out var pm, out var pat)) { vm.Model = pm; vm.GeneratedAt = pat; }
+                            ReadUsage(src, vm);
                         }
                         else
                         {
@@ -282,6 +295,8 @@ namespace UFOS.ai
                             if (doc.RootElement.TryGetProperty("ticker", out var tt)) vm.Ticker = tt.GetString() ?? string.Empty;
                             if (doc.RootElement.TryGetProperty("reason", out var rr)) vm.Reason = rr.GetString() ?? string.Empty;
                             if (doc.RootElement.TryGetProperty("confidence", out var cv) && cv.TryGetInt32(out var civ)) vm.Confidence = civ;
+                            if (UFOS.ai.Shared.AiContent.TryReadProvenance(doc.RootElement, out var pm, out var pat)) { vm.Model = pm; vm.GeneratedAt = pat; }
+                            ReadUsage(doc.RootElement, vm);
                         }
                         OnVerdict?.Invoke(vm);
                         break;
@@ -295,6 +310,20 @@ namespace UFOS.ai
                         // unknown type
                         break;
                 }
+            }
+            catch { }
+        }
+
+        // Optional "usage": {"cost_usd", "prompt_tokens", "completion_tokens"} from the backend
+        // (shared AI cost ledger). Every field may be missing or null; never throws.
+        private static void ReadUsage(JsonElement src, VerdictMessage vm)
+        {
+            try
+            {
+                if (!src.TryGetProperty("usage", out var u) || u.ValueKind != JsonValueKind.Object) return;
+                if (u.TryGetProperty("cost_usd", out var c) && c.ValueKind == JsonValueKind.Number && c.TryGetDouble(out var cd)) vm.CostUsd = cd;
+                if (u.TryGetProperty("prompt_tokens", out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var pi)) vm.PromptTokens = pi;
+                if (u.TryGetProperty("completion_tokens", out var o) && o.ValueKind == JsonValueKind.Number && o.TryGetInt32(out var oi)) vm.CompletionTokens = oi;
             }
             catch { }
         }
@@ -327,7 +356,9 @@ namespace UFOS.ai
 
     // DTOs
     public class TickerMessage { public int Index { get; set; } public string Name { get; set; } = string.Empty; public string Value { get; set; } = string.Empty; public string Tendency { get; set; } = string.Empty; }
-    public class VerdictMessage { public string Verdict { get; set; } = string.Empty; public string Ticker { get; set; } = string.Empty; public string Reason { get; set; } = string.Empty; public int Confidence { get; set; } }
+    // Model/GeneratedAt come from the backend's "provenance" object (EU AI Act Art. 50
+    // machine-readable marking) and drive the "✦ AI-GENERATED · model · time" badge.
+    public class VerdictMessage { public string Verdict { get; set; } = string.Empty; public string Ticker { get; set; } = string.Empty; public string Reason { get; set; } = string.Empty; public int Confidence { get; set; } public string? Model { get; set; } public System.DateTimeOffset? GeneratedAt { get; set; } public double? CostUsd { get; set; } public int? PromptTokens { get; set; } public int? CompletionTokens { get; set; } }
     public class ConfidenceMessage { public int Value { get; set; } }
     public class Quote { public double Price { get; set; } public double ChangePercent { get; set; } }
     public class MarketUpdateMessage { public System.DateTime Timestamp { get; set; } public System.Collections.Generic.Dictionary<string, Quote> Quotes { get; set; } = new(); }

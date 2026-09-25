@@ -5,8 +5,11 @@ import json
 import logging
 import os
 from collections import deque
+from datetime import datetime, timezone
 
 from openai import AsyncOpenAI
+
+import cost_ledger
 
 from config import (
     MarketSnapshot,
@@ -44,6 +47,25 @@ SYSTEM_PROMPT_VERDICT = """You are a pragmatic market analyst. Given a transcrip
   "reason": "<detailed explanation, up to configurable length>"
 }
 No extra text, no markdown. Make the reason as informative as possible while staying factual and concise."""
+
+
+def provenance(feature: str, model: "str | None") -> dict:
+    """Machine-readable marking for AI-generated text (EU AI Act Art. 50(2)).
+
+    Attached as "provenance" to every broadcast payload that carries LLM output
+    (verdict, analysis), so the WPF window can show
+    "✦ AI-GENERATED · <model> · <time>". Same shape in every UFOS.ai backend —
+    see the "AI content labelling" section in CLAUDE.md before changing it.
+    """
+    return {
+        "ai_generated": True,
+        "generator": f"UFOS.ai/LiveStreamAgent/{feature}",
+        "provider": "OpenRouter",
+        "model": model or OPENROUTER_MODEL,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "human_reviewed": False,
+        "label": "AI-generated content (EU AI Act Art. 50)",
+    }
 
 
 def _load_scenarios() -> str:
@@ -100,6 +122,10 @@ class LLMAnalyst:
                 max_tokens=512,
                 response_format={"type": "json_object"},
             )
+            # Whoever makes the OpenRouter call records its cost (shared AI cost ledger).
+            used_model = getattr(response, "model", None) or OPENROUTER_MODEL
+            usage = cost_ledger.usage_info(response)
+            cost_ledger.record("verdict", used_model, usage)
             raw = response.choices[0].message.content
             # parse and validate
             parsed = json.loads(raw)
@@ -120,7 +146,15 @@ class LLMAnalyst:
             if len(reason) > max_reason_chars:
                 reason = reason[:max_reason_chars].rstrip()
 
-            return {"verdict": verdict.upper(), "ticker": ticker, "confidence": confidence, "reason": reason}
+            return {
+                "verdict": verdict.upper(),
+                "ticker": ticker,
+                "confidence": confidence,
+                "reason": reason,
+                "provenance": provenance("verdict", getattr(response, "model", None)),
+                # Optional cost/token info for the WPF window ("Cost: $0.0021 · 812 in / 190 out").
+                "usage": usage,
+            }
         except Exception as ex:
             logger.exception("LLM generate_verdict failed: %s", ex)
             return {"error": "llm_failed", "detail": str(ex)}
@@ -146,9 +180,15 @@ class LLMAnalyst:
             max_tokens=1024,
             response_format={"type": "json_object"},
         )
+        usage = cost_ledger.usage_info(response)
+        cost_ledger.record("analysis", getattr(response, "model", None) or OPENROUTER_MODEL, usage)
         raw = response.choices[0].message.content
         try:
-            return json.loads(raw)
+            result = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             logger.error("Failed to parse LLM response as JSON: %s", raw)
             return {"categories": {}, "summary": "", "error": "invalid_json", "raw": raw}
+        if isinstance(result, dict):
+            result["provenance"] = provenance("analysis", getattr(response, "model", None))
+            result["usage"] = usage
+        return result

@@ -1,12 +1,13 @@
+# UFOS.ai is a proof-of-concept portfolio project, not a published product.
 version: '3.8'
 services:
   backend:
-    build: ./FedTrader/backend
-    container_name: fedtrader_backend
+    build: ./UFOS.ai/LiveStreamAgent/backend
+    container_name: livestreamagent_backend
     ports:
       - "8765:8765"
     environment:
       - PYTHONUNBUFFERED=1
     volumes:
-      - ./FedTrader/backend:/app
+      - ./UFOS.ai/LiveStreamAgent/backend:/app
     restart: unless-stopped

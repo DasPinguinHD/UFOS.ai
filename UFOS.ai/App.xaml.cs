@@ -4,30 +4,33 @@ using System.Data;
 using System.IO;
 using System.Text;
 using System.Windows;
+using UFOS.ai.Logging;
+using UFOS.ai.Shared;
 
 namespace UFOS.ai
 {
     /// <summary>
     /// Interaction logic for App.xaml
     /// </summary>
-    public partial class App : Application
+    public partial class App : Application, IUiErrorReporter
     {
-        // Public helper used by windows to display/log UI errors
+        // EU AI Act / "not investment advice" notice: shown on every start, before
+        // MainWindow (StartupUri) is created. Declining exits the app. See
+        // Shared/AiDisclaimerWindow.cs and the AI-labelling section in CLAUDE.md.
+        protected override void OnStartup(StartupEventArgs e)
+        {
+            base.OnStartup(e);
+            AiDisclaimerWindow.ConfirmAtStartup(this);
+        }
+
+        // Public helper used by windows to display/log UI errors. Routes through the
+        // central AppLog so the error shows up in the global log window regardless of
+        // which module raised it.
         public void ShowUiException(Exception ex)
         {
             try
             {
-                // log to backend data logs folder
-                try
-                {
-                    var logsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "backend", "data", "logs");
-                    logsDir = Path.GetFullPath(logsDir);
-                    if (!Directory.Exists(logsDir)) Directory.CreateDirectory(logsDir);
-                    var path = Path.Combine(logsDir, "ui-errors.log");
-                    var txt = $"[{DateTime.Now:O}] {ex?.ToString() ?? "(null)"}\n";
-                    File.AppendAllText(path, txt, Encoding.UTF8);
-                }
-                catch { }
+                try { AppLog.Error("UI", ex?.Message ?? "(unbekannter Fehler)", ex); } catch { }
 
                 // show minimal user-facing notification
                 try

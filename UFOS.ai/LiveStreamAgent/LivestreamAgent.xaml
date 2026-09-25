@@ -5,9 +5,10 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:UFOS.ai"
         mc:Ignorable="d"
-        Title="FedAgent" Height="450" Width="800"
+        Title="FedAgent" Height="450" Width="800" MinWidth="640" MinHeight="420"
         Loaded="Window_Loaded"
         Closing="Window_Closing"
+        SizeChanged="Window_SizeChanged"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent">
     <Border Background="#111111" CornerRadius="8" Padding="0" SnapsToDevicePixels="True">
         <Grid>
@@ -160,201 +161,326 @@
 
             <!-- Custom title bar (half size, black, rounded top corners) -->
             <Border Grid.Row="0" Background="Black" CornerRadius="8,8,0,0" Height="18" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
-                <Grid>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0">
-                        <!-- Minimize: amber round button with minus symbol -->
-                        <Button x:Name="MinimizeButton" Click="MinimizeButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFEDB400" BorderBrush="Transparent">
-                            <TextBlock Text="—" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Button>
-                        <!-- Close: red round button with cross symbol -->
-                        <Button x:Name="CloseButton" Click="CloseButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFED6A5A" BorderBrush="Transparent">
-                            <TextBlock Text="✕" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Button>
-                    </StackPanel>
-                    <!-- Confidence history under Connection status -->
-                    <TextBlock Text="Confidence History" FontSize="12" FontStyle="Italic" Foreground="#FFBFBFBF" HorizontalAlignment="Left" Margin="479,72,0,0" VerticalAlignment="Top"/>
-                    <Border HorizontalAlignment="Left" Margin="479,92,0,0" VerticalAlignment="Top" Background="#101010" CornerRadius="4" Padding="6" BorderBrush="#202020" BorderThickness="1" Width="300" Height="48">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0">
+                    <!-- Minimize: amber round button with minus symbol -->
+                    <Button x:Name="MinimizeButton" Click="MinimizeButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFEDB400" BorderBrush="Transparent">
+                        <TextBlock Text="—" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                    <!-- Close: red round button with cross symbol -->
+                    <Button x:Name="CloseButton" Click="CloseButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFED6A5A" BorderBrush="Transparent">
+                        <TextBlock Text="✕" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                </StackPanel>
+            </Border>
+
+            <!-- ===================== Main content: two relatively-sized columns =====================
+                 Market Data (left, 3*) and Session Data (right, 2*) instead of the old fixed pixel
+                 margins, so resizing the window reflows content instead of clipping/overlapping it. -->
+            <Grid Grid.Row="1" Background="#141414" Margin="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="3*" MinWidth="380" />
+                    <ColumnDefinition Width="20" />
+                    <ColumnDefinition Width="2*" MinWidth="260" />
+                </Grid.ColumnDefinitions>
+
+                <!-- ===================== Left column: Market Data ===================== -->
+                <Grid Grid.Column="0" Margin="22,10,0,10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Label Grid.Row="0" Content="Market Data" FontWeight="Bold" FontSize="16" Foreground="White" Padding="0" />
+
+                    <!-- Verdict widget -->
+                    <Grid Grid.Row="1" Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Circular ring + History button -->
+                        <StackPanel Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <!-- ring container -->
+                            <Grid>
+                                <Ellipse x:Name="ConfidenceOuterEllipse" Width="80" Height="80" Stroke="#FFAAAAAA" StrokeThickness="10"/>
+                                <!-- Foreground arc rendered as a Path so we draw an exact arc for the percent -->
+                                <Path x:Name="RingArc" Width="80" Height="80" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeThickness="10" Fill="Transparent" Visibility="Visible">
+                                    <Path.Stroke>
+                                        <LinearGradientBrush x:Name="ConfidenceRingBrush" StartPoint="0,0.5" EndPoint="1,0.5">
+                                            <GradientStop Color="#FFB30000" Offset="0.0" />
+                                            <GradientStop Color="#FFFF2A2A" Offset="0.42" />
+                                            <GradientStop Color="#FFFF9A9A" Offset="0.5" />
+                                            <GradientStop Color="#FFFF2A2A" Offset="0.58" />
+                                            <GradientStop Color="#FFB30000" Offset="1.0" />
+                                            <LinearGradientBrush.RelativeTransform>
+                                                <TranslateTransform x:Name="ConfidenceRingBrushTransform" X="-1.2" />
+                                            </LinearGradientBrush.RelativeTransform>
+                                        </LinearGradientBrush>
+                                    </Path.Stroke>
+                                </Path>
+                                <!-- inner circle: dark background -->
+                                <Ellipse Width="50" Height="50" Fill="#FF2B2B2B" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <!-- confidence number centered inside inner circle -->
+                                <TextBlock x:Name="ConfidenceCenterText" Text="0%" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center" FontSize="20" FontWeight="Bold" Foreground="#FFFFFFFF" />
+                            </Grid>
+                            <!-- Verdict navigation buttons placed under the ring; styled similar to Logs button -->
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                                <Button x:Name="PrevVerdictButton" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="23" Width="23" Height="22" Margin="0,0,4,0" Padding="0">
+                                    <Polygon Points="9,0 9,11 0,5.5" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                </Button>
+                                <Button x:Name="NextVerdictButton" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="23" Width="23" Height="22" Padding="0">
+                                    <Polygon Points="0,0 0,11 9,5.5" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                </Button>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Verdict text and reason. Verdicts are written automatically by a
+                             language model, so the block is labelled as AI before the text
+                             ("✦ AI-GENERATED · model · time") and ends with the AI caveat
+                             (EU AI Act Art. 50 - wording from Shared/AiContent.cs). Violet
+                             #B98CE8 = the app-wide AI color (AiAccentBrush in DesignSystem.xaml). -->
+                        <StackPanel x:Name="VerdictTextPanel" Grid.Column="2" VerticalAlignment="Center">
+                            <TextBlock x:Name="VerdictAiBadge" Text="✦ AI VERDICTS · written automatically by a language model" FontFamily="Consolas" FontSize="10"
+                                       Foreground="#FFB98CE8" TextWrapping="Wrap" Margin="0,0,16,4" />
+                            <TextBlock x:Name="VerdictTextBlock" Text="Current Verdict: " FontWeight="Bold" FontSize="16" Foreground="White"/>
+                            <TextBlock x:Name="VerdictDateTextBlock" Text="" Visibility="Collapsed" FontSize="11" FontStyle="Italic" Foreground="#FFBFBFBF" Margin="0,2,0,0" />
+                            <TextBlock x:Name="ReasonTextBlock" Text="" TextWrapping="Wrap" Foreground="#FFBFBFBF" Margin="0,6,16,0" />
+                            <!-- OpenRouter cost/tokens of this verdict (shared AI cost ledger); set in RenderVerdict, hidden when unknown. -->
+                            <TextBlock x:Name="VerdictCostTextBlock" Text="" Visibility="Collapsed" FontSize="10" Foreground="#FF8A8A8A" Margin="0,4,16,0" />
+                            <TextBlock x:Name="VerdictAiCaveat" Text="" TextWrapping="Wrap" FontSize="10" FontStyle="Italic" Foreground="#FF8A8A8A" Margin="0,6,16,0" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- "Top Live Market Data" header + Expand button -->
+                    <Grid Grid.Row="2" Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="TopLiveMarketDataText" Grid.Column="0" VerticalAlignment="Center" FontSize="12" FontStyle="Italic" Foreground="#FFBFBFBF">
+                            <Run Text="Top Live Market Data: "/>
+                            <Run x:Name="TimestampRun" Text="" />
+                        </TextBlock>
+                        <Button x:Name="ExpandMarketButton" Grid.Column="1" Content="Expand" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="52" Height="24" Click="ExpandMarketButton_Click" />
+                    </Grid>
+
+                    <!-- Market data rows: compact, wrapped layout (1-2 tickers per line) when the
+                         window is small; replaced inline by the full category grid (normally shown
+                         in the Expand popup) once the window is wide/tall enough - see
+                         Window_SizeChanged / UpdateMarketDataLayoutMode in code-behind. -->
+                    <Grid Grid.Row="3" Margin="0,14,0,0">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <ScrollViewer.Resources>
+                                <Style TargetType="ScrollBar" BasedOn="{StaticResource CompactScrollBarStyle}" />
+                            </ScrollViewer.Resources>
+                            <ItemsControl x:Name="TickersItems" HorizontalAlignment="Stretch">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <!-- Use a two-column grid so each row contains 1 or 2 tickers and no items are clipped -->
+                                        <UniformGrid Columns="2" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#101010" CornerRadius="6" Padding="6" Margin="0,0,8,8" BorderBrush="#202020" BorderThickness="1" MinWidth="216" MinHeight="28" ToolTip="{Binding TooltipControl}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="48" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Name}" Grid.Column="0" VerticalAlignment="Center" Foreground="White" FontSize="12" FontWeight="SemiBold"/>
+                                                <Grid Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="56"/>
+                                                        <ColumnDefinition Width="48"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Value}" Foreground="White" FontSize="12" VerticalAlignment="Center" TextAlignment="Right" Grid.Column="0" Margin="0,0,6,0"/>
+                                                    <TextBlock Text="{Binding Change}" Foreground="#FFBFBFBF" FontSize="11" VerticalAlignment="Center" TextAlignment="Left" Grid.Column="1"/>
+                                                </Grid>
+                                                <Grid Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                    <Polygon Points="6,0 12,12 0,12" Fill="{Binding TrendColor}" Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                                        <Polygon.RenderTransform>
+                                                            <RotateTransform Angle="{Binding TrendRotation}" />
+                                                        </Polygon.RenderTransform>
+                                                    </Polygon>
+                                                </Grid>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+
+                        <!-- Reparented here (from the Expand popup) once the window is big enough -->
+                        <Border x:Name="InlineExpandedMarketHost" Visibility="Collapsed" />
+
+                        <TextBlock x:Name="TopLiveMarketDisclaimer2" Text="Nothing to see here yet. Give us a moment..." HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,20,0,0" FontSize="8" FontStyle="Italic" Foreground="#FFBFBFBF"/>
+                    </Grid>
+
+                    <TextBlock x:Name="TopLiveMarketDataDisclaimer1" Grid.Row="4" Text="Latest Market Data will be displayed here: If markets are closed, data may be up to several days old." Margin="0,10,0,0" FontSize="8" FontStyle="Italic" Foreground="#FFBFBFBF"/>
+                </Grid>
+
+                <!-- ===================== Right column: Session Data ===================== -->
+                <Grid Grid.Column="2" Margin="0,10,0,10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Label Grid.Row="0" Content="Session Data" FontWeight="Bold" FontSize="16" Foreground="White" Padding="0" />
+
+                    <!-- Connection status -->
+                    <Grid Grid.Row="1" Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Ellipse x:Name="ConnectionIndicator" Width="12" Height="12" Fill="Gray" Stroke="#222" StrokeThickness="1" VerticalAlignment="Center" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2"/>
+                        <TextBlock x:Name="ConnectionStatusText" Text="Disconnected" Foreground="#FFBFBFBF" FontSize="12" Grid.Column="1" Grid.Row="0" Margin="8,0,0,0"/>
+                        <TextBlock x:Name="ConnectionLastText" Text="last: -" Foreground="#FF8F8F8F" FontSize="11" Grid.Column="1" Grid.Row="1" Margin="8,0,0,0"/>
+                        <StackPanel Grid.Column="2" Grid.Row="0" Grid.RowSpan="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="LogsButton" Content="Logs" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="52" Click="ShowLogs_Click" Margin="8,0,0,0"/>
+                            <Button x:Name="RestartButton" Content="Restart" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="52" Click="RestartButton_Click" Margin="8,0,0,0" Visibility="Collapsed"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Confidence history (moved out of the title bar, where it used to overflow into
+                         this row by coincidence of hardcoded pixel margins) -->
+                    <TextBlock Grid.Row="2" Text="Confidence History" Margin="0,16,0,0" FontSize="12" FontStyle="Italic" Foreground="#FFBFBFBF"/>
+                    <Border Grid.Row="3" Margin="0,8,0,0" HorizontalAlignment="Stretch" Background="#101010" CornerRadius="4" Padding="6" BorderBrush="#202020" BorderThickness="1" Height="48">
                         <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Height="36">
                             <StackPanel x:Name="ConfidenceStack" Orientation="Horizontal" HorizontalAlignment="Left"/>
                         </ScrollViewer>
                     </Border>
 
+                    <TextBlock x:Name="LiveTranscriptLabel" Grid.Row="4" Text="Live Transcript" Margin="0,16,0,0" FontSize="12" FontStyle="Italic" Foreground="#FFBFBFBF"/>
+
+                    <Grid x:Name="TranscriptGrid" Grid.Row="5" Margin="0,8,0,0" MouseEnter="TranscriptGrid_MouseEnter" MouseLeave="TranscriptGrid_MouseLeave">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="23*"/>
+                            <ColumnDefinition Width="278*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Background="#FF1B1B1B" CornerRadius="6" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="6" Grid.ColumnSpan="2">
+                            <Border.Resources>
+                                <Style x:Key="TranscriptThumbStyle" TargetType="Thumb">
+                                    <Setter Property="Background" Value="#FF4A4A4A" />
+                                    <Setter Property="MinHeight" Value="28" />
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" RenderTransformOrigin="0.5,0.5">
+                                                    <Border.RenderTransform>
+                                                        <ScaleTransform ScaleX="1" ScaleY="1" />
+                                                    </Border.RenderTransform>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsDragging" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="#FF888888" />
+                                                        <Trigger.EnterActions>
+                                                            <BeginStoryboard>
+                                                                <Storyboard>
+                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.08" />
+                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.08" />
+                                                                </Storyboard>
+                                                            </BeginStoryboard>
+                                                        </Trigger.EnterActions>
+                                                        <Trigger.ExitActions>
+                                                            <BeginStoryboard>
+                                                                <Storyboard>
+                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.12" />
+                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.12" />
+                                                                </Storyboard>
+                                                            </BeginStoryboard>
+                                                        </Trigger.ExitActions>
+                                                    </Trigger>
+                                                    <Trigger Property="IsMouseCaptured" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="#FF888888" />
+                                                        <Trigger.EnterActions>
+                                                            <BeginStoryboard>
+                                                                <Storyboard>
+                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.06" />
+                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.06" />
+                                                                </Storyboard>
+                                                            </BeginStoryboard>
+                                                        </Trigger.EnterActions>
+                                                        <Trigger.ExitActions>
+                                                            <BeginStoryboard>
+                                                                <Storyboard>
+                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.10" />
+                                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.10" />
+                                                                </Storyboard>
+                                                            </BeginStoryboard>
+                                                        </Trigger.ExitActions>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                                <Style x:Key="TranscriptScrollBarStyle" TargetType="ScrollBar">
+                                    <Setter Property="Width" Value="8" />
+                                    <Setter Property="Background" Value="Transparent" />
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ScrollBar">
+                                                <Grid Background="Transparent">
+                                                    <Border Margin="2,0,2,0" Background="#FF242424" CornerRadius="4"/>
+                                                    <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                                        <Track.DecreaseRepeatButton>
+                                                            <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" IsHitTestVisible="False"/>
+                                                        </Track.DecreaseRepeatButton>
+                                                        <Track.Thumb>
+                                                            <Thumb Style="{StaticResource TranscriptThumbStyle}" />
+                                                        </Track.Thumb>
+                                                        <Track.IncreaseRepeatButton>
+                                                            <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" IsHitTestVisible="False"/>
+                                                        </Track.IncreaseRepeatButton>
+                                                    </Track>
+                                                </Grid>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </Border.Resources>
+                            <TextBox x:Name="TranscriptTextBox" TextWrapping="Wrap" Text="Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: " VerticalAlignment="Stretch" Background="Transparent" Foreground="#FFF5F5F5" BorderThickness="0" CaretBrush="#FFF5F5F5" VerticalScrollBarVisibility="Auto" AcceptsReturn="True" TextChanged="TextBox_TextChanged">
+                                <TextBox.Resources>
+                                    <Style TargetType="ScrollBar" BasedOn="{StaticResource TranscriptScrollBarStyle}" />
+                                    <Style TargetType="Thumb" BasedOn="{StaticResource TranscriptThumbStyle}" />
+                                </TextBox.Resources>
+                            </TextBox>
+                        </Border>
+                        <Rectangle x:Name="TranscriptFadeRect" IsHitTestVisible="False" VerticalAlignment="Top" Height="28" Opacity="1" Grid.ColumnSpan="2">
+                            <Rectangle.Fill>
+                                <!-- solid at top, fade downwards to transparent -->
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#FF141414" Offset="0" />
+                                    <GradientStop Color="#00141414" Offset="1" />
+                                </LinearGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                    </Grid>
+
+                    <TextBlock x:Name="LiveTranscript_subtitle" Grid.Row="6" Text="Text may contain gaps: This is due to the algorithm compensating for slow API calls." Margin="0,10,0,0" FontSize="8" FontStyle="Italic" Foreground="#FFBFBFBF"/>
                 </Grid>
-            </Border>
 
-            <Grid Grid.Row="1" Background="#141414" Margin="0">
-
-                <!-- Market data rows: compact, wrapped layout (1-2 tickers per line) -->
-                <ItemsControl x:Name="TickersItems" HorizontalAlignment="Left" Margin="25,226,0,0" VerticalAlignment="Top" Width="450" MaxHeight="250">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <!-- Use a two-column grid so each row contains 1 or 2 tickers and no items are clipped -->
-                            <UniformGrid Columns="2" />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Background="#101010" CornerRadius="6" Padding="6" Margin="0,0,8,8" BorderBrush="#202020" BorderThickness="1" MinWidth="216" MinHeight="28" ToolTip="{Binding TooltipControl}">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="48" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{Binding Name}" Grid.Column="0" VerticalAlignment="Center" Foreground="White" FontSize="12" FontWeight="SemiBold"/>
-                                    <Grid Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="56"/>
-                                            <ColumnDefinition Width="48"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{Binding Value}" Foreground="White" FontSize="12" VerticalAlignment="Center" TextAlignment="Right" Grid.Column="0" Margin="0,0,6,0"/>
-                                        <TextBlock Text="{Binding Change}" Foreground="#FFBFBFBF" FontSize="11" VerticalAlignment="Center" TextAlignment="Left" Grid.Column="1"/>
-                                    </Grid>
-                                    <Grid Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                        <Polygon Points="6,0 12,12 0,12" Fill="{Binding TrendColor}" Width="12" Height="12" HorizontalAlignment="Right" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
-                                            <Polygon.RenderTransform>
-                                                <RotateTransform Angle="{Binding TrendRotation}" />
-                                            </Polygon.RenderTransform>
-                                        </Polygon>
-                                    </Grid>
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-
-                <!-- Right-side transcript: label above textbox with same vertical spacing (subheader look) -->
-                <TextBlock x:Name="LiveTranscriptLabel" Text="Live Transcript" HorizontalAlignment="Left" Margin="479,186,0,0" VerticalAlignment="Top" FontSize="12" FontStyle="Italic" Foreground="#FFBFBFBF"/>
-                <!-- Connection status under Session Data -->
-                <Grid HorizontalAlignment="Left" Margin="479,40,0,0" VerticalAlignment="Top">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-                    <Ellipse x:Name="ConnectionIndicator" Width="12" Height="12" Fill="Gray" Stroke="#222" StrokeThickness="1" VerticalAlignment="Center" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2"/>
-                    <TextBlock x:Name="ConnectionStatusText" Text="Disconnected" Foreground="#FFBFBFBF" FontSize="12" Grid.Column="1" Grid.Row="0" Margin="8,0,0,0"/>
-                    <Button x:Name="LogsButton" Content="Logs" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="52" Click="ShowLogs_Click" Grid.Column="1" Grid.Row="0" Grid.RowSpan="2" VerticalAlignment="Top" Margin="85,3,-77,0"/>
-                    <Button x:Name="RestartButton" Content="Restart" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="52" Click="RestartButton_Click" Grid.Column="1" Grid.Row="0" Grid.RowSpan="2" VerticalAlignment="Top" Margin="145,3,-167,0" Visibility="Collapsed"/>
-                    <TextBlock x:Name="ConnectionLastText" Text="last: -" Foreground="#FF8F8F8F" FontSize="11" Grid.Column="1" Grid.Row="1" Margin="8,0,0,0"/>
-                </Grid>
-                <Grid x:Name="TranscriptGrid" HorizontalAlignment="Left" Margin="479,226,0,0" VerticalAlignment="Top" Width="300" Height="200" MouseEnter="TranscriptGrid_MouseEnter" MouseLeave="TranscriptGrid_MouseLeave">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="23*"/>
-                        <ColumnDefinition Width="278*"/>
-                    </Grid.ColumnDefinitions>
-                    <Border Background="#FF1B1B1B" CornerRadius="6" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="6" Grid.ColumnSpan="2">
-                        <Border.Resources>
-                            <Style x:Key="TranscriptThumbStyle" TargetType="Thumb">
-                                <Setter Property="Background" Value="#FF4A4A4A" />
-                                <Setter Property="MinHeight" Value="28" />
-                                <Setter Property="Template">
-                                    <Setter.Value>
-                                        <ControlTemplate TargetType="Thumb">
-                                            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" RenderTransformOrigin="0.5,0.5">
-                                                <Border.RenderTransform>
-                                                    <ScaleTransform ScaleX="1" ScaleY="1" />
-                                                </Border.RenderTransform>
-                                            </Border>
-                                            <ControlTemplate.Triggers>
-                                                <Trigger Property="IsDragging" Value="True">
-                                                    <Setter TargetName="bd" Property="Background" Value="#FF888888" />
-                                                    <Trigger.EnterActions>
-                                                        <BeginStoryboard>
-                                                            <Storyboard>
-                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.08" />
-                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.08" />
-                                                            </Storyboard>
-                                                        </BeginStoryboard>
-                                                    </Trigger.EnterActions>
-                                                    <Trigger.ExitActions>
-                                                        <BeginStoryboard>
-                                                            <Storyboard>
-                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.12" />
-                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.12" />
-                                                            </Storyboard>
-                                                        </BeginStoryboard>
-                                                    </Trigger.ExitActions>
-                                                </Trigger>
-                                                <Trigger Property="IsMouseCaptured" Value="True">
-                                                    <Setter TargetName="bd" Property="Background" Value="#FF888888" />
-                                                    <Trigger.EnterActions>
-                                                        <BeginStoryboard>
-                                                            <Storyboard>
-                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.06" />
-                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.06" />
-                                                            </Storyboard>
-                                                        </BeginStoryboard>
-                                                    </Trigger.EnterActions>
-                                                    <Trigger.ExitActions>
-                                                        <BeginStoryboard>
-                                                            <Storyboard>
-                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.10" />
-                                                                <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.10" />
-                                                            </Storyboard>
-                                                        </BeginStoryboard>
-                                                    </Trigger.ExitActions>
-                                                </Trigger>
-                                            </ControlTemplate.Triggers>
-                                        </ControlTemplate>
-                                    </Setter.Value>
-                                </Setter>
-                            </Style>
-                            <Style x:Key="TranscriptScrollBarStyle" TargetType="ScrollBar">
-                                <Setter Property="Width" Value="8" />
-                                <Setter Property="Background" Value="Transparent" />
-                                <Setter Property="Template">
-                                    <Setter.Value>
-                                        <ControlTemplate TargetType="ScrollBar">
-                                            <Grid Background="Transparent">
-                                                <Border Margin="2,0,2,0" Background="#FF242424" CornerRadius="4"/>
-                                                <Track x:Name="PART_Track" IsDirectionReversed="True">
-                                                    <Track.DecreaseRepeatButton>
-                                                        <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" IsHitTestVisible="False"/>
-                                                    </Track.DecreaseRepeatButton>
-                                                    <Track.Thumb>
-                                                        <Thumb Style="{StaticResource TranscriptThumbStyle}" />
-                                                    </Track.Thumb>
-                                                    <Track.IncreaseRepeatButton>
-                                                        <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" IsHitTestVisible="False"/>
-                                                    </Track.IncreaseRepeatButton>
-                                                </Track>
-                                            </Grid>
-                                        </ControlTemplate>
-                                    </Setter.Value>
-                                </Setter>
-                            </Style>
-                        </Border.Resources>
-                        <TextBox x:Name="TranscriptTextBox" TextWrapping="Wrap" Text="Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: Newest text at the top Transcript is moving through live here: " VerticalAlignment="Stretch" Background="Transparent" Foreground="#FFF5F5F5" BorderThickness="0" CaretBrush="#FFF5F5F5" VerticalScrollBarVisibility="Auto" AcceptsReturn="True" TextChanged="TextBox_TextChanged">
-                            <TextBox.Resources>
-                                <Style TargetType="ScrollBar" BasedOn="{StaticResource TranscriptScrollBarStyle}" />
-                                <Style TargetType="Thumb" BasedOn="{StaticResource TranscriptThumbStyle}" />
-                            </TextBox.Resources>
-                        </TextBox>
-                    </Border>
-                    <Rectangle x:Name="TranscriptFadeRect" IsHitTestVisible="False" VerticalAlignment="Top" Height="28" Opacity="1" Grid.ColumnSpan="2">
-                        <Rectangle.Fill>
-                            <!-- solid at top, fade downwards to transparent -->
-                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                <GradientStop Color="#FF141414" Offset="0" />
-                                <GradientStop Color="#00141414" Offset="1" />
-                            </LinearGradientBrush>
-                        </Rectangle.Fill>
-                    </Rectangle>
-                </Grid>
-                <Label Content="Session Data" HorizontalAlignment="Left" Margin="479,10,0,0" VerticalAlignment="Top" FontWeight="Bold" FontSize="16" RenderTransformOrigin="0.868,0.515" Foreground="White"/>
-                <Label Content="Market Data" HorizontalAlignment="Left" Margin="25,10,0,0" VerticalAlignment="Top" FontWeight="Bold" FontSize="16" Foreground="White"/>
-
-                <!-- Top Live Market Data label with dynamic timestamp (subheader look) -->
-                <TextBlock x:Name="TopLiveMarketDataText" HorizontalAlignment="Left" Margin="22,186,0,0" VerticalAlignment="Top" FontSize="12" FontStyle="Italic" Foreground="#FFBFBFBF">
-            <Run Text="Top Live Market Data: "/>
-            <Run x:Name="TimestampRun" Text="" />
-                </TextBlock>
-
-                <Button x:Name="ExpandMarketButton" Content="Expand" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="52" Click="ExpandMarketButton_Click" HorizontalAlignment="Left" Margin="309,182,0,0" VerticalAlignment="Top" Height="24"/>
+                <!-- Kept off-screen: still used as the Expand popup's host when the window is small
+                     (see OpenMarketDataPopup/ExpandedMarketGrid reparenting in code-behind). -->
                 <Popup x:Name="MarketDataPopup" PlacementTarget="{Binding ElementName=ExpandMarketButton}" Placement="Bottom" HorizontalOffset="0" VerticalOffset="6" AllowsTransparency="True" StaysOpen="True">
                     <Border x:Name="MarketDataPopupBorder" Background="#111111" BorderBrush="#2A2A2A" BorderThickness="1" CornerRadius="8" Padding="10" SnapsToDevicePixels="True" ClipToBounds="True">
                         <Grid x:Name="MarketDataPopupRoot" MouseEnter="MarketDataPopupRoot_MouseEnter" MouseLeave="MarketDataPopupRoot_MouseLeave">
@@ -365,66 +491,6 @@
                         </Grid>
                     </Border>
                 </Popup>
-
-                <!-- Verdict widget under Market Data -->
-                <Grid HorizontalAlignment="Left" Margin="22,50,0,0" VerticalAlignment="Top">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="12" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <!-- Circular ring + History button -->
-                    <StackPanel Grid.Column="0" HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <!-- ring container -->
-                        <Grid>
-                            <Ellipse x:Name="ConfidenceOuterEllipse" Width="80" Height="80" Stroke="#FFAAAAAA" StrokeThickness="10"/>
-                            <!-- Foreground arc rendered as a Path so we draw an exact arc for the percent -->
-                            <Path x:Name="RingArc" Width="80" Height="80" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeThickness="10" Fill="Transparent" Visibility="Visible">
-                                <Path.Stroke>
-                                    <LinearGradientBrush x:Name="ConfidenceRingBrush" StartPoint="0,0.5" EndPoint="1,0.5">
-                                        <GradientStop Color="#FFB30000" Offset="0.0" />
-                                        <GradientStop Color="#FFFF2A2A" Offset="0.42" />
-                                        <GradientStop Color="#FFFF9A9A" Offset="0.5" />
-                                        <GradientStop Color="#FFFF2A2A" Offset="0.58" />
-                                        <GradientStop Color="#FFB30000" Offset="1.0" />
-                                        <LinearGradientBrush.RelativeTransform>
-                                            <TranslateTransform x:Name="ConfidenceRingBrushTransform" X="-1.2" />
-                                        </LinearGradientBrush.RelativeTransform>
-                                    </LinearGradientBrush>
-                                </Path.Stroke>
-                            </Path>
-                            <!-- inner circle: dark background -->
-                            <Ellipse Width="50" Height="50" Fill="#FF2B2B2B" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            <!-- confidence number centered inside inner circle -->
-                            <TextBlock x:Name="ConfidenceCenterText" Text="0%" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center" FontSize="20" FontWeight="Bold" Foreground="#FFFFFFFF" />
-                        </Grid>
-                        <!-- Verdict navigation buttons placed under the ring; styled similar to Logs button -->
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
-                            <Button x:Name="PrevVerdictButton" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="23" Width="23" Height="22" Margin="0,0,4,0" Padding="0">
-                                <Polygon Points="9,0 9,11 0,5.5" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                            </Button>
-                            <Button x:Name="NextVerdictButton" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="23" Width="23" Height="22" Padding="0">
-                                <Polygon Points="0,0 0,11 9,5.5" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-                            </Button>
-                        </StackPanel>
-                    </StackPanel>
-
-                    <!-- spacer -->
-
-                    <!-- Verdict text and reason -->
-                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                        <TextBlock x:Name="VerdictTextBlock" Text="Current Verdict: " FontWeight="Bold" FontSize="16" Foreground="White"/>
-                        <TextBlock x:Name="VerdictDateTextBlock" Text="" Visibility="Collapsed" FontSize="11" FontStyle="Italic" Foreground="#FFBFBFBF" Margin="0,2,0,0" />
-                        <TextBlock x:Name="ReasonTextBlock" Text="" TextWrapping="Wrap" Foreground="#FFBFBFBF" Margin="0,6,16,0" />
-                    </StackPanel>
-                </Grid>
-                <TextBlock x:Name="LiveTranscript_subtitle" Text="Text may contain gaps: This is due to the algorithm compensating for slow API calls." HorizontalAlignment="Left" Margin="479,0,0,0" VerticalAlignment="Center" FontSize="8" FontStyle="Italic" Foreground="#FFBFBFBF"/>
-                <TextBlock x:Name="TopLiveMarketDataDisclaimer1" Text="Latest Market Data will be displayed here: If markets are closed, data may be up to several days old." HorizontalAlignment="Left" Margin="22,0,0,0" VerticalAlignment="Center" FontSize="8" FontStyle="Italic" Foreground="#FFBFBFBF"/>
-                <TextBlock x:Name="TopLiveMarketDisclaimer2" Text="Nothing to see here yet. Give us a moment..." HorizontalAlignment="Left" Margin="117,321,0,0" VerticalAlignment="Top" FontSize="8" FontStyle="Italic" Foreground="#FFBFBFBF"/>
-
-                <!-- Verdict history removed to avoid overlap; confidence history moved under Session Data -->
-
             </Grid>
         </Grid>
     </Border>

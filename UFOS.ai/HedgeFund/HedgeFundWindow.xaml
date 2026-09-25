@@ -1,0 +1,637 @@
+<Window x:Class="UFOS.ai.HedgeFund.HedgeFundWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Hedge Fund" Height="760" Width="1180"
+        MinHeight="620" MinWidth="960"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing"
+        StateChanged="Window_StateChanged"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        WindowStartupLocation="CenterScreen">
+    <Border x:Name="RootBorder" Background="#111111" CornerRadius="8" Padding="0" SnapsToDevicePixels="True">
+        <Grid>
+            <Grid.Resources>
+
+                <!-- ===================== Window chrome (unchanged, local copy) ===================== -->
+                <Style x:Key="RoundButtonStyle" TargetType="Button">
+                    <Setter Property="Width" Value="14" />
+                    <Setter Property="Height" Value="14" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="999" Width="{TemplateBinding Width}" Height="{TemplateBinding Height}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="bd" Property="RenderTransform">
+                                            <Setter.Value>
+                                                <ScaleTransform ScaleX="0.95" ScaleY="0.95"/>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+                <Style x:Key="RoundedDarkButtonStyle" TargetType="Button">
+                    <Setter Property="Padding" Value="8,3" />
+                    <Setter Property="MinHeight" Value="22" />
+                    <Setter Property="Background" Value="#FF242424" />
+                    <Setter Property="BorderBrush" Value="#FF333333" />
+                    <Setter Property="Foreground" Value="#FFBFBFBF" />
+                    <Setter Property="BorderThickness" Value="1" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" SnapsToDevicePixels="True">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Opacity" Value="0.88" />
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="bd" Property="RenderTransform">
+                                            <Setter.Value>
+                                                <ScaleTransform ScaleX="0.97" ScaleY="0.97" />
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+                <Style x:Key="CompactScrollThumbStyle" TargetType="Thumb">
+                    <Setter Property="Background" Value="#FF4A4A4A" />
+                    <Setter Property="MinHeight" Value="28" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Thumb">
+                                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" RenderTransformOrigin="0.5,0.5">
+                                    <Border.RenderTransform>
+                                        <ScaleTransform ScaleX="1" ScaleY="1" />
+                                    </Border.RenderTransform>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsDragging" Value="True">
+                                        <Setter TargetName="bd" Property="Background" Value="#FF888888" />
+                                        <Trigger.EnterActions>
+                                            <BeginStoryboard>
+                                                <Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.08" />
+                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.08" />
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </Trigger.EnterActions>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+                <Style x:Key="CompactScrollBarStyle" TargetType="ScrollBar">
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="Width" Value="8" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ScrollBar">
+                                <Grid Background="Transparent">
+                                    <Border Margin="2,0,2,0" Background="#FF242424" CornerRadius="4"/>
+                                    <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                        <Track.DecreaseRepeatButton>
+                                            <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" IsHitTestVisible="False"/>
+                                        </Track.DecreaseRepeatButton>
+                                        <Track.Thumb>
+                                            <Thumb Style="{StaticResource CompactScrollThumbStyle}" />
+                                        </Track.Thumb>
+                                        <Track.IncreaseRepeatButton>
+                                            <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" IsHitTestVisible="False"/>
+                                        </Track.IncreaseRepeatButton>
+                                    </Track>
+                                </Grid>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+
+                <!-- ===================== Overlay accent colors (local to this module only) ===================== -->
+                <SolidColorBrush x:Key="LongBrush" Color="#FF6FA98A" />
+                <SolidColorBrush x:Key="LongDimBrush" Color="#FF4E7A64" />
+                <SolidColorBrush x:Key="ShortBrush" Color="#FFC1604B" />
+                <SolidColorBrush x:Key="ShortDimBrush" Color="#FF8E4739" />
+                <SolidColorBrush x:Key="NeutralBrush" Color="#FF9A9A9A" />
+                <SolidColorBrush x:Key="RiskBrush" Color="#FFD9A54B" />
+                <SolidColorBrush x:Key="FocusBrush" Color="#FF7C8CF8" />
+                <SolidColorBrush x:Key="PanelBrush" Color="#FF1A1A1A" />
+                <SolidColorBrush x:Key="PanelBorderBrush" Color="#FF2A2A2A" />
+                <SolidColorBrush x:Key="HairlineBrush" Color="#FF242424" />
+
+                <!-- Action buttons in the execution panel: same shape/behavior as RoundedDarkButtonStyle, different colors -->
+                <Style x:Key="ActionButtonLongStyle" TargetType="Button" BasedOn="{StaticResource RoundedDarkButtonStyle}">
+                    <Setter Property="Background" Value="#266FA98A" />
+                    <Setter Property="BorderBrush" Value="{StaticResource LongDimBrush}" />
+                    <Setter Property="Foreground" Value="#FF9CCBB3" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </Style>
+                <Style x:Key="ActionButtonShortStyle" TargetType="Button" BasedOn="{StaticResource RoundedDarkButtonStyle}">
+                    <Setter Property="Background" Value="#26C1604B" />
+                    <Setter Property="BorderBrush" Value="{StaticResource ShortDimBrush}" />
+                    <Setter Property="Foreground" Value="#FFE3998A" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </Style>
+                <Style x:Key="ActionButtonFlattenStyle" TargetType="Button" BasedOn="{StaticResource RoundedDarkButtonStyle}" />
+
+                <!-- Manual/Autonomous tab switch as a segmented pill -->
+                <Style x:Key="ModeTabStyle" TargetType="RadioButton">
+                    <Setter Property="Padding" Value="14,5" />
+                    <Setter Property="Foreground" Value="#FF9A9A9A" />
+                    <Setter Property="FontSize" Value="12" />
+                    <Setter Property="FontWeight" Value="Medium" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="RadioButton">
+                                <Border x:Name="bd" CornerRadius="999" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="bd" Property="Background" Value="#FF242424" />
+                                        <Setter Property="Foreground" Value="#FFBFBFBF" />
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Foreground" Value="#FFBFBFBF" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+
+                <!-- Toggle switch for autonomous mode -->
+                <Style x:Key="ToggleSwitchStyle" TargetType="CheckBox">
+                    <Setter Property="Cursor" Value="Hand" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="CheckBox">
+                                <Grid Width="38" Height="21">
+                                    <Border x:Name="Track" CornerRadius="999" Background="#FF333333" />
+                                    <Ellipse x:Name="Thumb" Width="15" Height="15" Fill="#FFBFBFBF"
+                                             HorizontalAlignment="Left" Margin="3,0,0,0" />
+                                </Grid>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="Track" Property="Background" Value="#557C8CF8" />
+                                        <Setter TargetName="Thumb" Property="Fill" Value="{StaticResource FocusBrush}" />
+                                        <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
+                                        <Setter TargetName="Thumb" Property="Margin" Value="0,0,3,0" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+
+                <!-- Compact parameter sliders -->
+                <Style x:Key="ParamSliderStyle" TargetType="Slider">
+                    <Setter Property="Height" Value="18" />
+                    <Setter Property="Foreground" Value="{StaticResource FocusBrush}" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Slider">
+                                <Grid VerticalAlignment="Center">
+                                    <Border Height="4" CornerRadius="2" Background="{StaticResource HairlineBrush}" />
+                                    <Track x:Name="PART_Track">
+                                        <Track.DecreaseRepeatButton>
+                                            <RepeatButton Command="Slider.DecreaseLarge" IsTabStop="False">
+                                                <RepeatButton.Template>
+                                                    <ControlTemplate TargetType="RepeatButton">
+                                                        <Border Height="4" CornerRadius="2" Background="{TemplateBinding Foreground}" />
+                                                    </ControlTemplate>
+                                                </RepeatButton.Template>
+                                                <RepeatButton.Foreground>
+                                                    <Binding RelativeSource="{RelativeSource AncestorType=Slider}" Path="Foreground" />
+                                                </RepeatButton.Foreground>
+                                            </RepeatButton>
+                                        </Track.DecreaseRepeatButton>
+                                        <Track.Thumb>
+                                            <Thumb Width="14" Height="14" IsTabStop="False">
+                                                <Thumb.Template>
+                                                    <ControlTemplate TargetType="Thumb">
+                                                        <Ellipse Fill="{StaticResource FocusBrush}" Stroke="#FF111111" StrokeThickness="2" />
+                                                    </ControlTemplate>
+                                                </Thumb.Template>
+                                            </Thumb>
+                                        </Track.Thumb>
+                                        <Track.IncreaseRepeatButton>
+                                            <RepeatButton Command="Slider.IncreaseLarge" Background="Transparent" IsTabStop="False">
+                                                <RepeatButton.Template>
+                                                    <ControlTemplate TargetType="RepeatButton">
+                                                        <Border Height="4" CornerRadius="2" Background="Transparent" />
+                                                    </ControlTemplate>
+                                                </RepeatButton.Template>
+                                            </RepeatButton>
+                                        </Track.IncreaseRepeatButton>
+                                    </Track>
+                                </Grid>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+
+            </Grid.Resources>
+
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- ===================== Title bar (unchanged: black, rounded, drag, minimize/close) ===================== -->
+            <Border x:Name="TitleBarBorder" Grid.Row="0" Background="Black" CornerRadius="8,8,0,0" Height="18" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
+                    MouseMove="TitleBar_MouseMove" MouseLeftButtonUp="TitleBar_MouseLeftButtonUp">
+                <Grid>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="8,0,0,0">
+                        <Ellipse Width="5" Height="5" Fill="{StaticResource NeutralBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="Hedge Fund" Foreground="#FF9A9A9A" FontSize="10" Margin="6,0,0,0" VerticalAlignment="Center" />
+                        <TextBlock Text="·  Dashboard: demo data, not connected  ·  Financial Newsroom: live public data" Foreground="#FF5A5A5A" FontSize="10" Margin="4,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0">
+                        <TextBlock x:Name="ClockText" Text="--:--:-- UTC" Foreground="#FF5A5A5A" FontSize="10" Margin="0,0,10,0" VerticalAlignment="Center" />
+                        <Button x:Name="MinimizeButton" Click="MinimizeButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFEDB400" BorderBrush="Transparent">
+                            <TextBlock Text="—" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Button>
+                        <Button x:Name="CloseButton" Click="CloseButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFED6A5A" BorderBrush="Transparent">
+                            <TextBlock Text="✕" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ===================== Content ===================== -->
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer.Resources>
+                    <Style TargetType="ScrollBar" BasedOn="{StaticResource CompactScrollBarStyle}" />
+                </ScrollViewer.Resources>
+                <StackPanel Margin="20,18,20,20">
+
+                    <!-- ===== Module toolbar: "Financial Newsroom" button =====
+                         Live public data (insider trades, macro indicators, calendar, AI analysis),
+                         served by HedgeFund/backend. The button opens the newsroom on its first
+                         section; the newsroom's own navigation (Newsroom/NewsroomSections.cs) does
+                         the rest. (Was a dropdown submenu until 2026-09-25.) -->
+                    <Grid Margin="0,0,0,16">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                            <Button x:Name="NewsroomMenuButton" Style="{StaticResource RoundedDarkButtonStyle}" Padding="10,4"
+                                    Click="NewsroomMenuButton_Click" AutomationProperties.Name="Open Financial Newsroom"
+                                    ToolTip="Financial Newsroom — live public market data (insider trades, macro indicators)">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse x:Name="NewsroomStatusDot" Width="6" Height="6" Fill="#FF6A6A6A" VerticalAlignment="Center" />
+                                    <TextBlock Text="Financial Newsroom" FontSize="11.5" Foreground="#FFE6E6E6" Margin="7,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <TextBlock x:Name="NewsroomStatusText" Text="Newsroom backend: not started" FontSize="10" Foreground="#FF6A6A6A"
+                                       Margin="10,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="560" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- ===== Three-column signal / verdict / portfolio grid ===== -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="300" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="300" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Left: agent signals -->
+                        <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                            <Grid Margin="2,0,2,10">
+                                <TextBlock Text="Agent Signals" FontSize="13" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                <TextBlock Text="4 active" FontSize="11" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                            </Grid>
+                            <!-- These agent texts look like AI output but are hardcoded samples. Say so
+                                 (project convention "AI content labelling", rule 7). Once real agents
+                                 exist, every agent text needs the "✦ AI-GENERATED · model · time" badge
+                                 and caveat from Shared/AiContent.cs instead of this line. -->
+                            <TextBlock Text="Illustrative sample texts — no AI agents connected yet." FontSize="10.5" FontStyle="Italic"
+                                       Foreground="#FF6A6A6A" TextWrapping="Wrap" Margin="2,-4,2,10" />
+
+                            <!-- Agent: Technical -->
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="3" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Background="{StaticResource LongBrush}" CornerRadius="2" Margin="0,10,0,10" />
+                                    <StackPanel Grid.Column="1" Margin="11,10,12,11">
+                                        <Grid Margin="0,0,0,6">
+                                            <TextBlock Text="Technical" FontSize="12.5" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <TextBlock Text="LONG" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="{StaticResource LongBrush}" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <Grid Height="4" Margin="0,0,0,8">
+                                            <Border CornerRadius="2" Background="{StaticResource HairlineBrush}" />
+                                            <Border CornerRadius="2" Background="{StaticResource LongBrush}" HorizontalAlignment="Left" Width="203" />
+                                        </Grid>
+                                        <TextBlock Text="20/50-day crossover on QQQ confirmed, volume picking up on the breakout." TextWrapping="Wrap" FontSize="11.5" Foreground="#FF9A9A9A" LineHeight="17" />
+                                        <Grid Margin="0,8,0,0">
+                                            <TextBlock Text="conf 78%" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Left" />
+                                            <TextBlock Text="12s ago" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <!-- Agent: Macro -->
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="3" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Background="{StaticResource ShortBrush}" CornerRadius="2" Margin="0,10,0,10" />
+                                    <StackPanel Grid.Column="1" Margin="11,10,12,11">
+                                        <Grid Margin="0,0,0,6">
+                                            <TextBlock Text="Macro" FontSize="12.5" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <TextBlock Text="SHORT" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="{StaticResource ShortBrush}" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <TextBlock Text="Real 10Y yields are climbing ahead of the CPI print — risk assets have historically been sensitive to this." TextWrapping="Wrap" FontSize="11.5" Foreground="#FF9A9A9A" LineHeight="17" />
+                                        <Grid Margin="0,8,0,0">
+                                            <TextBlock Text="conf 41%" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Left" />
+                                            <TextBlock Text="47s ago" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <!-- Agent: Sentiment -->
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="3" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Background="{StaticResource NeutralBrush}" CornerRadius="2" Margin="0,10,0,10" />
+                                    <StackPanel Grid.Column="1" Margin="11,10,12,11">
+                                        <Grid Margin="0,0,0,6">
+                                            <TextBlock Text="Sentiment" FontSize="12.5" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <TextBlock Text="NEUTRAL" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="{StaticResource NeutralBrush}" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <TextBlock Text="Put/call ratio flat, no dominant news flow over the last six hours." TextWrapping="Wrap" FontSize="11.5" Foreground="#FF9A9A9A" LineHeight="17" />
+                                        <Grid Margin="0,8,0,0">
+                                            <TextBlock Text="conf 55%" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Left" />
+                                            <TextBlock Text="1m ago" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <!-- Agent: Risk Manager -->
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="3" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Background="{StaticResource FocusBrush}" CornerRadius="2" Margin="0,10,0,10" />
+                                    <StackPanel Grid.Column="1" Margin="11,10,12,11">
+                                        <Grid Margin="0,0,0,6">
+                                            <TextBlock Text="Risk Manager" FontSize="12.5" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <TextBlock Text="OK" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="{StaticResource FocusBrush}" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <TextBlock Text="Portfolio beta 0.92, well under the 1.3 limit. No intervention needed." TextWrapping="Wrap" FontSize="11.5" Foreground="#FF9A9A9A" LineHeight="17" />
+                                        <Grid Margin="0,8,0,0">
+                                            <TextBlock Text="limits clear" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Left" />
+                                            <TextBlock Text="1m ago" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Center: aggregated verdict -->
+                        <Border Grid.Column="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="10,0" Padding="24">
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Text="Aggregated Verdict · Portfolio Manager · illustrative sample" FontSize="12" Foreground="#FF6A6A6A" HorizontalAlignment="Center" Margin="0,0,0,20" />
+
+                                <Grid Width="176" Height="176" Margin="0,0,0,20">
+                                    <Ellipse Width="148" Height="148" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="{StaticResource HairlineBrush}" StrokeThickness="9" />
+                                    <Path Data="M88,14 A74,74 0 1 1 21,57" Stretch="None" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Stroke="{StaticResource FocusBrush}" StrokeThickness="9" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <TextBlock Text="82%" FontFamily="Consolas" FontSize="32" FontWeight="Bold" Foreground="#FFEDEDED" HorizontalAlignment="Center" />
+                                        <TextBlock Text="confidence" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="QQQ" FontFamily="Consolas" FontSize="15" Foreground="#FF9A9A9A" HorizontalAlignment="Center" Margin="0,0,0,6" />
+                                <TextBlock Text="LONG" FontSize="26" FontWeight="Bold" Foreground="{StaticResource LongBrush}" HorizontalAlignment="Center" Margin="0,0,0,4" />
+                                <TextBlock Text="Size: 2.5% of book" FontSize="12" Foreground="#FF6A6A6A" HorizontalAlignment="Center" Margin="0,0,0,18" />
+
+                                <TextBlock Text="Technical strength outweighs macro caution; the risk manager has cleared the position."
+                                           TextWrapping="Wrap" TextAlignment="Center" FontSize="13" Foreground="#FF9A9A9A" LineHeight="20" MaxWidth="320" />
+
+                                <TextBlock Text="Paper trading simulation. Not a regulated financial product, not investment advice."
+                                           TextWrapping="Wrap" TextAlignment="Center" FontSize="10.5" Foreground="#FF6A6A6A" MaxWidth="300" Margin="0,24,0,0" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Right: Portfolio + Risk -->
+                        <StackPanel Grid.Column="2" Margin="10,0,0,0">
+                            <Grid Margin="2,0,2,10">
+                                <TextBlock Text="Portfolio" FontSize="13" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                <TextBlock Text="USD" FontFamily="Consolas" FontSize="11" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                            </Grid>
+
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+                                <Grid>
+                                    <TextBlock Text="Unrealized" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                    <TextBlock Text="+$1,204.37" FontFamily="Consolas" FontSize="16" FontWeight="Medium" Foreground="{StaticResource LongBrush}" HorizontalAlignment="Right" />
+                                </Grid>
+                            </Border>
+
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,2" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <Grid Margin="0,8">
+                                        <TextBlock Text="Cash" FontSize="12" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock Text="$46,208.12" FontFamily="Consolas" FontSize="13" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Border BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" />
+                                    <Grid Margin="0,8">
+                                        <TextBlock Text="AAPL" FontSize="12" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock Text="+2.14%" FontFamily="Consolas" FontSize="13" Foreground="{StaticResource LongBrush}" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Border BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" />
+                                    <Grid Margin="0,8">
+                                        <TextBlock Text="TLT" FontSize="12" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock Text="−0.41%" FontFamily="Consolas" FontSize="13" Foreground="{StaticResource ShortBrush}" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Border BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" />
+                                    <Grid Margin="0,8">
+                                        <TextBlock Text="XLF" FontSize="12" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock Text="+0.86%" FontFamily="Consolas" FontSize="13" Foreground="{StaticResource LongBrush}" HorizontalAlignment="Right" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,12">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                        <Ellipse Width="6" Height="6" Fill="{StaticResource RiskBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="Drawdown" FontSize="12" FontWeight="SemiBold" Foreground="#FFBFBFBF" Margin="7,0,0,0" />
+                                    </StackPanel>
+                                    <Grid Height="5" Margin="0,0,0,6">
+                                        <Border CornerRadius="3" Background="{StaticResource HairlineBrush}" />
+                                        <Border CornerRadius="3" Background="{StaticResource RiskBrush}" HorizontalAlignment="Left" Width="59" />
+                                    </Grid>
+                                    <Grid>
+                                        <TextBlock Text="3.1% current" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Left" />
+                                        <TextBlock Text="Limit 8.0%" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- ===== Execution: manual / autonomous ===== -->
+                    <Border BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,16,0,0">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,14">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                                    <TextBlock Text="Execution" FontSize="13" FontWeight="SemiBold" Foreground="#FFBFBFBF" VerticalAlignment="Center" />
+                                    <TextBlock Text="Illustration only · no real orders" FontSize="10.5" Foreground="#FF6A6A6A" Margin="10,1,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <Border HorizontalAlignment="Right" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="999" Padding="3">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="ModeManualTab" GroupName="ExecutionMode" Style="{StaticResource ModeTabStyle}" IsChecked="True" Content="Manual" Checked="ModeManualTab_Checked" />
+                                        <RadioButton x:Name="ModeAutoTab" GroupName="ExecutionMode" Style="{StaticResource ModeTabStyle}" Content="Autonomous" Checked="ModeAutoTab_Checked" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="14" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Manual panel -->
+                                <Border x:Name="ManualPanel" Grid.Column="0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="16,14">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,12">
+                                            <TextBlock Text="Manual Override" FontSize="12" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <Border HorizontalAlignment="Right" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="4" Padding="6,1">
+                                                <TextBlock Text="User" FontFamily="Consolas" FontSize="10" Foreground="#FF6A6A6A" />
+                                            </Border>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="8" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="Ticker" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,0,0,4" />
+                                                <TextBox x:Name="TickerInput" Text="QQQ" FontFamily="Consolas" FontSize="12" Foreground="#FFBFBFBF" Background="#FF111111" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" Padding="8,6" CaretBrush="#FFBFBFBF" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Size (% of book)" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,0,0,4" />
+                                                <TextBox x:Name="SizeInput" Text="2.5" FontFamily="Consolas" FontSize="12" Foreground="#FFBFBFBF" Background="#FF111111" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" Padding="8,6" CaretBrush="#FFBFBFBF" />
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="8" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="8" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Button Grid.Column="0" Content="Long" Style="{StaticResource ActionButtonLongStyle}" Click="ManualLong_Click" />
+                                            <Button Grid.Column="2" Content="Short" Style="{StaticResource ActionButtonShortStyle}" Click="ManualShort_Click" />
+                                            <Button Grid.Column="4" Content="Flatten" Style="{StaticResource ActionButtonFlattenStyle}" Click="ManualFlatten_Click" />
+                                        </Grid>
+
+                                        <TextBlock x:Name="ManualStatusText" Text="Last manual action: AAPL LONG · 50 shares · 3 min ago" TextWrapping="Wrap" FontSize="11" Foreground="#FF6A6A6A" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Autonomous panel -->
+                                <Border x:Name="AutoPanel" Grid.Column="2" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="16,14" Visibility="Collapsed">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,12">
+                                            <TextBlock Text="Agentic Autopilot" FontSize="12" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <Border HorizontalAlignment="Right" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="4" Padding="6,1">
+                                                <TextBlock Text="Agent" FontFamily="Consolas" FontSize="10" Foreground="#FF6A6A6A" />
+                                            </Border>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,12">
+                                            <StackPanel HorizontalAlignment="Left" MaxWidth="230">
+                                                <TextBlock Text="Autonomous Mode" FontSize="12" Foreground="#FFBFBFBF" />
+                                                <TextBlock Text="Executes portfolio manager verdicts on its own" TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,1,0,0" />
+                                            </StackPanel>
+                                            <CheckBox x:Name="AutoEngageToggle" Style="{StaticResource ToggleSwitchStyle}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                      Checked="AutoEngageToggle_CheckedChanged" Unchecked="AutoEngageToggle_CheckedChanged" />
+                                        </Grid>
+
+                                        <StackPanel Margin="0,0,0,10">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Minimum Confidence" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                                <TextBlock x:Name="ConfidenceValueText" Text="75%" FontFamily="Consolas" FontSize="11.5" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                            </Grid>
+                                            <Slider x:Name="ConfidenceSlider" Style="{StaticResource ParamSliderStyle}" Minimum="50" Maximum="95" Value="75" ValueChanged="ConfidenceSlider_ValueChanged" />
+                                        </StackPanel>
+
+                                        <StackPanel Margin="0,0,0,10">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Max Position Size" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                                <TextBlock x:Name="MaxSizeValueText" Text="5% of book" FontFamily="Consolas" FontSize="11.5" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                            </Grid>
+                                            <Slider x:Name="MaxSizeSlider" Style="{StaticResource ParamSliderStyle}" Minimum="1" Maximum="15" Value="5" ValueChanged="MaxSizeSlider_ValueChanged" />
+                                        </StackPanel>
+
+                                        <StackPanel Margin="0,0,0,10">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Max Trades / Day" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                                <TextBlock x:Name="MaxTradesValueText" Text="6" FontFamily="Consolas" FontSize="11.5" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                            </Grid>
+                                            <Slider x:Name="MaxTradesSlider" Style="{StaticResource ParamSliderStyle}" Minimum="1" Maximum="20" Value="6" ValueChanged="MaxTradesSlider_ValueChanged" />
+                                        </StackPanel>
+
+                                        <StackPanel Margin="0,0,0,12">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Drawdown Stop" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                                <TextBlock x:Name="DrawdownStopValueText" Text="8%" FontFamily="Consolas" FontSize="11.5" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                            </Grid>
+                                            <Slider x:Name="DrawdownStopSlider" Style="{StaticResource ParamSliderStyle}" Minimum="2" Maximum="20" Value="8" ValueChanged="DrawdownStopSlider_ValueChanged" />
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal">
+                                            <Ellipse Width="6" Height="6" Fill="{StaticResource FocusBrush}" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="AutoStatusText" Text="Disabled · waiting for activation" FontSize="11" Foreground="#FF6A6A6A" Margin="7,0,0,0" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</Window>

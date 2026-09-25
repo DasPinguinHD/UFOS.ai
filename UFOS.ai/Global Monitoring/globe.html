@@ -1,0 +1,1084 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Global Monitoring</title>
+<style>
+  :root {
+    --bg: #141414;
+    --panel: #1b1b1b;
+    --panel-border: #2a2a2a;
+    --hi: #f2f2f2;
+    --lo: #8a8a8a;
+    --tertiary: #bfbfbf;
+    --blue: #49a7ff;
+    --amber: #edb400;
+    --red: #ed6a5a;
+    --violet: #b98ce8;
+    --green: #3ecf8e;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: var(--bg); color: var(--hi);
+    font-family: 'Segoe UI', Consolas, sans-serif;
+    overflow: hidden; user-select: none;
+  }
+  #app { display: grid; grid-template-columns: 220px 1fr 300px; height: 100%; }
+
+  .sidebar { background: var(--panel); border-right: 1px solid var(--panel-border); padding: 14px 12px; overflow-y: auto; }
+  .sidebar.right { border-right: none; border-left: 1px solid var(--panel-border); }
+
+  /* Matches the WPF app's own scrollbar design system (DesignSystem.xaml:
+     ScrollTrackBrush #242424 / ScrollThumbBrush #4A4A4A / ScrollThumbHoverBrush
+     #888888) — grayscale, thumb lightens while active, track widens slightly
+     on hover. */
+  .sidebar::-webkit-scrollbar { width: 5px; }
+  .sidebar:hover::-webkit-scrollbar { width: 8px; }
+  .sidebar::-webkit-scrollbar-track { background: #242424; border-radius: 3px; }
+  .sidebar::-webkit-scrollbar-thumb { background: #4a4a4a; border-radius: 3px; }
+  .sidebar::-webkit-scrollbar-thumb:hover,
+  .sidebar::-webkit-scrollbar-thumb:active { background: #888888; }
+
+  h3 { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--lo); margin: 14px 0 8px; }
+  h3:first-child { margin-top: 0; }
+
+  .layer-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .layer-row:hover { background: rgba(255,255,255,0.04); }
+  .layer-row input { accent-color: var(--blue); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .layer-note { font-size: 10.5px; color: var(--lo); line-height: 1.4; padding: 6px 4px; }
+
+  .source-row { display: flex; justify-content: space-between; font-size: 11px; padding: 4px; color: var(--tertiary); }
+  .source-status { width: 6px; height: 6px; border-radius: 50%; background: var(--green); display: inline-block; margin-right: 6px; }
+
+  #globeWrap { position: relative; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 45%, #1a1f26, #0c0d0f); cursor: grab; }
+  #globeWrap.dragging { cursor: grabbing; }
+  svg { width: 100%; height: 100%; }
+
+  .marker { cursor: pointer; }
+  .marker circle.core { transition: r 0.15s; }
+  .marker:hover circle.core { r: 5; }
+  /* Labels are the main source of map clutter with many markers on screen
+     (see the "Notable Flights" overcrowding this was built to fix) — so a
+     label only appears on hover or for the currently-selected marker,
+     instead of being drawn for every marker all the time. */
+  .marker text.label { font-size: 9px; font-family: 'Segoe UI', sans-serif; text-anchor: middle; paint-order: stroke; stroke: #0c0d0f; stroke-width: 3px; stroke-linejoin: round; fill: #e8e8e8; pointer-events: none; opacity: 0; transition: opacity 0.1s; }
+  .marker:hover text.label, .marker.selected text.label { opacity: 1; }
+  .pulse-ring { animation: pulseRing 2.4s infinite ease-out; transform-origin: center; }
+  @keyframes pulseRing {
+    0% { r: 12; opacity: 0.5; }
+    100% { r: 18; opacity: 0; }
+  }
+
+  .empty-state { color: var(--lo); font-size: 12px; text-align: center; padding: 30px 10px; }
+
+  .region-card { background: rgba(255,255,255,0.03); border: 1px solid var(--panel-border); border-radius: 6px; padding: 12px; margin-bottom: 14px; }
+  .region-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .region-cat { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .region-detail { font-size: 11.5px; color: var(--tertiary); line-height: 1.5; }
+
+  .ai-btn { margin-top: 10px; width: 100%; padding: 7px; background: rgba(185,140,232,0.12); border: 1px solid var(--violet); color: var(--violet); border-radius: 4px; font-size: 11px; cursor: pointer; }
+  .ai-btn:hover { background: rgba(185,140,232,0.22); }
+  .ai-result { margin-top: 10px; background: rgba(185,140,232,0.06); border-left: 2px solid var(--violet); padding: 8px 10px; font-size: 11px; color: var(--tertiary); line-height: 1.5; }
+  .ai-result .label { font-size: 9.5px; color: var(--violet); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; display: block; }
+  /* EU AI Act Art. 50: every AI output ends with this caveat (wording shared with
+     the WPF side, see UFOS.ai/Shared/AiContent.cs — keep them identical). */
+  .ai-result .ai-caveat { display: block; margin-top: 6px; font-size: 9.5px; font-style: italic; color: var(--lo); }
+  /* 2026-09-25: what this AI call cost (OpenRouter usage.cost), see backend/cost_ledger.py. */
+  .ai-result .ai-cost { display: block; margin-top: 3px; font-size: 9.5px; font-family: Consolas, 'Courier New', monospace; color: #8a8a8a; }
+
+  .city-marker { cursor: pointer; }
+  .city-star { fill: #d8d8d8; font-size: 11px; text-anchor: middle; pointer-events: none; }
+  .city-marker.selected .city-star { fill: #ffffff; font-size: 13px; }
+  .news-item { font-size: 11.5px; color: var(--tertiary); padding: 7px 0; border-bottom: 1px solid var(--panel-border); line-height: 1.4; }
+  .news-item:last-of-type { border-bottom: none; }
+  .news-link { color: var(--hi); text-decoration: none; }
+  .article-btn { margin-top: 10px; width: 100%; padding: 7px; background: rgba(255,255,255,0.04); border: 1px solid #3a3a3a; color: var(--hi); border-radius: 4px; font-size: 11px; cursor: pointer; }
+  .article-btn:hover { background: rgba(255,255,255,0.09); }
+  .news-link:hover { text-decoration: underline; }
+  .news-meta { font-size: 10px; color: var(--lo); margin-top: 2px; }
+  .back-btn { margin-top: 12px; width: 100%; padding: 6px; background: transparent; border: 1px solid var(--panel-border); color: var(--tertiary); border-radius: 4px; font-size: 11px; cursor: pointer; }
+  .back-btn:hover { background: rgba(255,255,255,0.05); }
+
+  .feed-item { padding: 8px 4px; border-bottom: 1px solid var(--panel-border); font-size: 11.5px; cursor: pointer; }
+  .feed-item:hover { background: rgba(255,255,255,0.04); }
+  .feed-item .fi-region { font-weight: 600; }
+  .feed-item .fi-cat { font-size: 10px; color: var(--lo); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="sidebar" id="leftSidebar"></div>
+  <div id="globeWrap">
+    <svg id="globeSvg" viewBox="0 0 1000 930"></svg>
+  </div>
+  <div class="sidebar right" id="rightSidebar"></div>
+</div>
+
+<script>
+(function () {
+  var LAYERS = [
+    { id: 'markets', label: 'Markets', color: '#49A7FF' },
+    { id: 'geo', label: 'Geopolitics & Conflict', color: '#ED6A5A' },
+    { id: 'weather', label: 'Weather & Disasters', color: '#F0B429' },
+    { id: 'flights', label: 'Notable Flights', color: '#B98CE8' }
+  ];
+
+  // category (as sent by the backend) -> layer id / human label / aiLabel.
+  // Insider trades (SEC EDGAR) and macro indicators (FRED) used to live here
+  // too (a popup button and a text ticker — neither has a real place on a
+  // map); both moved to the Hedge Fund module's Financial Newsroom on
+  // 2026-09-24 (HedgeFund/Newsroom/, HedgeFund/backend/newsroom/).
+  var CATEGORY_MAP = {
+    markets:     { layer: 'markets', label: 'Markets',                aiLabel: 'Sentiment', pulse: true },
+    geopolitics: { layer: 'geo',     label: 'Geopolitics & Conflict', aiLabel: 'Sentiment', pulse: false },
+    disaster:    { layer: 'weather', label: 'Weather & Disasters',    aiLabel: 'Sentiment', pulse: false },
+    flight:      { layer: 'flights', label: 'Notable Flights',        aiLabel: 'Assess',    pulse: true }
+  };
+
+  function layerColor(layerId) {
+    for (var i = 0; i < LAYERS.length; i++) if (LAYERS[i].id === layerId) return LAYERS[i].color;
+    return '#888888';
+  }
+
+  // --- Backend connection (Python backend, Global Monitoring/backend) ---
+  // WebView2 supports WebSocket/fetch natively, so the frontend talks to the
+  // backend directly — no C# relay needed. See backend/README.md.
+  var BACKEND_WS_URL = 'ws://127.0.0.1:8767';
+  var BACKEND_HTTP_URL = 'http://127.0.0.1:8768';
+
+  // Live event store, replacing the old hardcoded placeholder array. Keyed
+  // by event id; rebuilt into the flat `rawMarkers` list (still used by the
+  // renderer/sidebar below) whenever it changes.
+  var eventsById = {};
+  var rawMarkers = [];
+
+  // Several sources place multiple events at the exact same point (e.g. GDELT
+  // geopolitics articles are placed at a country centroid, so several
+  // articles from the same country land on identical coordinates; markets
+  // events cluster on a handful of fixed financial-center points) — with no
+  // jitter those stack into one indistinguishable blob. This spreads
+  // exact/near-exact duplicate coordinates into a small, stable cloud (a few
+  // tenths of a degree) instead — stable because it's derived from the event
+  // id, not random, so a marker doesn't jump around every time the list
+  // re-renders.
+  var JITTER_DEGREES = 0.6;
+  function stableUnitOffset(id, salt) {
+    var str = salt + '|' + id;
+    var hash = 0;
+    for (var i = 0; i < str.length; i++) {
+      hash = (hash * 31 + str.charCodeAt(i)) | 0;
+    }
+    return ((hash % 2000) / 1000) - 1; // deterministic value in [-1, 1)
+  }
+
+  function eventToMarker(ev) {
+    var meta = CATEGORY_MAP[ev.category];
+    if (!meta) return null; // unknown categories never become markers
+    var latJitter = stableUnitOffset(ev.id, 'lat') * JITTER_DEGREES;
+    var lonSpread = JITTER_DEGREES / Math.max(0.15, Math.cos(degToRad(ev.lat || 0)));
+    var lonJitter = stableUnitOffset(ev.id, 'lon') * lonSpread;
+    return {
+      id: ev.id,
+      lat: ev.lat + latJitter, lon: ev.lon + lonJitter,
+      layer: meta.layer,
+      color: layerColor(meta.layer),
+      pulse: meta.pulse,
+      region: ev.title,
+      category: meta.label,
+      detail: ev.summary + (ev.source ? ' (' + ev.source + ')' : ''),
+      url: ev.url,
+      aiLabel: meta.aiLabel,
+      timestamp: ev.timestamp
+    };
+  }
+
+  function rebuildMarkers() {
+    var list = [];
+    Object.keys(eventsById).forEach(function (id) {
+      var m = eventToMarker(eventsById[id]);
+      if (m) list.push(m);
+    });
+    list.sort(function (a, b) { return (b.timestamp || '').localeCompare(a.timestamp || ''); });
+    rawMarkers = list;
+  }
+
+  function upsertEvent(ev) {
+    eventsById[ev.id] = ev;
+    rebuildMarkers();
+  }
+
+  function applySnapshot(events) {
+    eventsById = {};
+    (events || []).forEach(function (ev) { eventsById[ev.id] = ev; });
+    rebuildMarkers();
+  }
+
+  // Traffic-light source list ("Ampel pro Feed"), driven by real
+  // source_status messages from the backend instead of a hardcoded "all OK".
+  var SOURCE_LABELS = {
+    news: 'World news RSS (geopolitics)',
+    gdacs: 'GDACS (disasters)',
+    opensky: 'OpenSky (flights)',
+    yahoo: 'Yahoo Finance (markets)'
+  };
+  var sourceStatus = {};
+  Object.keys(SOURCE_LABELS).forEach(function (key) {
+    sourceStatus[key] = { source: key, ok: null, message: 'connecting…' };
+  });
+
+  var wsConnected = false;
+
+  function connectBackendWs() {
+    var ws;
+    try { ws = new WebSocket(BACKEND_WS_URL); } catch (err) { scheduleReconnect(); return; }
+
+    ws.onopen = function () { wsConnected = true; renderLeftSidebar(); };
+    ws.onclose = function () { wsConnected = false; renderLeftSidebar(); scheduleReconnect(); };
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+    ws.onmessage = function (msg) {
+      var data;
+      try { data = JSON.parse(msg.data); } catch (err) { return; }
+      if (data.type === 'snapshot') {
+        applySnapshot(data.payload);
+        renderAll();
+      } else if (data.type === 'event') {
+        upsertEvent(data.payload);
+        renderAll();
+      } else if (data.type === 'remove') {
+        // Backend pruned events (e.g. disaster alerts that have ended).
+        (data.payload || []).forEach(function (id) {
+          delete eventsById[id];
+          if (state.selectedId === id) state.selectedId = null;
+        });
+        rebuildMarkers();
+        renderAll();
+      } else if (data.type === 'source_status') {
+        sourceStatus[data.payload.source] = data.payload;
+        renderLeftSidebar();
+      }
+    };
+  }
+
+  function scheduleReconnect() {
+    setTimeout(connectBackendWs, 5000);
+  }
+
+  var state = {
+    lambda: -20, phi: -12,
+    dragging: false, lastX: 0, lastY: 0,
+    activeLayers: { markets: true, geo: true, weather: true, flights: true },
+    selectedId: null,
+    selectedCityId: null,
+    aiResults: {},
+    focusAnim: null,
+    citySummaries: {},  // city id -> { status, text?, provenance?, headlines?, error? } (✦ AI Sum up local news)
+    cityNews: null   // { status: 'loading'|'ok'|'error', items?, error? }
+  };
+
+  var R = 230, CX = 500, CY = 465;
+  // Zoom is a multiplier on R. 1.0 = the current (initial) size — the user
+  // can never zoom out further than that. MAX_GLOBE_RADIUS is the largest
+  // the sphere can render without being clipped by the viewBox; ZOOM_HEADROOM
+  // lets the user zoom in twice as far as that (2026-09-22, at the user's
+  // request, to help spread out crowded regions like the US East Coast) —
+  // past MAX_GLOBE_RADIUS the sphere's own outline runs off the edge of the
+  // view, which is fine (it reads like zooming into a section of a globe,
+  // the same way a real map zoom crops the world outline once you're in
+  // close), it's only markers going off-screen that would be a problem, and
+  // dragging still pans them back into view.
+  var MAX_GLOBE_RADIUS = Math.min(CX, CY) - 6;
+  var ZOOM_HEADROOM = 3;  // 2026-09-24: +50% max zoom (was 2)
+  var MAX_ZOOM = (MAX_GLOBE_RADIUS / R) * ZOOM_HEADROOM;
+  // Clicking an event is allowed to punch in a bit past the user's own
+  // manual zoom ceiling, as a deliberate "focus" effect — the wheel handler
+  // still enforces MAX_ZOOM for manual scrolling.
+  // Kept at its previous level (old headroom 2) when max zoom went up 50%:
+  // clicking an event shouldn't suddenly fly in much closer than before.
+  var FOCUS_ZOOM = (MAX_GLOBE_RADIUS / R) * 2 * 1.18;
+  state.zoom = 1;
+
+  // Smoothly pans/zooms the camera so (lat, lon) ends up centered on the
+  // globe, optionally punching in to targetZoom (defaults to no zoom change).
+  function animateCamera(lat, lon, targetZoom) {
+    if (state.focusAnim) { cancelAnimationFrame(state.focusAnim); state.focusAnim = null; }
+    var startLambda = state.lambda, startPhi = state.phi, startZoom = state.zoom;
+    var targetPhi = Math.max(-75, Math.min(75, lat));
+    var targetLambda = startLambda + angDelta(lon, startLambda);
+    var endZoom = (typeof targetZoom === 'number') ? targetZoom : startZoom;
+    var duration = 650;
+    var startTime = null;
+
+    function step(ts) {
+      if (!startTime) startTime = ts;
+      var t = Math.min(1, (ts - startTime) / duration);
+      var e = 1 - Math.pow(1 - t, 3); // ease-out cubic
+      state.lambda = startLambda + (targetLambda - startLambda) * e;
+      state.phi = startPhi + (targetPhi - startPhi) * e;
+      state.zoom = startZoom + (endZoom - startZoom) * e;
+      renderGlobe();
+      if (t < 1) {
+        state.focusAnim = requestAnimationFrame(step);
+      } else {
+        state.focusAnim = null;
+      }
+    }
+    state.focusAnim = requestAnimationFrame(step);
+  }
+
+  function degToRad(d) { return d * Math.PI / 180; }
+
+  function currentRadius() { return R * state.zoom; }
+
+  function project(lat, lon) {
+    var radius = currentRadius();
+    var lambda0 = degToRad(state.lambda);
+    var phi1 = degToRad(state.phi);
+    var phi = degToRad(lat);
+    var lambda = degToRad(lon) - lambda0;
+    var cosC = Math.sin(phi1) * Math.sin(phi) + Math.cos(phi1) * Math.cos(phi) * Math.cos(lambda);
+    var x = CX + radius * Math.cos(phi) * Math.sin(lambda);
+    var y = CY - radius * (Math.cos(phi1) * Math.sin(phi) - Math.sin(phi1) * Math.cos(phi) * Math.cos(lambda));
+    return { x: x, y: y, visible: cosC > 0.02 };
+  }
+
+  function angDelta(a, b) { var d = a - b; while (d > 180) d -= 360; while (d < -180) d += 360; return d; }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');  // also safe inside attributes (href/title)
+  }
+
+  // Some headlines (GDELT/GDACS especially — GDACS's <description> is a full
+  // sentence, GDELT titles can run long) are far too long to draw next to a
+  // marker on the globe itself without overlapping neighbors or running off
+  // the edge. This is only for the on-globe label; the sidebar's "Selected"
+  // panel (renderRightSidebar) always shows the untruncated title/summary in
+  // full, so nothing is actually lost, just not crammed onto the map.
+  var MARKER_LABEL_MAX_CHARS = 46;
+  function truncateLabel(text, maxChars) {
+    var s = String(text || '');
+    if (s.length <= maxChars) return s;
+    return s.slice(0, maxChars - 1).replace(/\s+\S*$/, '') + '…';
+  }
+
+  // Fallback coastline outlines (hand-simplified, low vertex count) — used
+  // only until real Natural Earth data has been fetched and cached (or if
+  // that fetch ever fails, e.g. no internet on first run). Once Natural
+  // Earth data loads, COASTLINES is replaced with the real geometry below.
+  // Each entry is a closed ring of [lat, lon] pairs.
+  var COASTLINES_FALLBACK = [
+    // Africa
+    [[37,-5.5],[37,10],[33,11.5],[31.5,25],[31,34],[22,38],[18,38],[12,43.3],
+     [2,45.5],[-4.7,39.5],[-11,40.4],[-18,35.5],[-26,33],[-34.8,20],[-29,17],
+     [-18.9,11.7],[-9,13],[-4.4,11.5],[0,9.3],[4.8,8],[6,-3],[5,-9.5],
+     [14.7,-17.5],[21,-17],[27.7,-13],[35.8,-5.9],[37,-5.5]],
+    // Europe (incl. UK/Ireland handled separately)
+    [[36,-9.5],[43.8,-9.4],[43.4,-1.8],[46,-1.2],[48.7,-4.8],[49.5,-1.6],
+     [51.2,2.6],[53,4.8],[57,10.6],[59.8,10.7],[63,10.4],[68,14.6],
+     [71.1,25.8],[69.7,33],[66.3,41],[60,32],[59.9,29.7],[54.6,20],
+     [52.2,21],[45.4,29],[41.3,29.1],[40,26.5],[38,23.7],[36.3,22.9],
+     [35.3,25.1],[36.9,15.6],[38.1,13],[38,8.5],[40.8,8.4],[43.8,7.5],
+     [43.3,3.1],[41.4,2.2],[36.7,-4.4],[36,-9.5]],
+    // British Isles
+    [[50.1,-5.5],[51.5,1.4],[53.6,0.2],[55.8,-2],[58.6,-3.1],[57.6,-5.7],
+     [55,-5.6],[52.8,-4.7],[51.6,-3.4],[50.1,-5.5]],
+    [[55.4,-8.2],[54.6,-5.5],[52.2,-6.5],[51.5,-9.7],[53.9,-10],[55.4,-8.2]],
+    // Asia (mainland, includes Middle East / South / East / Siberia)
+    [[41,29],[41.5,41],[47,38],[46,47.5],[42,47.6],[40,53],[43.6,51.2],
+     [46.8,61.4],[51,53.5],[55,60],[66.8,68.8],[73.5,80],[76.5,95],
+     [73,113],[71.5,128.9],[70.8,161.5],[64.7,177],[62,179],[59.8,-176.6],
+     [56,163],[52.5,158.5],[50,142.5],[45.5,141.7],[43.5,145.8],[35.7,140.9],
+     [34,135.8],[33.4,129.9],[38.8,128.5],[37.5,126.5],[39,124.4],
+     [40.8,124.3],[39.2,122],[35,119.6],[31.2,121.7],[23,113.5],
+     [22,108],[21,106],[18.2,105.9],[10.4,106.7],[8.2,104.5],[13,100.9],
+     [10.5,98.6],[16.8,94.6],[22.3,91.8],[21.5,88],[19.1,85],[13.1,80.3],
+     [8.1,77.5],[10,76],[15.5,73.2],[21.6,72.6],[22.5,69.5],[24.9,67],
+     [25.2,61.5],[26.5,56.3],[30,49.6],[29.4,48.5],[26.7,50.2],[24,52],
+     [22.4,59.8],[17,54],[12.8,45],[15.6,42.4],[27.9,34.9],[29.5,34.9],
+     [33,35.3],[36.2,36],[36.9,34.9],[41,29]],
+    // Japan (very simplified single ring)
+    [[45.5,141.9],[43.3,145.8],[41.8,140.9],[38.3,141.5],[35.6,140.7],
+     [34.6,135.4],[33.3,129.9],[32,131.5],[31.2,130.5],[33,132.5],
+     [35.5,133.9],[36.5,136.9],[37.9,138.9],[40.6,140],[41.2,141],
+     [43.3,140.7],[45.5,141.9]],
+    // North America
+    [[71.3,-156.8],[70.4,-148],[69.6,-137],[69.4,-129.9],[68.4,-133.7],
+     [67.6,-115],[68.8,-106.5],[63.5,-90.7],[57.3,-92.4],[55.3,-82.4],
+     [51.3,-80.3],[45.8,-75.5],[41.3,-72.9],[43.6,-70],[45.2,-67],
+     [45,-64],[41,-70.3],[39.6,-74.2],[36.9,-76.1],[32.8,-79.9],
+     [30.4,-81.4],[25.8,-80.1],[25.1,-81.1],[29.7,-85.4],[29.3,-89.4],
+     [28.9,-95.4],[25.9,-97.3],[21,-97.5],[18.5,-95.2],[19.1,-96.2],
+     [16.3,-94.5],[14.6,-92.2],[18.3,-102.9],[20.6,-105.4],[23,-109.6],
+     [27.9,-114.1],[32.6,-117.1],[34.4,-120.4],[38.1,-122.9],[43.4,-124.2],
+     [46.2,-124],[48.4,-124.7],[49,-123],[51.6,-128.1],[54.8,-130.2],
+     [58.5,-135.3],[60.5,-146],[59.6,-151.5],[58.2,-156.5],[54.1,-166],
+     [58,-160],[62.8,-164.6],[64.6,-165.8],[66.1,-163.7],[68.9,-166.3],
+     [71.3,-156.8]],
+    // Greenland
+    [[76.5,-68],[81.5,-52],[83,-25],[76,-20],[70,-22],[65.5,-40],
+     [60,-45],[60.5,-48],[65,-53.5],[70,-54],[74,-58],[76.5,-68]],
+    // South America
+    [[12.4,-71.6],[10.5,-64],[8,-59.8],[5.8,-52.9],[1.8,-50],[-1,-48],
+     [-3.7,-38.5],[-8.7,-35],[-13,-38.5],[-16.4,-39],[-22.9,-42.5],
+     [-25.5,-48.5],[-28.5,-48.8],[-32,-52.1],[-34.6,-58.4],[-38.9,-62.2],
+     [-42.6,-64.3],[-47.7,-65.8],[-50.3,-68.5],[-52.4,-68.9],[-54.8,-68.3],
+     [-52.6,-71.4],[-49,-73.5],[-45.9,-73.7],[-41.8,-73.6],[-38,-73.4],
+     [-33.5,-71.6],[-27.1,-70.7],[-23.5,-70.4],[-18.5,-70.3],[-14,-76.2],
+     [-8.1,-79.1],[-3,-80.7],[1.9,-79.9],[4.2,-77.4],[7.9,-77.3],
+     [8.6,-82.6],[10.8,-83.7],[12.4,-71.6]],
+    // Australia
+    [[-10.9,142.5],[-12.4,136.8],[-14.9,128.5],[-16.4,123.4],[-20.4,118.6],
+     [-26,113.5],[-31.9,115.7],[-35.1,117.9],[-33.9,121.9],[-32,133.9],
+     [-34.9,138.5],[-38.4,140.8],[-38.1,144.4],[-37.5,149.9],[-33.9,151.3],
+     [-28.2,153.6],[-23.5,151.9],[-19.3,147.1],[-16.9,145.8],[-12.9,143.4],
+     [-10.9,142.5]],
+    // New Zealand (simplified single ring)
+    [[-34.4,172.7],[-37.8,178.5],[-39.5,177],[-41.3,174.8],[-40.4,172.7],
+     [-41.8,171.5],[-43.6,172.7],[-46.6,169.2],[-45.8,166.5],[-43.4,169.2],
+     [-41,173.8],[-38,174.7],[-34.4,172.7]],
+    // Madagascar
+    [[-12,49.4],[-15.4,50.2],[-19.6,48.9],[-25.6,45.1],[-23.6,43.6],
+     [-18.8,44],[-15.7,46.3],[-12,49.4]]
+  ];
+
+  var COASTLINES = COASTLINES_FALLBACK;
+
+  // Capital/major-city markers, shown only once zoomed in past CITY_ZOOM_THRESHOLD
+  // (avoids cluttering the default, zoomed-out view).
+  var CITY_ZOOM_THRESHOLD = 1.15;
+  var CITIES = [
+    { id: 'washington', name: 'Washington, D.C.', country: 'United States', lat: 38.9, lon: -77.0 },
+    { id: 'ottawa', name: 'Ottawa', country: 'Canada', lat: 45.4, lon: -75.7 },
+    { id: 'losangeles', name: 'Los Angeles', country: 'United States', lat: 34.1, lon: -118.2 },
+    { id: 'caracas', name: 'Caracas', country: 'Venezuela', lat: 10.5, lon: -66.9 },
+    { id: 'brasilia', name: 'Brasília', country: 'Brazil', lat: -15.8, lon: -47.9 },
+    { id: 'johannesburg', name: 'Johannesburg', country: 'South Africa', lat: -26.2, lon: 28.0 },
+    { id: 'nairobi', name: 'Nairobi', country: 'Kenya', lat: -1.3, lon: 36.8 },
+    { id: 'cairo', name: 'Al-Qahirah', country: 'Egypt', lat: 30.0, lon: 31.2 },
+    { id: 'madrid', name: 'Madrid', country: 'Spain', lat: 40.4, lon: -3.7 },
+    { id: 'paris', name: 'Paris', country: 'France', lat: 48.9, lon: 2.4 },
+    { id: 'rome', name: 'Roma', country: 'Italy', lat: 41.9, lon: 12.5 },
+    { id: 'vienna', name: 'Wien', country: 'Austria', lat: 48.2, lon: 16.4 },
+    { id: 'berlin', name: 'Berlin', country: 'Germany', lat: 52.5, lon: 13.4 },
+    { id: 'london', name: 'London', country: 'United Kingdom', lat: 51.5, lon: -0.1 },
+    { id: 'stockholm', name: 'Stockholm', country: 'Sweden', lat: 59.3, lon: 18.1 },
+    { id: 'moscow', name: 'Moskva', country: 'Russia', lat: 55.75, lon: 37.6 },
+    { id: 'newdelhi', name: 'Nai Dilli', country: 'India', lat: 28.6, lon: 77.2 },
+    { id: 'shanghai', name: 'Shanghai', country: 'China', lat: 31.2, lon: 121.5 },
+    { id: 'beijing', name: 'Beijing', country: 'China', lat: 39.9, lon: 116.4 },
+    { id: 'tokyo', name: 'Tōkyō', country: 'Japan', lat: 35.7, lon: 139.7 },
+    { id: 'canberra', name: 'Canberra', country: 'Australia', lat: -35.3, lon: 149.1 }
+  ];
+
+  // Real local news for a capital city, fetched from the Python backend's
+  // /localnews endpoint (Google News search RSS, see backend/localnews.py).
+  // Replaces the old canned/illustrative placeholder text.
+  function fetchLocalNews(city) {
+    state.cityNews = { status: 'loading' };
+    renderRightSidebar();
+    var url = BACKEND_HTTP_URL + '/localnews?city=' + encodeURIComponent(city.name) +
+      '&country=' + encodeURIComponent(city.country) +
+      '&lat=' + city.lat + '&lon=' + city.lon;
+    fetch(url)
+      .then(function (res) {
+        // The backend answered — even a 502 means it's up and reachable; the
+        // JSON body's "error" field (e.g. "No recent coverage found...")
+        // is the real, specific reason, not "the backend isn't running".
+        return res.json().then(function (j) {
+          if (!res.ok) throw { unreachable: false, message: j.error || ('HTTP ' + res.status) };
+          return j;
+        });
+      })
+      .then(function (data) {
+        if (state.selectedCityId !== city.id) return; // user moved on before this resolved
+        state.cityNews = { status: 'ok', items: data.articles || [], notice: data.notice || null };
+        renderRightSidebar();
+      })
+      .catch(function (err) {
+        if (state.selectedCityId !== city.id) return;
+        // A rejected fetch() (network/CORS failure, no response at all) has no
+        // "unreachable" flag on it — that's the only case that really means
+        // "the backend isn't running/reachable". Anything the backend itself
+        // answered with (even an error) is a real, backend-reported reason.
+        var unreachable = !(err && err.unreachable === false);
+        state.cityNews = {
+          status: 'error',
+          unreachable: unreachable,
+          error: String((err && err.message) || err)
+        };
+        renderRightSidebar();
+      });
+  }
+
+  // --- Natural Earth 110m land data: fetched once, then cached in this
+  // WebView2 profile's localStorage (persists across app restarts because
+  // the host app points WebView2 at a fixed per-app user-data folder).
+  // Natural Earth data is public domain ("No permission is needed to use
+  // Natural Earth. Crediting the authors is unnecessary." — naturalearthdata.com/about/terms-of-use),
+  // so there is no licensing reason to avoid fetching or caching it; the
+  // cache exists purely so the module works offline after the first
+  // successful fetch and doesn't re-download on every launch.
+  var NE_CACHE_KEY = 'ufos_gms_ne110m_land_v1';
+  var NE_SOURCE_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json';
+
+  function decodeTopoJsonLand(topology) {
+    var scale = topology.transform.scale;
+    var translate = topology.transform.translate;
+
+    function toLonLat(x, y) {
+      return [x * scale[0] + translate[0], y * scale[1] + translate[1]];
+    }
+
+    function arcToLonLat(arcIndex) {
+      var reversed = arcIndex < 0;
+      var i = reversed ? ~arcIndex : arcIndex;
+      var arc = topology.arcs[i];
+      var coords = [];
+      var x = 0, y = 0;
+      for (var k = 0; k < arc.length; k++) {
+        x += arc[k][0];
+        y += arc[k][1];
+        coords.push(toLonLat(x, y));
+      }
+      if (reversed) coords.reverse();
+      return coords;
+    }
+
+    var rings = [];
+    var land = topology.objects.land;
+    var geometries = land.type === 'GeometryCollection' ? land.geometries : [land];
+
+    geometries.forEach(function (geom) {
+      var polygons = geom.type === 'MultiPolygon' ? geom.arcs : [geom.arcs];
+      polygons.forEach(function (polygon) {
+        polygon.forEach(function (ring) {
+          var lonLatPoints = [];
+          ring.forEach(function (arcIndex) {
+            lonLatPoints = lonLatPoints.concat(arcToLonLat(arcIndex));
+          });
+          // Our rendering uses [lat, lon]; topojson gives [lon, lat].
+          rings.push(lonLatPoints.map(function (p) { return [p[1], p[0]]; }));
+        });
+      });
+    });
+
+    return rings;
+  }
+
+  function applyNaturalEarthData(rawJsonText) {
+    try {
+      var topology = JSON.parse(rawJsonText);
+      var rings = decodeTopoJsonLand(topology);
+      if (rings.length > 0) {
+        COASTLINES = rings;
+        renderGlobe();
+      }
+    } catch (err) {
+      console.error('Failed to decode Natural Earth topojson', err);
+    }
+  }
+
+  function loadNaturalEarthData() {
+    var cached = null;
+    try { cached = localStorage.getItem(NE_CACHE_KEY); } catch (err) { /* storage unavailable */ }
+
+    if (cached) {
+      applyNaturalEarthData(cached);
+    }
+
+    // Refresh in the background (also covers the first run, where there is
+    // no cache yet). If this fails — no internet, blocked host, etc. — the
+    // cached or hand-drawn fallback outlines stay in place.
+    fetch(NE_SOURCE_URL)
+      .then(function (res) { return res.ok ? res.text() : Promise.reject(new Error('HTTP ' + res.status)); })
+      .then(function (text) {
+        applyNaturalEarthData(text);
+        try { localStorage.setItem(NE_CACHE_KEY, text); } catch (err) { /* storage full/unavailable */ }
+      })
+      .catch(function (err) {
+        console.warn('Natural Earth fetch failed, keeping current coastlines:', err);
+      });
+  }
+
+  // A light lat/long graticule for spatial reference (drawn as lines, not dots).
+  var GRATICULE_STEP = 30;
+
+  // Builds an SVG path from a sequence of [lat, lon] points, breaking the
+  // path wherever a point goes over the horizon so lines never streak across
+  // the visible disc.
+  function pathFromRing(points) {
+    var d = '';
+    var penDown = false;
+    for (var i = 0; i < points.length; i++) {
+      var p = project(points[i][0], points[i][1]);
+      if (!p.visible) { penDown = false; continue; }
+      d += (penDown ? 'L' : 'M') + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ' ';
+      penDown = true;
+    }
+    return d;
+  }
+
+  function buildGraticuleRings() {
+    var rings = [];
+    for (var lon = -180; lon < 180; lon += GRATICULE_STEP) {
+      var meridian = [];
+      for (var lat = -85; lat <= 85; lat += 5) meridian.push([lat, lon]);
+      rings.push(meridian);
+    }
+    for (var lat2 = -60; lat2 <= 60; lat2 += GRATICULE_STEP) {
+      var parallel = [];
+      for (var lon2 = -180; lon2 <= 180; lon2 += 5) parallel.push([lat2, lon2]);
+      rings.push(parallel);
+    }
+    return rings;
+  }
+  var graticuleRings = buildGraticuleRings();
+
+  function renderGlobe() {
+    var svg = document.getElementById('globeSvg');
+    var parts = [];
+    parts.push('<circle cx="' + CX + '" cy="' + CY + '" r="' + currentRadius().toFixed(1) + '" fill="#0f1720" stroke="#2a3644" stroke-width="1"/>');
+
+    for (var gi = 0; gi < graticuleRings.length; gi++) {
+      var gd = pathFromRing(graticuleRings[gi]);
+      if (gd) parts.push('<path d="' + gd + '" fill="none" stroke="#22303d" stroke-width="0.6"/>');
+    }
+
+    for (var ci = 0; ci < COASTLINES.length; ci++) {
+      var cd = pathFromRing(COASTLINES[ci]);
+      if (cd) parts.push('<path d="' + cd + '" fill="none" stroke="#5f7d94" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>');
+    }
+
+    if (state.zoom >= CITY_ZOOM_THRESHOLD) {
+      for (var si = 0; si < CITIES.length; si++) {
+        var city = CITIES[si];
+        var sp = project(city.lat, city.lon);
+        if (!sp.visible) continue;
+        var citySelected = city.id === state.selectedCityId;
+        parts.push('<g class="city-marker' + (citySelected ? ' selected' : '') + '" data-city-id="' + city.id + '" transform="translate(' + sp.x.toFixed(1) + ',' + sp.y.toFixed(1) + ')">' +
+          '<circle r="9" fill="transparent"/>' +
+          (citySelected ? '<circle r="9" fill="none" stroke="#ffffff" stroke-width="1" stroke-opacity="0.6"/>' : '') +
+          '<text class="city-star" x="0" y="3.5">✦</text>' +
+          '</g>');
+      }
+    }
+
+    for (var j = 0; j < rawMarkers.length; j++) {
+      var m = rawMarkers[j];
+      if (!state.activeLayers[m.layer]) continue;
+      var mp = project(m.lat, m.lon);
+      if (!mp.visible) continue;
+      var selected = m.id === state.selectedId;
+      // Markers used to be drawn at a fixed, fairly large size (plus a
+      // translucent dashed "zone" ring around each core dot) regardless of
+      // how many were on screen at once, which is what caused the "too many
+      // circles overlapping" clutter (Europe, then the US East Coast once
+      // more collectors were live). The zone ring is gone entirely now — a
+      // marker is just its core dot — and labels stay hover/selection-only
+      // (see the .marker text.label CSS above), so a crowded map reads as a
+      // field of small dots instead of a wall of overlapping rings and text.
+      var coreR = selected ? 4.5 : 3;
+      var g = '<g class="marker' + (selected ? ' selected' : '') + '" data-id="' + m.id + '" transform="translate(' + mp.x.toFixed(1) + ',' + mp.y.toFixed(1) + ')">';
+      if (m.pulse) g += '<circle class="pulse-ring" r="12" fill="none" stroke="' + m.color + '" stroke-width="1.5"/>';
+      g += '<circle class="core" r="' + coreR + '" fill="' + m.color + '" stroke="' + (selected ? '#fff' : '#0c0d0f') + '" stroke-width="1"/>';
+      g += '<text class="label" x="0" y="-' + (coreR + 8) + '">' + escapeHtml(truncateLabel(m.region, MARKER_LABEL_MAX_CHARS)) + '</text>';
+      g += '</g>';
+      parts.push(g);
+    }
+
+    svg.innerHTML = parts.join('');
+    Array.prototype.forEach.call(svg.querySelectorAll('.marker'), function (el) {
+      el.addEventListener('click', function () {
+        selectEvent(this.getAttribute('data-id'));
+      });
+    });
+    Array.prototype.forEach.call(svg.querySelectorAll('.city-marker'), function (el) {
+      el.addEventListener('click', function () {
+        selectCity(this.getAttribute('data-city-id'));
+      });
+    });
+  }
+
+  // Selecting an event: shows it in the sidebar and pans/zooms the globe to
+  // center it, punching in a bit past the normal manual zoom ceiling.
+  function selectEvent(id) {
+    state.selectedId = id;
+    state.selectedCityId = null;
+    renderRightSidebar();
+    var m = rawMarkers.filter(function (mm) { return mm.id === id; })[0];
+    if (m) animateCamera(m.lat, m.lon, FOCUS_ZOOM);
+  }
+
+  // Selecting a city star: swaps the sidebar to that city's local news and
+  // pans/zooms the same way an event selection does.
+  function selectCity(id) {
+    state.selectedCityId = id;
+    state.selectedId = null;
+    var city = CITIES.filter(function (c) { return c.id === id; })[0];
+    if (city) {
+      animateCamera(city.lat, city.lon, FOCUS_ZOOM);
+      fetchLocalNews(city);
+    } else {
+      renderRightSidebar();
+    }
+  }
+
+  function renderLeftSidebar() {
+    var el = document.getElementById('leftSidebar');
+    var html = '<h3>Layers</h3>';
+    LAYERS.forEach(function (l) {
+      html += '<label class="layer-row"><input type="checkbox" data-layer="' + l.id + '" ' + (state.activeLayers[l.id] ? 'checked' : '') + '/>' +
+              '<span class="dot" style="background:' + l.color + '"></span><span>' + l.label + '</span></label>';
+    });
+
+    html += '<h3>Data Sources</h3>';
+    if (!wsConnected) {
+      html += '<div class="layer-note">Not connected to Global Monitoring/backend (ws://127.0.0.1:8767). Start it with "python main.py" to see live data.</div>';
+    }
+    Object.keys(SOURCE_LABELS).forEach(function (key) {
+      var st = sourceStatus[key];
+      var dotColor = st.ok === true ? 'var(--green)' : (st.ok === false ? 'var(--red)' : 'var(--lo)');
+      html += '<div class="source-row" title="' + escapeHtml(st.message || '') + '">' +
+              '<span><span class="source-status" style="background:' + dotColor + '"></span>' + SOURCE_LABELS[key] + '</span>' +
+              '<span>' + (st.ok === true ? 'OK' : (st.ok === false ? 'ERR' : '…')) + '</span></div>';
+    });
+
+    el.innerHTML = html;
+    Array.prototype.forEach.call(el.querySelectorAll('input[data-layer]'), function (cb) {
+      cb.addEventListener('change', function () {
+        state.activeLayers[this.getAttribute('data-layer')] = this.checked;
+        // A hidden category disappears from the globe AND the Event Feed;
+        // if the currently selected marker belongs to it, deselect it too.
+        var sel = rawMarkers.filter(function (mm) { return mm.id === state.selectedId; })[0];
+        if (sel && !state.activeLayers[sel.layer]) state.selectedId = null;
+        renderAll();
+      });
+    });
+  }
+
+  // ---- AI content labelling (EU AI Act Art. 50) ----
+  // Same wording as UFOS.ai/Shared/AiContent.cs on the WPF side. Every AI output is
+  // labelled "✦ AI-generated · <model> · <time>" from the first moment it's visible
+  // (loading state included), carries the backend's machine-readable "provenance"
+  // as data-* attributes, and ends with AI_CAVEAT.
+  var AI_TRIGGER_TOOLTIP = 'Generates an AI analysis via a third-party language model (OpenRouter). May contain errors \u2014 not investment advice.';
+  var AI_CAVEAT = 'Automated AI analysis \u2014 may be inaccurate or incomplete. Not investment advice. Verify independently.';
+
+  function aiShortModel(model) {
+    if (!model) return '';
+    var i = model.lastIndexOf('/');
+    return i >= 0 && i < model.length - 1 ? model.slice(i + 1) : model;
+  }
+
+  function aiBadgeText(prov) {
+    var text = '\u2726 AI-generated';
+    if (prov && prov.model) text += ' \u00b7 ' + aiShortModel(prov.model);
+    if (prov && prov.generated_at) {
+      var d = new Date(prov.generated_at);
+      if (!isNaN(d.getTime())) {
+        text += ' \u00b7 ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+      }
+    }
+    return text;
+  }
+
+  // 2026-09-25: "Cost: $0.0123 · 1,512 in / 874 out tokens (charged by OpenRouter)"
+  // from the backend's "usage" (assess.usage_info()); the same numbers go to the
+  // shared AI cost ledger (backend/cost_ledger.py).
+  function aiCostText(usage) {
+    var cost = usage ? usage.cost_usd : null;
+    if (typeof cost !== 'number' || !isFinite(cost)) return 'Cost: not reported by OpenRouter';
+    var text = 'Cost: $' + cost.toFixed(cost < 0.01 ? 4 : 3);
+    var pin = usage.prompt_tokens, pout = usage.completion_tokens;
+    if (typeof pin === 'number' && typeof pout === 'number') {
+      text += ' \u00b7 ' + pin.toLocaleString('en-US') + ' in / ' + pout.toLocaleString('en-US') + ' out tokens';
+    }
+    return text + ' (charged by OpenRouter)';
+  }
+
+  function aiResultHtml(prov, text, usage) {
+    var model = (prov && prov.model) || '';
+    var at = (prov && prov.generated_at) || '';
+    return '<div class="ai-result" data-ai-generated="true" data-ai-model="' + escapeHtml(model) +
+      '" data-ai-generated-at="' + escapeHtml(at) + '" aria-label="' +
+      escapeHtml('AI-generated content' + (model ? ', model ' + aiShortModel(model) : '') + '. ' + AI_CAVEAT) + '">' +
+      '<span class="label">' + escapeHtml(aiBadgeText(prov)) + '</span>' + escapeHtml(text) +
+      '<span class="ai-caveat">' + escapeHtml(AI_CAVEAT) + '</span>' +
+      '<span class="ai-cost">' + escapeHtml(aiCostText(usage)) + '</span></div>';
+  }
+
+  // Sends the selected marker's info to the Python backend's /assess endpoint
+  // (backend/assess.py), which calls OpenRouter and returns a short factual
+  // read on the event — replacing the old hardcoded/illustrative canned text.
+  function runAi(marker) {
+    if (!marker) return;
+    state.aiResults[marker.id] = { status: 'loading' };
+    renderRightSidebar();
+
+    fetch(BACKEND_HTTP_URL + '/assess', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: marker.id,   // backend looks the event up for full context (article text, related events)
+        category: marker.category,
+        title: marker.region,
+        summary: marker.detail,
+        source: marker.url || ''
+      })
+    })
+      .then(function (res) {
+        return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+      })
+      .then(function (result) {
+        if (state.selectedId !== marker.id) return; // user moved on before this resolved
+        if (result.ok && result.data && result.data.assessment) {
+          state.aiResults[marker.id] = { status: 'ok', text: result.data.assessment, provenance: result.data.provenance || null,
+                                         contextUsed: result.data.context_used || [], usage: result.data.usage || null };
+        } else {
+          // The backend answered (even with an error status) — it's up and
+          // reachable, and this is its real, specific reason, not a
+          // connectivity problem.
+          state.aiResults[marker.id] = { status: 'error', error: (result.data && result.data.error) || 'Unexpected response from backend.' };
+        }
+        renderRightSidebar();
+      })
+      .catch(function (err) {
+        if (state.selectedId !== marker.id) return;
+        // fetch() itself rejected — no response at all (network/CORS block,
+        // or nothing listening on the port). This IS the "backend
+        // unreachable" case.
+        state.aiResults[marker.id] = { status: 'error', error: 'Could not reach Global Monitoring/backend (' + (err.message || err) + '). Make sure it is running (python main.py).' };
+        renderRightSidebar();
+      });
+  }
+
+  // Opens a link in the user's DEFAULT BROWSER (not inside the WebView2):
+  // the native side (MainWindow.xaml.cs, message "openUrl") validates it's
+  // http(s) and hands it to the OS. Outside WebView2 (previewing globe.html
+  // in a normal browser) it falls back to a new tab.
+  function openExternal(url) {
+    if (!url) return;
+    try {
+      if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(JSON.stringify({ type: 'openUrl', url: url }));
+        return;
+      }
+    } catch (err) { /* fall through */ }
+    window.open(url, '_blank', 'noopener');
+  }
+
+  // City panel: summarize the city's local news (backend /localnews-summary).
+  function runCitySummary(city) {
+    if (!city) return;
+    state.citySummaries[city.id] = { status: 'loading' };
+    renderRightSidebar();
+    fetch(BACKEND_HTTP_URL + '/localnews-summary', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ city: city.name, country: city.country })
+    })
+      .then(function (res) {
+        return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+      })
+      .then(function (result) {
+        if (result.ok && result.data && result.data.summary) {
+          state.citySummaries[city.id] = { status: 'ok', text: result.data.summary,
+                                           provenance: result.data.provenance || null, headlines: result.data.headlines,
+                                           usage: result.data.usage || null };
+        } else {
+          state.citySummaries[city.id] = { status: 'error', error: (result.data && result.data.error) || 'Unexpected response from backend.' };
+        }
+        if (state.selectedCityId === city.id) renderRightSidebar();
+      })
+      .catch(function (err) {
+        state.citySummaries[city.id] = { status: 'error', error: 'Could not reach Global Monitoring/backend (' + (err.message || err) + ').' };
+        if (state.selectedCityId === city.id) renderRightSidebar();
+      });
+  }
+
+  function renderRightSidebar() {
+    var el = document.getElementById('rightSidebar');
+    var html = '';
+
+    if (state.selectedCityId) {
+      // City selection fully replaces the sidebar — no Event Feed underneath
+      // — until the user explicitly goes back.
+      var city = CITIES.filter(function (c) { return c.id === state.selectedCityId; })[0];
+      if (city) {
+        html += '<h3>Local News</h3><div class="region-card">';
+        html += '<div class="region-title">' + escapeHtml(city.name) + ', ' + escapeHtml(city.country) + '</div>';
+        html += '<div class="region-cat" style="color:#d8d8d8">Live — Google News, last 3 days</div>';
+        var news = state.cityNews;
+        if (!news || news.status === 'loading') {
+          html += '<div class="news-item">Searching for local news…</div>';
+        } else if (news.status === 'error') {
+          if (news.unreachable) {
+            html += '<div class="news-item">Could not reach the news backend (' + escapeHtml(news.error) +
+                    '). Make sure Global Monitoring/backend is running (python main.py).</div>';
+          } else {
+            html += '<div class="news-item">' + escapeHtml(news.error) + '</div>';
+          }
+        } else if (!news.items || news.items.length === 0) {
+          html += '<div class="news-item">No recent English-language coverage found for ' + escapeHtml(city.name) + ' in the last 3 days.</div>';
+        } else {
+          if (news.notice) {
+            html += '<div class="news-meta" style="margin-bottom:8px;color:#E8C468">' + escapeHtml(news.notice) + '</div>';
+          }
+          news.items.forEach(function (article) {
+            html += '<div class="news-item"><a class="news-link" href="' + escapeHtml(article.url) + '" target="_blank" rel="noopener">' +
+                    escapeHtml(article.title) + '</a><div class="news-meta">' + escapeHtml(article.domain || '') +
+                    (article.seendate ? ' · ' + escapeHtml(article.seendate) : '') + '</div></div>';
+          });
+          // "✦ AI Sum up local news" — one-click AI analysis, labelled per
+          // claude/conventions.md "AI content labelling" (trigger ✦ + tooltip,
+          // badge from the loading state on, caveat, violet box, provenance).
+          html += '<button class="ai-btn" id="citySumBtn" title="' + escapeHtml(AI_TRIGGER_TOOLTIP) + '" aria-label="' +
+                  escapeHtml('Sum up local news (AI). ' + AI_TRIGGER_TOOLTIP) + '">✦ AI Sum up local news</button>';
+          var sum = state.citySummaries[city.id];
+          if (sum) {
+            if (sum.status === 'loading') {
+              html += '<div class="ai-result" data-ai-generated="true" role="status" aria-live="polite"><span class="label">✦ AI is analysing…</span>Asking the language model (OpenRouter)…</div>';
+            } else if (sum.status === 'error') {
+              html += '<div class="ai-result" role="status"><span class="label">✦ AI analysis unavailable</span>' + escapeHtml(sum.error) + '</div>';
+            } else {
+              html += aiResultHtml(sum.provenance, sum.text, sum.usage);
+              html += '<div class="news-meta" style="margin-top:4px">Based on: ' + escapeHtml(String(sum.headlines || 0)) +
+                      ' headlines from the last 3 days (headlines only, articles not read)</div>';
+            }
+          }
+        }
+        html += '</div>';
+        html += '<button class="back-btn" id="backBtn">← Back to events</button>';
+      }
+      el.innerHTML = html;
+      // Local-news links open in the default browser, not a bare WebView2 window.
+      Array.prototype.forEach.call(el.querySelectorAll('a.news-link'), function (a) {
+        a.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          openExternal(this.getAttribute('href'));
+        });
+      });
+      var citySumBtn = document.getElementById('citySumBtn');
+      if (citySumBtn) {
+        citySumBtn.addEventListener('click', function () { runCitySummary(city); });
+      }
+      var backBtn0 = document.getElementById('backBtn');
+      if (backBtn0) {
+        backBtn0.addEventListener('click', function () {
+          state.selectedCityId = null;
+          renderAll();
+        });
+      }
+      return;
+    }
+
+    var selected = rawMarkers.filter(function (m) { return m.id === state.selectedId; })[0];
+    if (selected) {
+      html += '<h3>Selected</h3><div class="region-card">';
+      // Title/summary come from external feeds (RSS, GDACS, SEC...) — escape
+      // them; a headline containing "<" must not be parsed as markup.
+      html += '<div class="region-title">' + escapeHtml(selected.region) + '</div>';
+      html += '<div class="region-cat" style="color:' + selected.color + '">' + selected.category + '</div>';
+      html += '<div class="region-detail">' + escapeHtml(selected.detail) + '</div>';
+      if (selected.url) {
+        var linkLabel = selected.category === 'Geopolitics & Conflict' ? 'Read full article' : 'Open source page';
+        html += '<button class="article-btn" id="articleBtn" title="' + escapeHtml(selected.url) + '">↗ ' + linkLabel + '</button>';
+      }
+      html += '<button class="ai-btn" id="aiBtn" title="' + escapeHtml(AI_TRIGGER_TOOLTIP) + '" aria-label="' +
+              escapeHtml(selected.aiLabel + ' (AI). ' + AI_TRIGGER_TOOLTIP) + '">✦ AI ' + selected.aiLabel + '</button>';
+      var aiResult = state.aiResults[selected.id];
+      if (aiResult) {
+        if (aiResult.status === 'loading') {
+          html += '<div class="ai-result" data-ai-generated="true" role="status" aria-live="polite"><span class="label">✦ AI is analysing…</span>Asking the language model (OpenRouter)…</div>';
+        } else if (aiResult.status === 'error') {
+          html += '<div class="ai-result" role="status"><span class="label">✦ AI assessment unavailable</span>' + escapeHtml(aiResult.error) + '</div>';
+        } else {
+          html += aiResultHtml(aiResult.provenance, aiResult.text, aiResult.usage);
+          // What the assessment rests on, so a thin answer is explainable.
+          var used = (aiResult.contextUsed && aiResult.contextUsed.length) ? aiResult.contextUsed.join(', ') : 'headline and summary only';
+          html += '<div class="news-meta" style="margin-top:4px">Based on: ' + escapeHtml(used) + '</div>';
+        }
+      }
+      html += '</div>';
+    } else {
+      html += '<h3>Selected</h3><div class="empty-state">Click a marker on the globe to see region context here. Once zoomed in, click a city star for local news.</div>';
+    }
+
+    html += '<h3>Event Feed</h3>';
+    var visibleFeed = rawMarkers.filter(function (m) { return state.activeLayers[m.layer]; });
+    visibleFeed.forEach(function (m) {
+      html += '<div class="feed-item" data-id="' + m.id + '"><div class="fi-region">' + escapeHtml(m.region) + '</div><div class="fi-cat" style="color:' + m.color + '">' + m.category + '</div></div>';
+    });
+    if (!visibleFeed.length) {
+      html += '<div class="empty-state">No events in the selected categories — tick a layer on the left to show its events.</div>';
+    }
+
+    el.innerHTML = html;
+
+    var articleBtn = document.getElementById('articleBtn');
+    if (articleBtn) {
+      articleBtn.addEventListener('click', function () {
+        var m3 = rawMarkers.filter(function (mm) { return mm.id === state.selectedId; })[0];
+        if (m3) openExternal(m3.url);
+      });
+    }
+    var btn = document.getElementById('aiBtn');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        var m2 = rawMarkers.filter(function (mm) { return mm.id === state.selectedId; })[0];
+        runAi(m2); // handles its own loading/result renderRightSidebar() calls
+      });
+    }
+    Array.prototype.forEach.call(el.querySelectorAll('.feed-item'), function (fi) {
+      fi.addEventListener('click', function () {
+        selectEvent(this.getAttribute('data-id'));
+      });
+    });
+  }
+
+  function renderAll() {
+    renderGlobe();
+    renderRightSidebar();
+  }
+
+  var wrap = document.getElementById('globeWrap');
+  wrap.addEventListener('mousedown', function (e) {
+    state.dragging = true; state.lastX = e.clientX; state.lastY = e.clientY;
+    wrap.classList.add('dragging');
+  });
+  window.addEventListener('mousemove', function (e) {
+    if (!state.dragging) return;
+    var dx = e.clientX - state.lastX, dy = e.clientY - state.lastY;
+    var newPhi = state.phi + dy * 0.25;
+    if (newPhi > 75) newPhi = 75;
+    if (newPhi < -75) newPhi = -75;
+    state.lambda -= dx * 0.4;
+    state.phi = newPhi;
+    state.lastX = e.clientX; state.lastY = e.clientY;
+    renderGlobe();
+  });
+  window.addEventListener('mouseup', function () {
+    state.dragging = false;
+    wrap.classList.remove('dragging');
+  });
+
+  wrap.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+    var newZoom = state.zoom * factor;
+    if (newZoom < 1) newZoom = 1;                 // never further out than the initial view
+    if (newZoom > MAX_ZOOM) newZoom = MAX_ZOOM;    // never so far in the globe gets clipped
+    state.zoom = newZoom;
+    renderGlobe();
+  }, { passive: false });
+
+  renderLeftSidebar();
+  renderAll();
+  loadNaturalEarthData();
+  connectBackendWs();
+})();
+</script>
+</body>
+</html>

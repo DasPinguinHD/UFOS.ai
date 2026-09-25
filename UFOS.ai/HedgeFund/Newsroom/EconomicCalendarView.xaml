@@ -1,0 +1,124 @@
+<UserControl x:Class="UFOS.ai.HedgeFund.Newsroom.EconomicCalendarView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Loaded="View_Loaded">
+    <!-- Financial Newsroom section "Economic Calendar" (2026-09-25): upcoming US data
+         releases (FRED release calendar) and FOMC decisions for the next 45 days.
+         Backend: newsroom/calendar_collector.py -> GET /newsroom/calendar. Source data only — no AI text. -->
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="HighEmphasisForegroundBrush" Color="#FFF2F2F2" />
+        <SolidColorBrush x:Key="TertiaryForegroundBrush" Color="#FFBFBFBF" />
+        <SolidColorBrush x:Key="QuietForegroundBrush" Color="#FF8A8A8A" />
+        <SolidColorBrush x:Key="AccentGreenBrush" Color="#FF3ECF8E" />
+        <SolidColorBrush x:Key="HighImportanceBrush" Color="#FFF39C4A" />
+        <SolidColorBrush x:Key="FomcBrush" Color="#FF6FB7FF" />
+        <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF1A1A1A" />
+        <SolidColorBrush x:Key="CardBorderBrush" Color="#FF2A2A2A" />
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <ControlTemplate x:Key="RefreshButtonTemplate" TargetType="Button">
+            <Border x:Name="bd" Background="Transparent" BorderBrush="{StaticResource AccentGreenBrush}" BorderThickness="1" CornerRadius="4" Padding="10,4">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#223ECF8E" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- One calendar entry (release or FOMC decision). -->
+        <DataTemplate x:Key="EventRowTemplate">
+            <Grid Margin="0,8,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="78" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding TimeDisplay}" FontFamily="Consolas" FontSize="11.5" Margin="0,1,0,0"
+                           Foreground="{StaticResource TertiaryForegroundBrush}" ToolTip="Typical release time (US Eastern), not guaranteed" />
+                <StackPanel Grid.Column="1" Margin="0,0,14,0">
+                    <StackPanel Orientation="Horizontal">
+                        <!-- High importance: small orange dot. FOMC: blue diamond. -->
+                        <Ellipse Width="7" Height="7" Fill="{StaticResource HighImportanceBrush}" Margin="0,1,7,0" VerticalAlignment="Center"
+                                 ToolTip="High importance" Visibility="{Binding ShowHighDot, Converter={StaticResource BoolToVis}}" />
+                        <TextBlock Text="◆" FontSize="11" Foreground="{StaticResource FomcBrush}" Margin="0,0,6,0" VerticalAlignment="Center"
+                                   ToolTip="FOMC rate decision" Visibility="{Binding IsFomc, Converter={StaticResource BoolToVis}}" />
+                        <TextBlock Text="{Binding Name}" FontSize="12.5" FontWeight="{Binding NameWeight}" Foreground="{Binding NameBrush}"
+                                   VerticalAlignment="Center" TextWrapping="Wrap" />
+                        <Border Background="#1F6FB7FF" BorderBrush="{StaticResource FomcBrush}" BorderThickness="1" CornerRadius="3"
+                                Padding="5,0,5,1" Margin="8,0,0,0" VerticalAlignment="Center"
+                                Visibility="{Binding IsSep, Converter={StaticResource BoolToVis}}"
+                                ToolTip="Summary of Economic Projections incl. the 'dot plot' of rate expectations">
+                            <TextBlock Text="SEP / dot plot" FontSize="9.5" FontWeight="SemiBold" Foreground="{StaticResource FomcBrush}" />
+                        </Border>
+                    </StackPanel>
+                    <TextBlock Text="{Binding Why}" FontSize="10.5" Margin="0,3,0,0" TextWrapping="Wrap"
+                               Foreground="{StaticResource QuietForegroundBrush}" />
+                    <TextBlock FontSize="10" Margin="0,4,0,0" Visibility="{Binding HasLink, Converter={StaticResource BoolToVis}}">
+                        <Hyperlink NavigateUri="{Binding LinkUri}" RequestNavigate="Link_RequestNavigate"
+                                   Foreground="{StaticResource AccentGreenBrush}"><Run Text="{Binding LinkText, Mode=OneWay}" /></Hyperlink>
+                    </TextBlock>
+                </StackPanel>
+                <StackPanel Grid.Column="2" MinWidth="170" Visibility="{Binding HasLast, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="LAST" FontSize="9" FontWeight="SemiBold" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                    <TextBlock Text="{Binding LastValue}" FontFamily="Consolas" FontSize="13" FontWeight="Bold" HorizontalAlignment="Right"
+                               Foreground="{StaticResource HighEmphasisForegroundBrush}" />
+                    <TextBlock Text="{Binding LastPeriod}" FontSize="9.5" HorizontalAlignment="Right"
+                               Foreground="{StaticResource QuietForegroundBrush}" />
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
+
+        <!-- One day: header + its entries. -->
+        <DataTemplate x:Key="DayCardTemplate">
+            <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource CardBorderBrush}"
+                    BorderThickness="1" CornerRadius="6" Padding="16,10,16,6" Margin="0,0,0,10" MaxWidth="980" HorizontalAlignment="Left">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{Binding Header}" FontSize="14" FontWeight="Bold" Foreground="{Binding HeaderBrush}" />
+                        <TextBlock Text="{Binding SubHeader}" FontSize="11" Margin="10,0,0,1" VerticalAlignment="Bottom"
+                                   Foreground="{StaticResource QuietForegroundBrush}" />
+                    </StackPanel>
+                    <Border Height="1" Background="{StaticResource CardBorderBrush}" Margin="0,8,0,0" />
+                    <ItemsControl ItemsSource="{Binding Events}" ItemTemplate="{StaticResource EventRowTemplate}" Focusable="False" />
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid Margin="22,18,22,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Economic Calendar" FontSize="16" FontWeight="Bold" Foreground="{StaticResource HighEmphasisForegroundBrush}" />
+                <TextBlock Text="Upcoming US data releases and FOMC decisions for the next 45 days. Release dates from FRED; FOMC dates from federalreserve.gov — times are typical, not guaranteed; consensus forecasts are not included (not freely available). Proof-of-concept data, not investment advice."
+                           FontSize="10.5" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
+                <TextBlock x:Name="SourceWarningText" FontSize="10.5" Margin="0,4,0,0" Foreground="{StaticResource HighImportanceBrush}"
+                           TextWrapping="Wrap" Visibility="Collapsed" />
+                <TextBlock x:Name="LastUpdatedText" Text="" FontSize="9.5" Margin="0,3,0,0" FontFamily="Consolas"
+                           Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <Button Grid.Column="1" x:Name="RefreshButton" Content="↻ Refresh" Click="RefreshButton_Click" VerticalAlignment="Top"
+                    Template="{StaticResource RefreshButtonTemplate}" Foreground="{StaticResource AccentGreenBrush}" FontSize="11" />
+        </Grid>
+
+        <Grid Grid.Row="1">
+            <ScrollViewer x:Name="ListScrollViewer" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                <ItemsControl x:Name="DayList" ItemTemplate="{StaticResource DayCardTemplate}" Focusable="False" />
+            </ScrollViewer>
+            <StackPanel x:Name="StatusPanel" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock x:Name="StatusText" Text="Loading the economic calendar…" FontFamily="Consolas" FontSize="12"
+                           Foreground="{StaticResource TertiaryForegroundBrush}" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="460" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

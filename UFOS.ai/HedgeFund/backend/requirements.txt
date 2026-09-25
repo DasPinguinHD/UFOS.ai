@@ -1,0 +1,13 @@
+# Async and networking
+aiohttp>=3.9.0
+websockets>=12.0
+
+# Configuration
+python-dotenv>=1.0.0
+
+# Market data (included early to reduce friction later)
+yfinance>=0.2.65
+pandas>=2.1.0
+
+# LLM access (needed in phase 3)
+openai>=1.10.0

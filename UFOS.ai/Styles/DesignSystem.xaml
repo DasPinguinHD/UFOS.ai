@@ -1,0 +1,254 @@
+<!--
+    ============================================================================
+    CENTRAL DESIGN STANDARDS FOR UFOS.ai
+    ============================================================================
+    NOTE FOR AI AGENTS AND DEVELOPERS:
+    This file is the SINGLE source of truth for colors, hover effects,
+    and corner radii throughout the UFOS.ai project (host + future modules).
+
+        - ALWAYS reference the brushes, CornerRadius values, and templates defined
+            here in new XAML code (e.g. {StaticResource ControlBackgroundBrush}).
+        - Do NOT invent new colors, hover opacities, or corner radii in individual
+            windows/controls. If a suitable value is missing, add it HERE centrally
+            and reference it everywhere afterward.
+        - This file intentionally governs ONLY visual identity (color scheme, hover
+            behavior, and corner radii). Layout aspects such as width/height/padding
+            of individual controls do NOT belong here and remain local to each window.
+    ============================================================================
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ===================== Hintergrundfarben ===================== -->
+    <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#FF111111" />
+    <SolidColorBrush x:Key="PanelBackgroundBrush" Color="#FF101010" />
+    <SolidColorBrush x:Key="SurfaceBackgroundBrush" Color="#FF141414" />
+    <SolidColorBrush x:Key="ElevatedSurfaceBackgroundBrush" Color="#FF1A1A1A" />
+    <SolidColorBrush x:Key="ControlBackgroundBrush" Color="#FF242424" />
+    <SolidColorBrush x:Key="TitleBarBackgroundBrush" Color="#FF000000" />
+
+    <!-- Additional surface tiers used by the MainWindow module grid / panels.
+         Kept distinct from the tokens above (rather than overloading them) so
+         existing windows are not visually affected. -->
+    <SolidColorBrush x:Key="ModulePanelBackgroundBrush" Color="#FF16171A" />
+    <SolidColorBrush x:Key="ModuleTileBackgroundBrush" Color="#FF202126" />
+    <SolidColorBrush x:Key="ControlBackgroundAltBrush" Color="#FF262731" />
+
+    <!-- ===================== Rahmenfarben ===================== -->
+    <SolidColorBrush x:Key="ControlBorderBrush" Color="#FF333333" />
+    <SolidColorBrush x:Key="SubtleBorderBrush" Color="#FF202020" />
+    <SolidColorBrush x:Key="AccentBorderBrush" Color="#FF2A2A2A" />
+
+    <!-- ===================== Textfarben ===================== -->
+    <SolidColorBrush x:Key="PrimaryForegroundBrush" Color="#FFBFBFBF" />
+    <SolidColorBrush x:Key="SecondaryForegroundBrush" Color="#FF9A9A9A" />
+    <SolidColorBrush x:Key="TertiaryForegroundBrush" Color="#FF8F8F8F" />
+    <SolidColorBrush x:Key="HighEmphasisForegroundBrush" Color="#FFFFFFFF" />
+
+    <!-- Additional text tones used by the MainWindow design (mockup "text-tertiary"
+         / "text-quiet"). Kept distinct from TertiaryForegroundBrush above, which
+         other windows already rely on. -->
+    <SolidColorBrush x:Key="MutedForegroundBrush" Color="#FF6F6F6F" />
+    <SolidColorBrush x:Key="QuietForegroundBrush" Color="#FF5A5A5A" />
+
+    <!-- ===================== Akzentfarben (Statusindikatoren) ===================== -->
+    <SolidColorBrush x:Key="AccentAmberBrush" Color="#FFEDB400" />
+    <SolidColorBrush x:Key="AccentRedBrush" Color="#FFED6A5A" />
+    <SolidColorBrush x:Key="AccentBlueBrush" Color="#FF5AC8FA" />
+    <SolidColorBrush x:Key="AccentBlueDimBrush" Color="#FF2E6E8C" />
+    <SolidColorBrush x:Key="PositiveGreenBrush" Color="#FF4ADE80" />
+    <SolidColorBrush x:Key="PositiveGreenDimBrush" Color="#FF2E7D4F" />
+    <SolidColorBrush x:Key="CautionBrush" Color="#FFF0B429" />
+    <SolidColorBrush x:Key="CautionDimBrush" Color="#FF8C6A1D" />
+
+    <!-- ===================== AI content (EU AI Act Art. 50 labelling) =====================
+         Violet = "this was written by a language model", everywhere in the app (same
+         #B98CE8 as the Global Monitoring globe's AI box). Use ONLY for AI trigger buttons,
+         the "✦ AI-GENERATED" badge and the AI result container - never for raw data,
+         so AI text always stays visually distinguishable. See Shared/AiContent.cs. -->
+    <SolidColorBrush x:Key="AiAccentBrush" Color="#FFB98CE8" />
+    <SolidColorBrush x:Key="AiSurfaceBrush" Color="#14B98CE8" />
+
+    <!-- ===================== Scrollbar-Farben ===================== -->
+    <SolidColorBrush x:Key="ScrollThumbBrush" Color="#FF4A4A4A" />
+    <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#FF888888" />
+    <SolidColorBrush x:Key="ScrollTrackBrush" Color="#FF242424" />
+
+    <!-- ===================== Eckenradien ===================== -->
+    <CornerRadius x:Key="SmallCornerRadius">4</CornerRadius>
+    <CornerRadius x:Key="MediumCornerRadius">6</CornerRadius>
+    <CornerRadius x:Key="LargeCornerRadius">8</CornerRadius>
+    <CornerRadius x:Key="TopOnlyCornerRadius">8,8,0,0</CornerRadius>
+    <CornerRadius x:Key="PillCornerRadius">999</CornerRadius>
+
+    <!-- ===================== Hover-/Press-Verhalten ===================== -->
+    <!-- Opacity beim Hover über runde/Pill-förmige Controls (z.B. Fensterknöpfe) -->
+    <sys:Double xmlns:sys="clr-namespace:System;assembly=mscorlib" x:Key="StrongHoverOpacity">0.85</sys:Double>
+    <!-- Opacity beim Hover über rechteckige, abgerundete Controls (z.B. Aktionsbuttons) -->
+    <sys:Double xmlns:sys="clr-namespace:System;assembly=mscorlib" x:Key="SubtleHoverOpacity">0.88</sys:Double>
+    <!-- Skalierung beim Drücken (Apple-artiges Press-Feedback) -->
+    <sys:Double xmlns:sys="clr-namespace:System;assembly=mscorlib" x:Key="StrongPressedScale">0.95</sys:Double>
+    <sys:Double xmlns:sys="clr-namespace:System;assembly=mscorlib" x:Key="SubtlePressedScale">0.97</sys:Double>
+    <!-- Skalierung beim Hover ueber Overview-Karten (Markets/Finance/...) -->
+    <sys:Double xmlns:sys="clr-namespace:System;assembly=mscorlib" x:Key="CardHoverScale">0.97</sys:Double>
+    <!-- Opacity fuer deaktivierte Modul-Kacheln (z.B. waehrend das zugehoerige Fenster schon offen ist) -->
+    <sys:Double xmlns:sys="clr-namespace:System;assembly=mscorlib" x:Key="DisabledOpacity">0.4</sys:Double>
+
+    <!-- ===================== Wiederverwendbare Templates ===================== -->
+
+    <!-- Pill-förmiges Button-Template (z.B. Minimize/Close-Knöpfe).
+         Größe/Padding werden bewusst NICHT hier festgelegt, sondern von den
+         verwendenden Styles/Controls per TemplateBinding übernommen. -->
+    <ControlTemplate x:Key="PillButtonTemplate" TargetType="Button">
+        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                CornerRadius="{StaticResource PillCornerRadius}"
+                Width="{TemplateBinding Width}" Height="{TemplateBinding Height}"
+                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Opacity" Value="{StaticResource StrongHoverOpacity}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="bd" Property="RenderTransform">
+                    <Setter.Value>
+                        <ScaleTransform ScaleX="{StaticResource StrongPressedScale}" ScaleY="{StaticResource StrongPressedScale}" />
+                    </Setter.Value>
+                </Setter>
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <!-- Abgerundetes, dunkles Button-Template (z.B. Aktionsbuttons im UI).
+         Größe/Padding werden bewusst NICHT hier festgelegt. -->
+    <ControlTemplate x:Key="RoundedDarkButtonTemplate" TargetType="Button">
+        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="{StaticResource MediumCornerRadius}" SnapsToDevicePixels="True">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+        </Border>
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Opacity" Value="{StaticResource SubtleHoverOpacity}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="bd" Property="RenderTransform">
+                    <Setter.Value>
+                        <ScaleTransform ScaleX="{StaticResource SubtlePressedScale}" ScaleY="{StaticResource SubtlePressedScale}" />
+                    </Setter.Value>
+                </Setter>
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <!-- Ganzflächiges, abgerundetes Karten-/Kachel-Template, das bei Hover/Press
+         leicht aufhellt bzw. einsinkt (z.B. Modul-Kacheln im MainWindow). -->
+    <ControlTemplate x:Key="ModuleTileButtonTemplate" TargetType="Button">
+        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="{StaticResource LargeCornerRadius}" SnapsToDevicePixels="True">
+            <ContentPresenter Margin="{TemplateBinding Padding}" />
+        </Border>
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Opacity" Value="{StaticResource SubtleHoverOpacity}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="bd" Property="RenderTransform">
+                    <Setter.Value>
+                        <ScaleTransform ScaleX="{StaticResource SubtlePressedScale}" ScaleY="{StaticResource SubtlePressedScale}" CenterX="60" CenterY="45" />
+                    </Setter.Value>
+                </Setter>
+            </Trigger>
+            <!-- e.g. while the tile's module window is already open, to signal that
+                 clicking it again won't do anything until that window is closed -->
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="bd" Property="Opacity" Value="{StaticResource DisabledOpacity}" />
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <!-- Ganzflächiges Karten-Template fuer die Overview-Bar (Markets/Finance/Money Flows/
+         Verse of the Day/Portfolio Insight): schrumpft bei Hover leicht (rein visuelles
+         Feedback - ob eine Karte tatsaechlich klickbar ist, steuert jede Instanz selbst
+         ueber Cursor/Click, nicht dieses Template). -->
+    <ControlTemplate x:Key="OverviewCardButtonTemplate" TargetType="Button">
+        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="{StaticResource LargeCornerRadius}" SnapsToDevicePixels="True"
+                RenderTransformOrigin="0.5,0.5">
+            <Border.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Border.RenderTransform>
+            <ContentPresenter Margin="{TemplateBinding Padding}" />
+        </Border>
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Trigger.EnterActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="{StaticResource CardHoverScale}" Duration="0:0:0.08" />
+                            <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="{StaticResource CardHoverScale}" Duration="0:0:0.08" />
+                        </Storyboard>
+                    </BeginStoryboard>
+                </Trigger.EnterActions>
+                <Trigger.ExitActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="1.0" Duration="0:0:0.12" />
+                            <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="1.0" Duration="0:0:0.12" />
+                        </Storyboard>
+                    </BeginStoryboard>
+                </Trigger.ExitActions>
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <!-- Kompakter Scrollbar-Thumb: nur Farbgebung/Hover/Eckenrundung, keine Größenvorgaben -->
+    <Style x:Key="CompactScrollThumbStyle" TargetType="Thumb">
+        <Setter Property="Background" Value="{StaticResource ScrollThumbBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Thumb">
+                    <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="{StaticResource SmallCornerRadius}" RenderTransformOrigin="0.5,0.5">
+                        <Border.RenderTransform>
+                            <ScaleTransform ScaleX="1" ScaleY="1" />
+                        </Border.RenderTransform>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="bd" Property="Background" Value="{StaticResource ScrollThumbHoverBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Kompakte Scrollbar: nur Farbgebung/Eckenrundung, Breite ist funktional (keine Button-Breite) -->
+    <Style x:Key="CompactScrollBarStyle" TargetType="ScrollBar">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollBar">
+                    <Grid Background="Transparent">
+                        <Border Margin="2,0,2,0" Background="{StaticResource ScrollTrackBrush}" CornerRadius="{StaticResource SmallCornerRadius}"/>
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" IsHitTestVisible="False"/>
+                            </Track.DecreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Style="{StaticResource CompactScrollThumbStyle}" />
+                            </Track.Thumb>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" IsHitTestVisible="False"/>
+                            </Track.IncreaseRepeatButton>
+                        </Track>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+</ResourceDictionary>
