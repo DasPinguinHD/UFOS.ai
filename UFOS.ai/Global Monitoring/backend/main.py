@@ -270,7 +270,7 @@ async def main() -> None:
     # too, not just the console.
     health_runner = web.AppRunner(health_app, access_log=logging.getLogger("aiohttp.access"))
     await health_runner.setup()
-    health_site = web.TCPSite(health_runner, "0.0.0.0", HEALTH_PORT)
+    health_site = web.TCPSite(health_runner, "127.0.0.1", HEALTH_PORT)
     await health_site.start()
     logger.info("HTTP API listening on http://127.0.0.1:%s (/health, /events, /localnews, /assess, /localnews-summary)", HEALTH_PORT)
 
