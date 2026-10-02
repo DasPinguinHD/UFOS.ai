@@ -13,12 +13,13 @@ Frontend expectations:
 import asyncio
 import json
 import logging
-from typing import Set
+from typing import Awaitable, Callable, Optional, Set
 
 import websockets
 from websockets.legacy.server import WebSocketServerProtocol, WebSocketServer
 
-from config import WS_HOST, WS_PORT
+from config import WS_HOST, WS_PORT, DEFAULT_ALLOWED_ORIGINS
+import api_auth
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,10 @@ class Broadcaster:
         self._server: WebSocketServer | None = None
         self._lock = asyncio.Lock()
 
+        # Optional warm-start hook (2026-09-25): awaited for every new client; returns a
+        # list of (event_type, payload) sent to that client only, e.g. the stored verdict history.
+        self.on_connect: Optional[Callable[[], Awaitable[list]]] = None
+
         # tuning: allow large messages, send periodic pings
         self._ping_interval = 20
         self._ping_timeout = 20
@@ -55,6 +60,7 @@ class Broadcaster:
     async def _handler(self, websocket: WebSocketServerProtocol) -> None:
         # register client
         await self._register(websocket)
+        await self._send_warm_start(websocket)
         try:
             # We don't expect inbound messages; keep the connection open and react to close
             async for _ in websocket:
@@ -67,22 +73,29 @@ class Broadcaster:
         finally:
             await self._unregister(websocket)
 
+    async def _send_warm_start(self, websocket: WebSocketServerProtocol) -> None:
+        """Send the on_connect messages to one new client. Never raises."""
+        if self.on_connect is None:
+            return
+        try:
+            for event_type, payload in (await self.on_connect()) or []:
+                await websocket.send(json.dumps({"type": event_type, "payload": payload}, default=str))
+        except Exception as ex:
+            logger.warning("WS warm start for %s failed: %s", websocket.remote_address, ex)
+
     async def start(self) -> None:
         # start the websockets server; allow large messages in case frontend sends bigger data
         self._server = await websockets.serve(
             self._handler,
-            WS_HOST,
+            api_auth.bind_host(WS_HOST, "WebSocket server"),
             WS_PORT,
+            # Session token + origin check before the handshake (api_auth).
+            process_request=api_auth.ws_process_request(api_auth.allowed_origins(DEFAULT_ALLOWED_ORIGINS)),
             ping_interval=self._ping_interval,
             ping_timeout=self._ping_timeout,
             max_size=2 ** 20,
         )
-        bind_addr = WS_HOST
-        # if configured 0.0.0.0, log both 0.0.0.0 and 127.0.0.1 for clarity
-        if WS_HOST == "0.0.0.0":
-            logger.info("WebSocket broadcast server listening on ws://0.0.0.0:%s (reachable via 127.0.0.1:%s)", WS_PORT, WS_PORT)
-        else:
-            logger.info("WebSocket broadcast server listening on ws://%s:%s", bind_addr, WS_PORT)
+        logger.info("WebSocket broadcast server listening on port %s (token required)", WS_PORT)
 
     async def stop(self) -> None:
         # close server and all connected clients

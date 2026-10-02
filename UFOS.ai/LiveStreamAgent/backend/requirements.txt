@@ -1,6 +1,6 @@
 # Asynchrone & Netzwerk-Bibliotheken
 asyncio>=3.4.3
-websockets>=12.0
+websockets>=14.0  # process_request(connection, request) API used by api_auth.py
 aiohttp>=3.9.0
 
 # Datenverarbeitung

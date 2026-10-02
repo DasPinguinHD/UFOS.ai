@@ -128,7 +128,7 @@ namespace UFOS.ai.HedgeFund.Newsroom
             try
             {
                 string json;
-                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) })
+                using (var client = NewsroomBackend.CreateClient(TimeSpan.FromSeconds(15)))
                 {
                     json = await client.GetStringAsync(OverviewUrl);
                 }
@@ -385,13 +385,13 @@ namespace UFOS.ai.HedgeFund.Newsroom
             AnalysisHeader.Text = $"{AiContent.LoadingBadge} · {selected.Count} ITEMS · {tier.ToUpperInvariant()}";
             AnalysisText.Text = "Asking the language model (OpenRouter)… this can take up to two minutes.";
             AnalysisBasedOn.Text = "Based on: " + string.Join(", ", basedOn.Select(b => b.Title));
-            AutomationProperties.SetName(AnalysisText, "AI analysis is being generated");
+            AutomationProperties.SetName(AnalysisText, AiContent.LoadingAutomationName("analysis"));
             UpdateSelectionUi();
 
             try
             {
                 var body = JsonSerializer.Serialize(new { tile_ids = selected.Select(t => t.Id).ToArray(), tier });
-                using var client = new HttpClient { Timeout = AnalysisTimeout };
+                using var client = NewsroomBackend.CreateClient(AnalysisTimeout);
                 using var content = new StringContent(body, Encoding.UTF8, "application/json");
                 using var response = await client.PostAsync(AnalysisUrl, content, token);
                 var text = await response.Content.ReadAsStringAsync(token);

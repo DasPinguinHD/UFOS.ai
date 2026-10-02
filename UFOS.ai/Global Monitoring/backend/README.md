@@ -504,9 +504,10 @@ written when the app launches the backend) had never been created.
 `<dir>\Global Monitoring\backend\run_backend.ps1` (hosted by the root app)
 or `<dir>\backend\run_backend.ps1` when `<dir>` contains
 `GlobalMonitoring.csproj` (standalone). If nothing is found, every path it
-tried is written to the Backend Log (module "Global Monitoring"). Note that
-`run_backend.ps1` runs `pip install -r requirements.txt --upgrade` on every
-start, so the first connection after opening the window can take 10-30s.
+tried is written to the Backend Log (module "Global Monitoring"). (Until 2026-09-25
+`run_backend.ps1` ran `pip install -r requirements.txt --upgrade` on every
+start, so the first connection after opening the window took 10-30s — see
+"Python environment" at the end.)
 
 ## GDELT replaced by world-news RSS + Google News (2026-09-24)
 
@@ -679,3 +680,90 @@ under the AI caveat ("Cost: $0.0042 · 1,512 in / 874 out tokens (charged by
 OpenRouter)", or "Cost: not reported by OpenRouter").
 
 Tests: `python -m unittest tests.test_cost_ledger` (from `backend/`, stdlib only).
+
+## Python environment (since 2026-09-25)
+
+**Started from the UFOS.ai app:** the environment is prepared once at app
+start (`Shared/PythonEnvironment.cs`, in the background, one module after the
+other: create the venv if missing, `pip install -r requirements.txt --upgrade`
+only when the stamp doesn't match). The module's launcher (`MainWindow.xaml.cs`) awaits
+`PythonEnvironment.WaitForModuleAsync` before starting the script with
+`-SkipInstall` (no venv creation, no pip); a standalone module exe prepares the
+venv itself at that point. The rules below apply when you run the script by hand
+(it writes the same stamp, so the app doesn't reinstall afterwards).
+
+`run_backend.ps1` no longer runs `pip install --upgrade` on every start. It
+installs `requirements.txt` (without `--upgrade`) only when that is
+**required**: `.venv` is missing, `requirements.txt` changed since the last
+successful install (SHA-256 in `.venv/ufos-requirements.sha256`), or the last
+install didn't complete (`.venv/ufos-install-pending`). `-RecreateVenv` still
+rebuilds the venv; `-Upgrade` runs `pip install -r requirements.txt --upgrade`;
+`-EnvOnly` prepares the environment without starting `main.py`.
+
+Every run holds `.venv.lock` (git-ignored, deleted automatically — the handle
+is opened with DeleteOnClose) while it checks or changes the venv, so the
+backend never starts while an install/update of the same venv is running; it
+waits instead. A leftover lock counts as stale when its PID is gone or it is
+older than 30 minutes. The script prints `UFOS_ENV: waiting | installing <reason>
+| upgrading | changed <n> | failed <reason> | ready` marker lines, which
+`MainWindow.xaml.cs` (title bar) turns into a status hint ("Installing Python packages…" /
+"Waiting for the Python package update to finish…").
+
+Optional upgrades are manual only: root app → Settings (gear) → "Update Python
+packages" (upgrades all module venvs one after another; a running backend is stopped via `POST /shutdown` first and restarts the next time the Global Monitoring window opens).
+
+## Local storage (SQLite, 2026-09-25)
+
+`storage.py` (the `Storage`/`Store` class) + `persistence.py` keep a local
+SQLite database so a backend restart doesn't start from an empty globe
+("cache first, then reconcile"). One file per module (project convention
+"compartmentalization"; LiveStreamAgent and HedgeFund have their own copies):
+
+- **File:** `backend/data/gms.db` (+ `-wal`/`-shm`; git-ignored). `UFOS_GM_DB`
+  (full file path) overrides it, e.g. for tests.
+- **Behaviour:** WAL mode, one connection (`check_same_thread=False`) behind a
+  lock, schema versioned via `PRAGMA user_version` (`storage.MIGRATIONS`,
+  append-only). Storage never breaks a collector: every call logs its own
+  SQLite error to `backend.log` and returns a neutral default. A corrupt file
+  is renamed to `gms.db.corrupt-<UTC timestamp>` and a fresh database is
+  created; if the file can't be used at all, an in-memory database is used
+  for that session.
+- **Startup:** retention runs, then the stored events are loaded into the
+  in-memory `EventStore` (within its per-category limits) **before** the
+  collectors start, so a connecting frontend gets a snapshot at once. Each
+  source that had cached events reports `from cache (updated HH:MM) —
+  refreshing…` (ok, local time of its last successful poll) until its first
+  poll. A cached event is replaced (and broadcast) the first time its
+  collector reports it again; collectors dedupe by their stable event ids.
+  The news collector skips articles already stored.
+- **While running:** every emitted event is stored (see the table); events
+  removed by the disaster prune (`remove` WS message) are deleted from the
+  database too. Retention runs again once a day. `GET /events` and a new
+  WebSocket client also wake collectors whose last poll is older than
+  `REFRESH_MIN_SECONDS` (`refresh.py`; OpenSky never faster than its quota
+  allows). Each poll result is kept in `source_state`.
+
+| Table | Content | Retention |
+|---|---|---|
+| `items` source `news` | geopolitics events (full event JSON), by `published` | 7 days (`EVENT_RETENTION_DAYS`); the globe still shows only `NEWS_MAX_AGE_HOURS` |
+| `items` source `gdacs` | disaster alerts, by last-seen time | 7 days; ended alerts (`gdacs_collector.is_past()`) are deleted at once |
+| `items` source `yahoo` | latest market quote event per symbol | 7 days since last update |
+| `flight_positions` | every polled position of a notable aircraft (`icao24, ts, lat, lon, altitude_m, heading_deg, velocity_ms, callsign, payload`) — basis for future flight tracks; the newest row per aircraft (≤ `FLIGHT_CACHE_MAX_AGE_HOURS` old) is the marker at warm start | 24 h (`FLIGHT_TRACK_RETENTION_HOURS`) |
+| `prices` | `symbol, ts, price, source` — one point per Yahoo quote time (an unchanged delayed quote is stored once) | 2 years (`PRICE_RETENTION_DAYS`) |
+| `items` source `localnews` | successful `/localnews` lookups (a restart inside `LOCALNEWS_CACHE_SECONDS` doesn't ask Google News again) | 1 day (`LOCALNEWS_RETENTION_HOURS`) |
+| `ai_outputs` | every Assess/Sentiment and local-news summary: `ts, feature, model, input_json, output_text, provenance_json, usage_json` | 90 days (`AI_OUTPUT_RETENTION_DAYS`) |
+| `source_state`, `meta` | last success/attempt + status per collector; `last_retention_ts` | kept (one row each) |
+
+**Assess reuse:** clicking Assess/Sentiment again on the same marker within
+`ASSESS_REUSE_SECONDS` (30 min; `0` disables it) returns the stored result
+instead of a new paid call (`"cached": true`, `cached_at`, the original
+`provenance`, `usage` of 0, first "Based on" entry `cached result from HH:MM
+UTC (no new AI call)`). No cost-ledger line is written for a reused result.
+
+**Reset:** stop the backend and delete `data/gms.db` (plus `-wal`/`-shm`);
+it is recreated empty on the next start.
+
+Tests: `python -m unittest discover -s tests -t .` (from `backend/`, stdlib
+only, temp DB files; `tests/test_storage.py`). This replaces the earlier
+`db.py` store (`%LOCALAPPDATA%\UFOS.ai\data\globalmonitoring.sqlite`); that
+file is no longer read and can be deleted if it exists.

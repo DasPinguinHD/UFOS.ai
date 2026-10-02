@@ -94,20 +94,31 @@ class DerivedTest(unittest.TestCase):
         official = monthly([0.1] * 30 + [0.55])
         out = derived.compute(full, [], official)
         self.assertEqual(out["SAHM_RULE"][-1]["value"], 0.55)
-        m = derived.to_macro("SAHM_RULE", out["SAHM_RULE"])["macro"]
+        m = derived.to_macro("SAHM_RULE", out["SAHM_RULE"], formula=out.formulas.get("SAHM_RULE"))["macro"]
         self.assertEqual(m["signal"]["level"], "alert")
         self.assertIn("SAHMREALTIME", m["formula"])
 
     def test_sahm_fallback(self):
         out = derived.compute({"UNRATE": monthly([3.7] * 36 + [4.3] * 12)}, [], None)
-        m = derived.to_macro("SAHM_RULE", out["SAHM_RULE"])["macro"]
+        m = derived.to_macro("SAHM_RULE", out["SAHM_RULE"], formula=out.formulas.get("SAHM_RULE"))["macro"]
         self.assertIn("own calculation", m["formula"])
 
     def test_real_policy_rate_uses_core_pce(self):
         full = {"FEDFUNDS": monthly([4.33] * 48), "PCEPILFE": monthly([2.8] * 47), "CPIAUCSL": monthly([3.0] * 48)}
-        m = derived.to_macro("REAL_POLICY_RATE", derived.compute(full, [])["REAL_POLICY_RATE"])["macro"]
+        out = derived.compute(full, [])
+        m = derived.to_macro("REAL_POLICY_RATE", out["REAL_POLICY_RATE"], formula=out.formulas.get("REAL_POLICY_RATE"))["macro"]
         self.assertAlmostEqual(m["value"], 1.53)
         self.assertIn("core PCE", m["formula"])
+
+    def test_formula_does_not_depend_on_call_order(self):
+        # Regression (Copilot review 2026-09-25): the formula text used to live in a
+        # module-level dict, so whichever compute() call ran last decided it.
+        official = derived.compute({"UNRATE": monthly([4.0] * 48)}, [], monthly([0.1] * 30 + [0.2]))
+        fallback = derived.compute({"UNRATE": monthly([3.7] * 36 + [4.3] * 12)}, [], None)
+        m = derived.to_macro("SAHM_RULE", official["SAHM_RULE"], formula=official.formulas.get("SAHM_RULE"))["macro"]
+        self.assertIn("SAHMREALTIME", m["formula"])
+        self.assertNotIn("own calculation", m["formula"])
+        self.assertIn("own calculation", fallback.formulas["SAHM_RULE"])
 
     def test_curve_uninversion(self):
         curve = monthly([-0.8] * 14 + [-0.3] * 8 + [0.1, 0.3] * 7)
@@ -123,6 +134,65 @@ class DerivedTest(unittest.TestCase):
         quadrants = {p["quadrant"] for p in r["trail"]}
         self.assertLessEqual(len(quadrants), 2, quadrants)
         self.assertIn("smoothed", r["method"])
+
+
+class ExpandedRegimeTest(unittest.TestCase):
+    """Expanded map, second pass: episodes, history, component sparklines, asset table."""
+
+    def setUp(self):
+        n = 320  # 2000-01 .. 2026-08
+        self.pay = monthly([2.0 + (-6.0 if 110 <= i <= 113 else 0.0) + 0.01 * i for i in range(n)])
+        self.ind = monthly([1.0 + 0.5 * ((i // 18) % 2) for i in range(n)])
+        self.pce = monthly([2.0 + 0.3 * ((i // 30) % 3) for i in range(n)])
+        self.ext = derived.regime_extended({"PAYEMS": self.pay, "INDPRO": self.ind, "PCEPILFE": self.pce})
+
+    def test_history_matches_trail(self):
+        hist, trail = self.ext["history"], self.ext["trail_long"]
+        self.assertEqual(len(hist), len(trail))
+        self.assertEqual([h["quadrant"] for h in hist], [t["quadrant"] for t in trail])
+        self.assertTrue(all(set(h) == {"date", "quadrant"} for h in hist))
+
+    def test_episodes_only_for_months_in_data(self):
+        eps = self.ext["episodes"]
+        labels = [e["label"] for e in eps]
+        self.assertIn("GFC trough (Mar 2009)", labels)
+        self.assertIn("COVID shock (Apr 2020)", labels)
+        trail = {p["date"]: p for p in self.ext["trail_long"]}
+        for e in eps:
+            self.assertEqual((e["x"], e["y"], e["quadrant"]),
+                             (trail[e["date"]]["x"], trail[e["date"]]["y"], trail[e["date"]]["quadrant"]))
+        # A short history (from 2015) has no 2001/2005/2009 markers
+        short = derived.episodes([p for p in self.ext["trail_long"] if p["date"] >= "2015-01-01"])
+        self.assertEqual([e["date"] for e in short], ["2020-04-01", "2022-06-01"])
+
+    def test_component_series(self):
+        cs = self.ext["component_series"]
+        for key in ("payrolls_yoy", "indpro_yoy", "inflation_yoy", "growth_momentum", "inflation_momentum"):
+            self.assertEqual(len(cs[key]), derived.COMPONENT_SERIES_MONTHS, key)
+            self.assertEqual(cs[key][-1]["date"], "2026-08-01", key)
+        self.assertEqual(cs["inflation_name"], "core PCE")
+        # the momentum series are exactly the map's axes
+        last = self.ext["trail_long"][-1]
+        self.assertAlmostEqual(cs["growth_momentum"][-1]["value"], last["x"], places=2)
+        self.assertAlmostEqual(cs["inflation_momentum"][-1]["value"], last["y"], places=2)
+        cpi_only = derived.regime_extended({"PAYEMS": self.pay, "INDPRO": self.ind, "CPIAUCSL": self.pce})
+        self.assertEqual(cpi_only["component_series"]["inflation_name"], "CPI")
+
+    def test_asset_tendencies_table(self):
+        t = self.ext["asset_tendencies"]
+        self.assertEqual([r["quadrant"] for r in t["rows"]], ["goldilocks", "reflation", "stagflation", "slowdown"])
+        for r in t["rows"]:
+            self.assertEqual([c["asset"] for c in r["cells"]], t["columns"])
+            self.assertTrue(all(c["direction"] in ("up", "down", "mixed") for c in r["cells"]))
+        self.assertIn("not a forecast", t["disclaimer"])
+        self.assertIn("not investment advice", t["disclaimer"])
+
+    def test_missing_inputs_give_empty_fields(self):
+        ext = derived.regime_extended({})
+        self.assertEqual(ext["episodes"], [])
+        self.assertEqual(ext["history"], [])
+        self.assertEqual(ext["component_series"]["payrolls_yoy"], [])
+        self.assertEqual(ext["component_series"]["growth_momentum"], [])
 
 
 class ContextTest(unittest.TestCase):
@@ -141,41 +211,89 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(fred.history_context(monthly([1.0] * 10), 1.0), {})
 
 
-class PollTest(unittest.TestCase):
-    def test_full_poll_with_fake_api(self):
-        async def fake_series(session, sid, units, points_wanted=24, frequency=None):
-            base = {"T10Y2Y": 0.3, SAHM: -0.05}.get(sid, 3.0)
-            return monthly([base + 0.001 * i for i in range(points_wanted)], 2023)
+def reset_fred_cache():
+    fred._OBS.clear()
+    fred._LAST_FULL.clear()
+    fred._NEXT_RELEASE.clear()
+    fred._RELEASE_IDS.clear()
 
-        async def fake_long(session, sid, units):
-            return monthly([3.0 + 0.001 * i for i in range(320)])
+
+class PollTest(unittest.TestCase):
+    """One full FRED poll against a fake API (observations are served from
+    2000 on and filtered by observation_start, like FRED does)."""
+
+    def setUp(self):
+        reset_fred_cache()
+        self.calls = []
+        SAHM = fred.SAHM_SERIES
+
+        async def fake_obs(session, sid, units, start):
+            self.calls.append((sid, units, start))
+            fred._requests += 1
+            if sid == "USREC":
+                data = monthly([1.0 if 96 <= i <= 113 else 0.0 for i in range(320)])
+            else:
+                base = {"T10Y2Y": 0.3, SAHM: -0.05}.get(sid, 3.0)
+                data = monthly([base + 0.001 * i for i in range(320)])
+            return [p for p in data if p["date"] >= start]
+
+        async def fake_eurostat(session, since_month):
+            fred._requests += 1
+            return [p for p in monthly([1.0 + 0.01 * i for i in range(320)]) if p["date"][:7] >= since_month]
 
         async def fake_json(session, endpoint, params):
+            fred._requests += 1
             if endpoint == "series/release":
                 return {"releases": [{"id": hash(params["series_id"]) % 1000, "name": "Rel " + params["series_id"]}]}
             if endpoint == "releases/dates":
                 return {"release_dates": [{"release_id": rid, "date": "2099-01-15"} for rid, _ in fred._RELEASE_IDS.values()]}
             return {"release_dates": []}
 
-        SAHM = fred.SAHM_SERIES
-        fred._fetch_series, fred._fetch_long, fred._get_json = fake_series, fake_long, fake_json
+        fred._fetch_observations, fred._fetch_eurostat_ip, fred._get_json = fake_obs, fake_eurostat, fake_json
+
+    def tearDown(self):
+        reset_fred_cache()
+
+    def _poll(self):
         events, statuses = [], []
 
         async def status(ok, msg):
             statuses.append((ok, msg))
 
         asyncio.run(fred._poll_once(None, events.append, status))
-        latest = {e["id"]: e for e in events}
+        return {e["id"]: e for e in events}, statuses
+
+    def test_full_poll_with_fake_api(self):
+        latest, statuses = self._poll()
         self.assertTrue(statuses[-1][0], statuses)
         cpi = latest["macro-CPIAUCSL"]["macro"]
         self.assertEqual(len(cpi["long_history"]), 320)
+        self.assertEqual(len(cpi["history"]), fred.HISTORY_POINTS)
         self.assertIn("percentile", cpi["context"]["text"])
         self.assertEqual(cpi["next_release"]["date"], "2099-01-15")
         self.assertNotIn("next_release", latest["macro-VIXCLS"]["macro"])  # daily series
         self.assertEqual(latest["macro-ECBDFR"]["macro"]["group"], "europe")
         self.assertIn("macro-derived-SAHM_RULE", latest)
         self.assertTrue(latest["macro-derived-REAL_POLICY_RATE"]["macro"]["long_history"])
-        self.assertIn("macro-regime", latest)
+        reg = latest["macro-regime"]["macro"]["regime"]
+        self.assertIn("extended", reg)
+        self.assertEqual(reg["extended"]["recessions"], [{"start": "2008-01", "end": "2009-06"}])
+        self.assertIsNotNone(reg["extended"]["euro"])
+        self.assertTrue(reg["extended"]["history"])
+        self.assertEqual(len(reg["extended"]["component_series"]["payrolls_yoy"]), derived.COMPONENT_SERIES_MONTHS)
+        self.assertIn("asset_tendencies", reg["extended"])
+
+    def test_second_poll_is_incremental(self):
+        self._poll()
+        first = list(self.calls)
+        self.assertTrue(all(start == fred.LONG_HISTORY_START for _, _, start in first))
+        self.assertEqual(len(first), len(fred.fetch_specs()))
+        self.calls.clear()
+        self._poll()
+        # latest fake month 2026-08-01 minus 400 days
+        self.assertTrue(all(start == "2025-06-27" for _, _, start in self.calls), self.calls[:3])
+        # release ids are cached: the second poll only needs releases/dates once
+        self.assertEqual(fred._requests, len(fred.fetch_specs()) + 1 + 1)
 
 
 if __name__ == "__main__":

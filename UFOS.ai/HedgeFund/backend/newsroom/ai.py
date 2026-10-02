@@ -19,6 +19,19 @@ from config import OPENROUTER_API_KEY as _DEFAULT_API_KEY
 from config import OPENROUTER_BASE_URL as _DEFAULT_BASE_URL
 from config import OPENROUTER_MODEL as _DEFAULT_MODEL
 from config import OPENROUTER_ANALYSIS_PREMIUM_MODEL as _DEFAULT_PREMIUM_MODEL
+try:
+    from config import safe_openrouter_base_url as _config_safe_base_url
+except ImportError:  # pragma: no cover - a stubbed config (tests): same https rule, stdlib only
+    def _config_safe_base_url(value) -> str:
+        from urllib.parse import urlsplit
+        default = "https://openrouter.ai/api/v1"
+        text = str(value or "").strip()
+        try:
+            parts = urlsplit(text)
+            ok = parts.scheme.lower() == "https" and bool(parts.hostname)
+        except ValueError:
+            ok = False
+        return text if ok else default
 
 try:  # shared AI cost ledger (2026-09-25); ai.py is also loaded stand-alone by tests
     from newsroom import cost_ledger as _cost_ledger
@@ -56,11 +69,29 @@ def provenance(feature: str, model: str) -> dict:
     }
 
 
+_SAFE_BASE_URLS: dict = {}   # raw OPENROUTER_BASE_URL -> checked URL (warn once per value)
+
+
+def safe_base_url(raw) -> str:
+    """config.safe_openrouter_base_url() for a value re-read from .env: only
+    an https URL is used (the API key travels with every request), anything
+    else falls back to the default https URL. Memoised per raw value so a bad
+    setting is logged once, not on every call."""
+    key = str(raw or "")
+    if key not in _SAFE_BASE_URLS:
+        if len(_SAFE_BASE_URLS) > 16:
+            _SAFE_BASE_URLS.clear()
+        _SAFE_BASE_URLS[key] = _config_safe_base_url(raw)
+    return _SAFE_BASE_URLS[key]
+
+
 def _current_settings() -> tuple[str, str, str]:
+    """(api_key, base_url, model) re-read from .env; the base URL is always
+    the https-checked one (a later edit of .env cannot downgrade to http)."""
     load_dotenv(override=True)
     return (
         os.getenv("OPENROUTER_API_KEY", _DEFAULT_API_KEY),
-        os.getenv("OPENROUTER_BASE_URL", _DEFAULT_BASE_URL),
+        safe_base_url(os.getenv("OPENROUTER_BASE_URL", _DEFAULT_BASE_URL)),
         os.getenv("OPENROUTER_MODEL", _DEFAULT_MODEL),
     )
 

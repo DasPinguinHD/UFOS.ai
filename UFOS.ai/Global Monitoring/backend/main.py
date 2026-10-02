@@ -27,6 +27,17 @@ Architecture (see docs/global-monitoring-system-plan.md, Section 2/3):
                                  EU AI Act Art. 50) — the "Assess"/
                                  "Sentiment" button on a marker, via OpenRouter
                                  (see assess.py)
+
+Local SQLite storage (2026-09-25, storage.py + persistence.py, data/gms.db):
+cache first, then reconcile. At start, expired rows are pruned and the cached
+events are loaded into the EventStore BEFORE the collectors start, so a
+connecting frontend gets a snapshot at once; sources with cached events
+report "from cache (updated HH:MM) — refreshing…" until their first poll.
+Collectors then upsert by their stable event ids; every emitted event is
+stored (flights: every polled position, markets: price points), every
+removed one deleted; AI outputs are recorded; retention runs daily too.
+Requests (GET /events, a new WebSocket client) also wake collectors whose
+last poll is older than REFRESH_MIN_SECONDS (refresh.py).
 """
 import asyncio
 import json
@@ -42,8 +53,15 @@ from logging_setup import configure_logging
 configure_logging()
 
 import assess
+import localnews
+import persistence
+import refresh
+import storage
 from broadcast import Broadcaster
-from config import HEALTH_PORT
+import api_auth
+from config import HEALTH_PORT, HTTP_HOST, ASSESS_REUSE_SECONDS, REFRESH_MIN_SECONDS, DEFAULT_ALLOWED_ORIGINS
+
+API_ORIGINS = api_auth.allowed_origins(DEFAULT_ALLOWED_ORIGINS)
 from events import EventStore
 from logger import log_event
 from localnews import fetch_local_news, SUMMARY_MAX_RECORDS
@@ -89,34 +107,66 @@ COLLECTORS = {
     "yahoo": yahoo_collector,
 }
 
-CORS_HEADERS = {"Access-Control-Allow-Origin": "*"}
-# A POST with a JSON body (the Assess button, see /assess below) is not a
-# CORS "simple request" — Content-Type: application/json triggers a browser
-# preflight OPTIONS first, and if that preflight response doesn't explicitly
-# allow the method/headers, the browser blocks the real request before it
-# ever reaches this server. CORS_HEADERS alone (just Allow-Origin) was
-# enough for GET requests without custom headers (health/events/localnews),
-# which is why those worked while POST /assess silently failed even with a
-# valid OPENROUTER_API_KEY configured. This is what the preflight needs.
-PREFLIGHT_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Max-Age": "3600",
-}
+# CORS: no wildcard any more. api_auth.http_middleware adds
+# Access-Control-Allow-Origin (+ the preflight headers, incl. X-UFOS-Token)
+# only for the allowed page origin (the globe WebView), and answers OPTIONS
+# preflights itself. CORS_HEADERS stays as an (empty) name so the handlers
+# below didn't need touching.
+CORS_HEADERS: dict = {}
+
+
+DB_PRUNE_INTERVAL_SECONDS = 24 * 3600
 
 
 async def main() -> None:
+    # Fresh session token for this start (published to data/api-token after binding).
+    api_auth.init_token()
+    # --- Local SQLite storage: retention, then cache first (before any collector starts) ---
+    # Storage never raises: a corrupt file is moved aside, an unusable one
+    # falls back to an in-memory database.
+    db_store = storage.Storage()
+    pruned = persistence.apply_retention(db_store)
     store = EventStore()
-    broadcaster = Broadcaster()
-    source_status: dict[str, dict] = {
-        name: {"source": name, "ok": None, "message": "starting…", "timestamp": None} for name in COLLECTORS
-    }
+    cached_events = persistence.warm_start_events(db_store)
+    seeded = store.seed(cached_events)
+    localnews_loaded = localnews.attach_storage(db_store)
+    # Incremental news polling: articles already stored are skipped.
+    news_collector.is_known = lambda event_id: db_store.has_item("news", event_id)
+    logger.info("Local storage%s: pruned %s, restored %d event(s) and %d local news lookup(s)",
+                " (in-memory fallback)" if db_store.in_memory else "", pruned, seeded, localnews_loaded)
+
+    seeded_per_source: dict[str, int] = {}
+    for event in store.snapshot():
+        src = persistence.SOURCE_BY_CATEGORY.get(event.get("category"))
+        if src:
+            seeded_per_source[src] = seeded_per_source.get(src, 0) + 1
+    source_status: dict[str, dict] = {}
+    for name in COLLECTORS:
+        state = db_store.get_state(name) or {}
+        last_ok = storage.parse_iso(state.get("last_success_ts"))
+        last_try = storage.parse_iso(state.get("last_attempt_ts"))
+        if last_ok:
+            refresh.note_success(name, last_ok.timestamp())
+        if last_try:
+            refresh.note_attempt(name, max(last_try.timestamp(), last_ok.timestamp() if last_ok else 0.0))
+        source_status[name] = (persistence.cached_status(db_store, name, seeded_per_source.get(name, 0))
+                               or {"source": name, "ok": None, "message": "starting…", "timestamp": None})
+
+    broadcaster = Broadcaster(origins=API_ORIGINS)
+
+    def _refresh_stale_sources():
+        # Stale-while-revalidate: answer from memory now, wake stale collectors.
+        for name in COLLECTORS:
+            try:
+                refresh.request_refresh(name, REFRESH_MIN_SECONDS.get(name, 600))
+            except Exception as ex:
+                logger.warning("Refresh request for %s failed: %s", name, ex)
 
     async def _on_connect(ws):
         await broadcaster.send_to(ws, "snapshot", store.snapshot())
         for status in source_status.values():
             await broadcaster.send_to(ws, "source_status", status)
+        _refresh_stale_sources()
 
     broadcaster.on_connect = _on_connect
     await broadcaster.start()
@@ -129,8 +179,8 @@ async def main() -> None:
                                  headers=CORS_HEADERS)
 
     async def _shutdown(request):
-        # Loopback only: the HTTP API listens on 0.0.0.0, and nobody on the
-        # LAN should be able to stop it.
+        # Token-protected (api_auth) and additionally loopback only: even with
+        # ALLOW_REMOTE_ACCESS=true nobody on the LAN may stop it.
         if request.remote not in ("127.0.0.1", "::1"):
             return web.json_response({"error": "forbidden"}, status=403, headers=CORS_HEADERS)
         logger.warning("Shutdown requested by the app (backend code on disk is newer than this process).")
@@ -145,6 +195,7 @@ async def main() -> None:
         snapshot = store.snapshot()
         if category:
             snapshot = [e for e in snapshot if e.get("category") == category]
+        _refresh_stale_sources()
         return web.json_response(snapshot, headers=CORS_HEADERS)
 
     async def _localnews(request):
@@ -184,6 +235,26 @@ async def main() -> None:
         # assess_context.py) instead of only the one-line teaser.
         snapshot = store.snapshot()
         event = next((e for e in snapshot if e.get("id") == body.get("id")), None)
+
+        # 2026-09-25: the same marker assessed again within ASSESS_REUSE_SECONDS
+        # gets the stored result (clearly flagged "cached": true, original
+        # provenance/time kept, no new cost) instead of another paid call.
+        cache_key = f"assess:{event['id']}" if event is not None else None
+        if cache_key and ASSESS_REUSE_SECONDS > 0:
+            cached = persistence.find_recent_ai_output(db_store, "assess", cache_key, ASSESS_REUSE_SECONDS)
+            if cached and cached.get("output_text") and isinstance(cached.get("provenance"), dict):
+                generated_at = str(cached["provenance"].get("generated_at") or cached["ts"])
+                earlier_context = list((cached.get("input") or {}).get("context_used") or [])
+                logger.info("Assess request for %r answered from the stored result of %s", title, generated_at)
+                return web.json_response({
+                    "assessment": cached["output_text"],
+                    "provenance": cached["provenance"],
+                    "context_used": [f"cached result from {generated_at[11:16]} UTC (no new AI call)"] + earlier_context,
+                    "usage": {"cost_usd": 0.0, "prompt_tokens": 0, "completion_tokens": 0},
+                    "cached": True,
+                    "cached_at": cached["ts"],
+                }, headers=CORS_HEADERS)
+
         context, context_used = "", []
         if event is not None:
             source = event.get("source") or source
@@ -201,9 +272,13 @@ async def main() -> None:
                 return web.json_response({"error": "The model returned an empty response."}, status=502, headers=CORS_HEADERS)
             logger.info("Assess request succeeded for %r (model=%s)", title, model)
             # "provenance" = machine-readable AI marking (EU AI Act Art. 50), see assess.provenance().
+            prov = assess.provenance("assess", model)
+            db_store.save_ai_output("assess", model, text, provenance=prov, usage=usage, input_data={
+                "summary": f"[{category}] {title} (id={body.get('id')})", "cache_key": cache_key,
+                "event_id": body.get("id"), "context_used": context_used})
             return web.json_response(
-                {"assessment": text, "provenance": assess.provenance("assess", model), "context_used": context_used,
-                 "usage": usage},  # usage = assess.usage_info(): cost_usd/prompt_tokens/completion_tokens
+                {"assessment": text, "provenance": prov, "context_used": context_used,
+                 "usage": usage, "cached": False},  # usage = assess.usage_info(): cost_usd/prompt_tokens/completion_tokens
                 headers=CORS_HEADERS,
             )
         except Exception as ex:
@@ -240,9 +315,13 @@ async def main() -> None:
             text, model, usage = await assess.summarize_local_news(city, country, articles)
             if not text:
                 return web.json_response({"error": "The model returned an empty response."}, status=502, headers=CORS_HEADERS)
+            prov = assess.provenance("localnews-summary", model)
+            db_store.save_ai_output("localnews-summary", model, text, provenance=prov, usage=usage, input_data={
+                "summary": f"{city}, {country}: {len(articles)} headlines", "city": city, "country": country,
+                "headlines": len(articles)})
             return web.json_response({
                 "summary": text,
-                "provenance": assess.provenance("localnews-summary", model),
+                "provenance": prov,
                 "headlines": len(articles),
                 "usage": usage,  # assess.usage_info(): cost_usd/prompt_tokens/completion_tokens
             }, headers=CORS_HEADERS)
@@ -250,10 +329,7 @@ async def main() -> None:
             logger.warning("Local news summary failed for %s: %s", city, ex)
             return web.json_response({"error": str(ex)}, status=502, headers=CORS_HEADERS)
 
-    async def _options(request):
-        return web.Response(headers=PREFLIGHT_HEADERS)
-
-    health_app = web.Application()
+    health_app = web.Application(middlewares=[api_auth.http_middleware(API_ORIGINS)])
     health_app.router.add_get("/health", _health)
     health_app.router.add_get("/version", _version)
     health_app.router.add_post("/shutdown", _shutdown)
@@ -261,7 +337,8 @@ async def main() -> None:
     health_app.router.add_get("/localnews", _localnews)
     health_app.router.add_post("/assess", _assess)
     health_app.router.add_post("/localnews-summary", _localnews_summary)
-    health_app.router.add_route("OPTIONS", "/{tail:.*}", _options)
+    # OPTIONS preflights are answered by the api_auth middleware; this route only makes them routable.
+    health_app.router.add_route("OPTIONS", "/{tail:.*}", lambda request: web.Response())
     # access_log_class default already logs one line per request (method,
     # path, status, timing) — explicitly naming the logger here just makes
     # sure it's the same "aiohttp.access" logger configure_logging() already
@@ -270,9 +347,11 @@ async def main() -> None:
     # too, not just the console.
     health_runner = web.AppRunner(health_app, access_log=logging.getLogger("aiohttp.access"))
     await health_runner.setup()
-    health_site = web.TCPSite(health_runner, "0.0.0.0", HEALTH_PORT)
+    health_site = web.TCPSite(health_runner, api_auth.bind_host(HTTP_HOST, "HTTP API"), HEALTH_PORT)
     await health_site.start()
-    logger.info("HTTP API listening on http://127.0.0.1:%s (/health, /events, /localnews, /assess, /localnews-summary)", HEALTH_PORT)
+    api_auth.publish_token()  # only now: the port is ours (see api_auth.init_token)
+    logger.info("HTTP API listening on %s (/health, /events, /localnews, /assess, /localnews-summary; "
+                "token required except /health, /version)", health_site.name)
 
     # --- Collectors ---
     def make_emit(name):
@@ -280,12 +359,25 @@ async def main() -> None:
             if store.add(event):
                 log_event("event", event)
                 asyncio.create_task(broadcaster.broadcast("event", event))
+                persistence.record_event(db_store, event)
+            elif event.get("category") == "flight" or store.contains(event["id"]):
+                # Known and still shown: refresh the stored copy (latest
+                # quote/last-seen time; flights: every polled position is a
+                # track point). Pruned ids are skipped so an ended alert
+                # doesn't come back after a restart.
+                persistence.record_event(db_store, event)
         return emit
 
     def make_report_status(name):
         async def report_status(ok: bool, message: str):
             status = {"source": name, "ok": ok, "message": message, "timestamp": store_now()}
             source_status[name] = status
+            refresh.note_attempt(name)
+            if ok:
+                refresh.note_success(name)
+                db_store.mark_success(name, status=status)
+            else:
+                db_store.mark_attempt(name, status=status)
             log_event("source_status", status)
             await broadcaster.broadcast("source_status", status)
         return report_status
@@ -309,16 +401,30 @@ async def main() -> None:
             removed = store.prune(lambda e: e.get("category") == "disaster" and _disaster_is_past(e))
             if removed:
                 logger.info("Pruned %d past disaster alert(s)", len(removed))
+                persistence.forget_events(db_store, removed)
                 await broadcaster.broadcast("remove", removed)
 
     tasks.append(asyncio.create_task(_prune_past_disasters_forever()))
 
-    logger.info("Started %d collector(s): %s", len(tasks) - 1, ", ".join(COLLECTORS.keys()))
+    async def _prune_local_store_daily():
+        # Retention while running (the startup run covers restarts), see
+        # persistence.apply_retention() / config.py.
+        while True:
+            await asyncio.sleep(DB_PRUNE_INTERVAL_SECONDS)
+            try:
+                logger.info("Local storage daily retention: %s", persistence.apply_retention(db_store))
+            except Exception as ex:
+                logger.warning("Local storage daily retention failed: %s", ex)
+
+    tasks.append(asyncio.create_task(_prune_local_store_daily()))
+
+    logger.info("Started %d collector(s): %s", len(COLLECTORS), ", ".join(COLLECTORS.keys()))
 
     try:
         await asyncio.gather(*tasks)
     finally:
         await localnews_session.close()
+        db_store.close()
 
 
 async def _run_collector_forever(name, module, emit, report_status) -> None:

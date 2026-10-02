@@ -8,8 +8,9 @@
         Loaded="Window_Loaded"
         Closing="Window_Closing"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
-        WindowStartupLocation="CenterScreen">
-    <Border Background="{StaticResource WindowBackgroundBrush}" CornerRadius="8" Padding="0" SnapsToDevicePixels="True">
+        WindowStartupLocation="CenterScreen"
+        StateChanged="Window_StateChanged">
+    <Border x:Name="RootBorder" Background="{StaticResource WindowBackgroundBrush}" CornerRadius="8" Padding="0" SnapsToDevicePixels="True">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -17,7 +18,8 @@
             </Grid.RowDefinitions>
 
             <!-- ===================== Titlebar (existing chrome, unchanged) ===================== -->
-            <Border Grid.Row="0" Background="{StaticResource TitleBarBackgroundBrush}" CornerRadius="8,8,0,0" Height="18" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+            <Border x:Name="TitleBarBorder" Grid.Row="0" Background="{StaticResource TitleBarBackgroundBrush}" CornerRadius="8,8,0,0" Height="18" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
+                    MouseMove="TitleBar_MouseMove" MouseLeftButtonUp="TitleBar_MouseLeftButtonUp">
                 <Grid>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="10,0,0,0">
                         <Ellipse Width="5" Height="5" Fill="{StaticResource AccentBlueBrush}" VerticalAlignment="Center" />
@@ -105,6 +107,16 @@
                         </Grid>
                         <TextBlock Text="Module control center" Margin="0,4,0,0" FontSize="14" Foreground="{StaticResource SecondaryForegroundBrush}" />
                         <TextBlock x:Name="ClockText" Margin="0,4,0,0" FontSize="11" FontFamily="Consolas" Foreground="{StaticResource MutedForegroundBrush}" />
+                        <!-- One-time preparation of the module backends' Python environments at app start
+                             (Shared/PythonEnvironment.cs): spinner while busy, "ready" fades out after ~4 s,
+                             a failure stays visible and opens the Backend Log on click. -->
+                        <StackPanel x:Name="PythonEnvBanner" Orientation="Horizontal" Margin="0,4,0,0" Visibility="Collapsed"
+                                    Background="Transparent" MouseLeftButtonUp="PythonEnvBanner_MouseLeftButtonUp">
+                            <TextBlock x:Name="PythonEnvBannerIcon" Width="14" FontSize="11" FontFamily="Consolas"
+                                       Foreground="{StaticResource AccentAmberBrush}" VerticalAlignment="Center" />
+                            <TextBlock x:Name="PythonEnvBannerText" FontSize="11" FontFamily="Consolas" VerticalAlignment="Center"
+                                       Foreground="{StaticResource MutedForegroundBrush}" TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
                     </StackPanel>
 
                     <Grid Grid.Column="1" VerticalAlignment="Top">
@@ -126,6 +138,12 @@
                                 </ControlTemplate>
                             </Button.Template>
                         </Button>
+
+                        <!-- Pending Python package work (required install or optional updates) -
+                             details in the Settings popup ("Python packages"). -->
+                        <Ellipse x:Name="SettingsUpdateDot" Width="7" Height="7" Fill="{StaticResource AccentAmberBrush}"
+                                 HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,5,5,0"
+                                 IsHitTestVisible="False" Visibility="Collapsed" />
 
                         <Popup x:Name="SettingsPopup" PlacementTarget="{Binding ElementName=SettingsButton}" Placement="Bottom"
                                HorizontalOffset="-242" VerticalOffset="8" StaysOpen="True" AllowsTransparency="True">
@@ -184,6 +202,30 @@
                                                Foreground="{StaticResource AiAccentBrush}" Margin="0,0,0,12"
                                                ToolTip="Show the notice on AI-generated content and financial data again"
                                                MouseLeftButtonDown="AiNoticeLink_MouseLeftButtonDown" />
+
+                                    <!-- Python environments of the module backends (Services/PythonEnvManager.cs).
+                                         Required installs happen automatically when a module starts its backend;
+                                         optional upgrades only via this button. -->
+                                    <Border BorderBrush="{StaticResource SubtleBorderBrush}" BorderThickness="0,1,0,0" Padding="0,10,0,0" Margin="0,0,0,12">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Python packages" Foreground="{StaticResource SecondaryForegroundBrush}" FontSize="12" VerticalAlignment="Center" />
+                                                <TextBlock x:Name="PythonEnvSummaryText" Text="checking…" Foreground="{StaticResource MutedForegroundBrush}"
+                                                           FontSize="11" FontFamily="Consolas" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                            </Grid>
+                                            <StackPanel x:Name="PythonEnvModuleList" />
+                                            <Button x:Name="UpdatePythonPackagesButton" Click="UpdatePythonPackagesButton_Click"
+                                                    Template="{StaticResource RoundedDarkButtonTemplate}" Padding="10,5" Margin="0,6,0,0"
+                                                    Background="{StaticResource ControlBackgroundBrush}" BorderBrush="{StaticResource ControlBorderBrush}"
+                                                    BorderThickness="1" Cursor="Hand"
+                                                    ToolTip="Runs pip install -r requirements.txt --upgrade for every module backend, one after another. Running backends are stopped first; each module starts its backend again the next time it needs it.">
+                                                <TextBlock x:Name="UpdatePythonPackagesButtonText" Text="Update Python packages" FontSize="11.5"
+                                                           Foreground="{StaticResource PrimaryForegroundBrush}" />
+                                            </Button>
+                                            <TextBlock x:Name="PythonEnvResultText" FontSize="10.5" Foreground="{StaticResource MutedForegroundBrush}"
+                                                       TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed" />
+                                        </StackPanel>
+                                    </Border>
 
                                     <Border BorderBrush="{StaticResource SubtleBorderBrush}" BorderThickness="0,1,0,0" Padding="0,10,0,0">
                                         <Grid>

@@ -126,6 +126,14 @@ object are attached to any LLM-produced text. See
 3. Run the host application (`UFOS.ai`). Module windows start and stop
    their own backend process automatically when opened and closed.
 
+**Python packages:** each backend's `run_*.ps1` creates its `.venv` and
+installs `requirements.txt` automatically, but only when required (first
+start, `requirements.txt` changed, or an interrupted install) — normal starts
+don't touch pip. Optional upgrades are manual: Settings (gear) → "Update
+Python packages". The app checks offline at startup and, at most once a day
+in the background, with `pip list --outdated`; a small amber dot on the gear
+means something is pending. Log: `%LOCALAPPDATA%\UFOS.ai\python-env\update.log`.
+
 ## Repository layout
 
 | Path | Purpose |

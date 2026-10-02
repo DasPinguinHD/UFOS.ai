@@ -13,7 +13,12 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324
 
 YOUTUBE_URL = os.getenv("YOUTUBE_URL", "")
 
-WS_HOST = os.getenv("WS_HOST", "0.0.0.0")
+# Loopback by default; another host only takes effect with ALLOW_REMOTE_ACCESS=true
+# (api_auth.bind_host). Security-by-default rule, CLAUDE.md.
+WS_HOST = os.getenv("WS_HOST", "127.0.0.1")
+HTTP_HOST = os.getenv("HTTP_HOST", "127.0.0.1")
+# No browser page calls this backend — only the WPF app (no Origin header).
+DEFAULT_ALLOWED_ORIGINS = ()
 WS_PORT = int(os.getenv("WS_PORT", "8765"))
 
 MARKET_DATA_POLL_SECONDS = int(os.getenv("MARKET_DATA_POLL_SECONDS", "15"))

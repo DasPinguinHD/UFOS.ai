@@ -148,6 +148,59 @@
   var BACKEND_WS_URL = 'ws://127.0.0.1:8767';
   var BACKEND_HTTP_URL = 'http://127.0.0.1:8768';
 
+  // API session token (security-by-default rule, CLAUDE.md; backend/api_auth.py).
+  // The backend requires it on every call except /health and /version and on
+  // the WebSocket. It changes on every backend start; the WPF host reads it
+  // from backend/data/api-token and hands it to this page on request.
+  var API_TOKEN_HEADER = 'X-UFOS-Token';
+  var apiToken = '';
+  var tokenWaiters = [];
+  function flushTokenWaiters() {
+    var waiting = tokenWaiters;
+    tokenWaiters = [];
+    waiting.forEach(function (fn) { try { fn(); } catch (e) {} });
+  }
+  function requestApiToken(callback) {
+    if (callback) tokenWaiters.push(callback);
+    if (window.chrome && window.chrome.webview) {
+      try { window.chrome.webview.postMessage(JSON.stringify({ type: 'getApiToken' })); } catch (e) {}
+    }
+    // Host didn't answer (e.g. token file not written yet): carry on — the
+    // call gets a 401 / the socket closes, and the next attempt asks again.
+    setTimeout(flushTokenWaiters, 1500);
+  }
+  if (window.chrome && window.chrome.webview) {
+    window.chrome.webview.addEventListener('message', function (ev) {
+      var data = ev.data;
+      if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { return; } }
+      if (data && data.type === 'apiToken') {
+        apiToken = data.token || '';
+        flushTokenWaiters();
+      }
+    });
+  }
+  // fetch() against the backend with the token; one retry with a fresh token on 401.
+  function apiFetch(path, options) {
+    function attempt(retry) {
+      var opts = Object.assign({}, options || {});
+      var headers = Object.assign({}, (options && options.headers) || {});
+      headers[API_TOKEN_HEADER] = apiToken;
+      opts.headers = headers;
+      return fetch(BACKEND_HTTP_URL + path, opts).then(function (res) {
+        if (res.status === 401 && retry) {
+          return new Promise(function (resolve) { requestApiToken(resolve); })
+            .then(function () { return attempt(false); });
+        }
+        return res;
+      });
+    }
+    if (!apiToken) {
+      return new Promise(function (resolve) { requestApiToken(resolve); })
+        .then(function () { return attempt(true); });
+    }
+    return attempt(true);
+  }
+
   // Live event store, replacing the old hardcoded placeholder array. Keyed
   // by event id; rebuilt into the flat `rawMarkers` list (still used by the
   // renderer/sidebar below) whenever it changes.
@@ -231,8 +284,16 @@
   var wsConnected = false;
 
   function connectBackendWs() {
+    // Ask the host for the current token first (the backend may have restarted).
+    requestApiToken(openBackendWs);
+  }
+
+  function openBackendWs() {
     var ws;
-    try { ws = new WebSocket(BACKEND_WS_URL); } catch (err) { scheduleReconnect(); return; }
+    // Browsers can't set headers on a WebSocket, so the token goes in the query
+    // (the backend never logs it).
+    try { ws = new WebSocket(BACKEND_WS_URL + '/?token=' + encodeURIComponent(apiToken)); }
+    catch (err) { scheduleReconnect(); return; }
 
     ws.onopen = function () { wsConnected = true; renderLeftSidebar(); };
     ws.onclose = function () { wsConnected = false; renderLeftSidebar(); scheduleReconnect(); };
@@ -478,10 +539,10 @@
   function fetchLocalNews(city) {
     state.cityNews = { status: 'loading' };
     renderRightSidebar();
-    var url = BACKEND_HTTP_URL + '/localnews?city=' + encodeURIComponent(city.name) +
+    var path = '/localnews?city=' + encodeURIComponent(city.name) +
       '&country=' + encodeURIComponent(city.country) +
       '&lat=' + city.lat + '&lon=' + city.lon;
-    fetch(url)
+    apiFetch(path)
       .then(function (res) {
         // The backend answered — even a 502 means it's up and reachable; the
         // JSON body's "error" field (e.g. "No recent coverage found...")
@@ -817,7 +878,7 @@
     state.aiResults[marker.id] = { status: 'loading' };
     renderRightSidebar();
 
-    fetch(BACKEND_HTTP_URL + '/assess', {
+    apiFetch('/assess', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -874,7 +935,7 @@
     if (!city) return;
     state.citySummaries[city.id] = { status: 'loading' };
     renderRightSidebar();
-    fetch(BACKEND_HTTP_URL + '/localnews-summary', {
+    apiFetch('/localnews-summary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ city: city.name, country: city.country })
@@ -939,7 +1000,7 @@
           var sum = state.citySummaries[city.id];
           if (sum) {
             if (sum.status === 'loading') {
-              html += '<div class="ai-result" data-ai-generated="true" role="status" aria-live="polite"><span class="label">✦ AI is analysing…</span>Asking the language model (OpenRouter)…</div>';
+              html += '<div class="ai-result" data-ai-generated="true" role="status" aria-live="polite" aria-label="AI-generated analysis, loading"><span class="label">✦ AI-generated · analysing…</span>Asking the language model (OpenRouter)…</div>';
             } else if (sum.status === 'error') {
               html += '<div class="ai-result" role="status"><span class="label">✦ AI analysis unavailable</span>' + escapeHtml(sum.error) + '</div>';
             } else {
@@ -991,7 +1052,7 @@
       var aiResult = state.aiResults[selected.id];
       if (aiResult) {
         if (aiResult.status === 'loading') {
-          html += '<div class="ai-result" data-ai-generated="true" role="status" aria-live="polite"><span class="label">✦ AI is analysing…</span>Asking the language model (OpenRouter)…</div>';
+          html += '<div class="ai-result" data-ai-generated="true" role="status" aria-live="polite" aria-label="AI-generated analysis, loading"><span class="label">✦ AI-generated · analysing…</span>Asking the language model (OpenRouter)…</div>';
         } else if (aiResult.status === 'error') {
           html += '<div class="ai-result" role="status"><span class="label">✦ AI assessment unavailable</span>' + escapeHtml(aiResult.error) + '</div>';
         } else {

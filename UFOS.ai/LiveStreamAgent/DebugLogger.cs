@@ -30,7 +30,9 @@ namespace UFOS.ai
                 var bytes = Encoding.UTF8.GetBytes(data);
                 using var fs = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
                 fs.Write(bytes, 0, bytes.Length);
-                fs.Flush(true);
+                // No Flush(true) (fsync) per line any more — it made every debug line a
+                // synchronous disk write. Disposing the stream hands the data to the OS.
+                // Errors are made durable by AppLog (Copilot review, 2026-09-25).
             }
             catch
             {

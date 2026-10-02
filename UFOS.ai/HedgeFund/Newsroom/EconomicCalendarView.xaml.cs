@@ -88,7 +88,7 @@ namespace UFOS.ai.HedgeFund.Newsroom
 
             try
             {
-                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                using var client = NewsroomBackend.CreateClient(TimeSpan.FromSeconds(10));
                 using var doc = JsonDocument.Parse(await client.GetStringAsync(ItemsUrl));
                 var root = doc.RootElement;
 

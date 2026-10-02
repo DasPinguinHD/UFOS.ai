@@ -1,7 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
 	<OutputType>WinExe</OutputType>
-	<TargetFramework>net10.0-windows</TargetFramework>
+	<!-- Windows SDK TFM (2026-09-26): required by Microsoft.Toolkit.Uwp.Notifications (Windows toasts
+	     for the paper-trading engine's events, Fund/FundNotifications.cs). The root UFOS.ai.csproj
+	     references this project and therefore uses the same TFM. -->
+	<TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
 	<Nullable>enable</Nullable>
 	<ImplicitUsings>enable</ImplicitUsings>
 	<UseWPF>true</UseWPF>
@@ -14,6 +17,11 @@
          Linked, not referenced: the types are internal, each assembly gets its own copy.
          See ..\Shared\AiContent.cs. -->
     <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Windows toast notifications (flip / autopilot order / halt / margin call), Fund/FundNotifications.cs. -->
+    <PackageReference Include="Microsoft.Toolkit.Uwp.Notifications" Version="7.1.3" />
   </ItemGroup>
 
   <ItemGroup>

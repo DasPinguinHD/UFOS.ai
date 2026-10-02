@@ -2,7 +2,9 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Windows SDK TFM (2026-09-26): the referenced HedgeFund module (MultiAgentHedgeFund.csproj)
+         targets net10.0-windows10.0.19041.0 for Windows toasts; a lower-TFM project can't reference it. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>

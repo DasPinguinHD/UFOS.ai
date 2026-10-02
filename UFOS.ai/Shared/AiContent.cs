@@ -30,8 +30,15 @@ namespace UFOS.ai.Shared
         public const string Caveat =
             "Automated AI analysis — may be inaccurate or incomplete. Not investment advice. Verify independently.";
 
-        /// <summary>Badge text while the model is still working (first exposure is labelled too).</summary>
-        public const string LoadingBadge = Glyph + " AI IS ANALYSING…";
+        /// <summary>
+        /// Badge text while the model is still working — already says "AI-GENERATED", so the
+        /// first exposure carries the same label as the result (EU AI Act Art. 50(5)).
+        /// </summary>
+        public const string LoadingBadge = Glyph + " AI-GENERATED · ANALYSING…";
+
+        /// <summary>Screen-reader text while an AI output is loading, e.g. "AI-generated summary, loading".</summary>
+        public static string LoadingAutomationName(string what) =>
+            "AI-generated " + (string.IsNullOrWhiteSpace(what) ? "content" : what.Trim()) + ", loading";
 
         /// <summary>Badge shown when an AI request failed (so an error is never mistaken for a result).</summary>
         public const string UnavailableBadge = Glyph + " AI ANALYSIS UNAVAILABLE";

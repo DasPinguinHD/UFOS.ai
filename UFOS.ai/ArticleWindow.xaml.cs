@@ -40,8 +40,14 @@ namespace UFOS.ai
             AutomationProperties.SetHelpText(SummarizeButton, AiContent.TriggerTooltip);
             ArticleMetaText.Text = $"{headline.Source} · {headline.PublishedAt:MMM d, HH:mm}";
 
-            if (string.IsNullOrWhiteSpace(headline.Link))
+            // The link comes from a third-party RSS feed: only http(s) is ever loaded or
+            // opened (a file:, javascript: or custom-protocol link could otherwise run local
+            // programs via ShellExecute or script in the WebView). Security-by-default rule.
+            var webLink = TryGetWebUri(headline.Link);
+            if (webLink == null)
             {
+                if (!string.IsNullOrWhiteSpace(headline.Link))
+                    AppLog.Warn("ArticleWindow", "Ignored a non-http(s) article link from the feed: " + headline.Link);
                 OpenLinkText.Visibility = Visibility.Collapsed;
                 LoadingOverlay.Visibility = Visibility.Collapsed;
                 ShowFallbackText(string.IsNullOrWhiteSpace(headline.Summary)
@@ -50,7 +56,7 @@ namespace UFOS.ai
                 return;
             }
 
-            _ = InitializeWebViewAsync(headline.Link);
+            _ = InitializeWebViewAsync(webLink.AbsoluteUri);
         }
 
         private async System.Threading.Tasks.Task InitializeWebViewAsync(string link)
@@ -75,6 +81,22 @@ namespace UFOS.ai
                             ? "Could not load the article."
                             : _headline.Summary);
                     }
+                };
+
+                // Redirects / clicks inside the article: stay on http(s) only; pop-ups
+                // (target=_blank) open in the default browser instead of a bare WebView window.
+                ArticleWebView.CoreWebView2.NavigationStarting += (_, args) =>
+                {
+                    if (TryGetWebUri(args.Uri) == null)
+                    {
+                        args.Cancel = true;
+                        AppLog.Warn("ArticleWindow", "Blocked navigation to a non-http(s) URL: " + args.Uri);
+                    }
+                };
+                ArticleWebView.CoreWebView2.NewWindowRequested += (_, args) =>
+                {
+                    args.Handled = true;
+                    OpenInDefaultBrowser(args.Uri);
                 };
 
                 ArticleWebView.CoreWebView2.Navigate(link);
@@ -104,7 +126,7 @@ namespace UFOS.ai
         {
             SetAiPresentation(AiContent.LoadingBadge, caveat: false);
             SummaryText.Text = "Reading the article and asking the language model…";
-            AutomationProperties.SetName(SummaryText, "AI summary is being generated");
+            AutomationProperties.SetName(SummaryText, AiContent.LoadingAutomationName("summary"));
             SummaryPanel.Visibility = Visibility.Visible;
         }
 
@@ -155,12 +177,64 @@ namespace UFOS.ai
             SummaryPanel.BorderBrush = isAi ? TryFindResource("AiAccentBrush") as Brush : null;
         }
 
+        // Title bar (borderless window, conventions "Borderless windows"): no maximize button;
+        // dragging a MAXIMIZED window restores it only once the mouse actually moves
+        // with the button held (a plain click does nothing), keeps the cursor at its
+        // relative spot on the title bar, then drags. Same pattern as
+        // HedgeFund/HedgeFundWindow.xaml.cs (TitleBar_MouseMove).
+        private bool _restoreOnDrag;
+        private System.Windows.Point _restoreDragStart;
+
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if (e.LeftButton == MouseButtonState.Pressed)
+            if (e.LeftButton != MouseButtonState.Pressed) return;
+            if (WindowState == WindowState.Maximized)
             {
-                try { DragMove(); } catch { }
+                _restoreOnDrag = true;
+                _restoreDragStart = e.GetPosition(this);
+                ((UIElement)sender).CaptureMouse();
+                return;
             }
+            try { DragMove(); } catch { }
+        }
+
+        private void TitleBar_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_restoreOnDrag || e.LeftButton != MouseButtonState.Pressed) return;
+            var pos = e.GetPosition(this);
+            if (Math.Abs(pos.X - _restoreDragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(pos.Y - _restoreDragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+            _restoreOnDrag = false;
+            ((UIElement)sender).ReleaseMouseCapture();
+
+            var ratioX = ActualWidth > 0 ? pos.X / ActualWidth : 0.5;
+            var restoreWidth = RestoreBounds.Width;
+            // Cursor position in screen DIPs (PointToScreen returns device pixels).
+            var toDip = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice
+                        ?? System.Windows.Media.Matrix.Identity;
+            var cursor = toDip.Transform(PointToScreen(pos));
+
+            WindowState = WindowState.Normal;
+            Left = cursor.X - restoreWidth * ratioX;
+            Top = cursor.Y - 9; // middle of the 18 px title bar
+            try { DragMove(); } catch { }
+        }
+
+        private void TitleBar_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_restoreOnDrag) return;
+            _restoreOnDrag = false;
+            ((UIElement)sender).ReleaseMouseCapture();
+        }
+
+        // Maximized: square corners. A transparent (AllowsTransparency) window has no invisible resize frame
+        // hanging off the screen, so no extra padding is needed.
+        private void Window_StateChanged(object? sender, EventArgs e)
+        {
+            var maximized = WindowState == WindowState.Maximized;
+            RootBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(8);
+            TitleBarBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(8, 8, 0, 0);
         }
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)
@@ -170,14 +244,29 @@ namespace UFOS.ai
 
         private void OpenLinkText_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(_headline.Link))
+            OpenInDefaultBrowser(_headline.Link);
+        }
+
+        /// <summary>The URL as an absolute http/https URI, or null for anything else (file:, javascript:, custom protocols, junk).</summary>
+        private static Uri? TryGetWebUri(string? url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return null;
+            if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)) return null;
+            return uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps ? uri : null;
+        }
+
+        /// <summary>Opens an http(s) link in the default browser; refuses (and logs) anything else.</summary>
+        private static void OpenInDefaultBrowser(string? url)
+        {
+            var uri = TryGetWebUri(url);
+            if (uri == null)
             {
+                if (!string.IsNullOrWhiteSpace(url)) AppLog.Warn("ArticleWindow", "Refused to open a non-http(s) link: " + url);
                 return;
             }
-
             try
             {
-                Process.Start(new ProcessStartInfo(_headline.Link) { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true });
             }
             catch (Exception ex)
             {

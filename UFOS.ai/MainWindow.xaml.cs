@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Globalization;
 using System.Net.Http;
 using System.Runtime.InteropServices;
@@ -189,10 +191,26 @@ namespace UFOS.ai
             _overviewRefreshTimer.Tick += (_, __) => _ = RefreshOverviewCardsAsync();
             _overviewRefreshTimer.Start();
             _ = RefreshOverviewCardsAsync();
+
+            // Prepare the module backends' Python environments once, in the background
+            // (Shared/PythonEnvironment.cs): create missing venvs, pip install only when a
+            // requirements.txt changed. Module launchers wait for it before starting a backend.
+            PythonEnvironment.StateChanged += OnPythonEnvironmentStateChanged;
+            PythonEnvironment.StartAppPreparation();
+            RenderPythonEnvBanner();
+
+            // Python packages of the module backends: fast offline check now, online
+            // "pip list --outdated" in the background at most once a day.
+            PythonEnvManager.Changed += OnPythonEnvChanged;
+            RenderPythonEnvStatus();
+            _ = InitPythonEnvAsync();
         }
 
         private void Window_Closing(object? sender, CancelEventArgs e)
         {
+            PythonEnvManager.Changed -= OnPythonEnvChanged;
+            PythonEnvironment.StateChanged -= OnPythonEnvironmentStateChanged;
+            _pythonEnvSpinnerTimer?.Stop();
             _clockTimer?.Stop();
             _settingsCloseTimer?.Stop();
             _launchCaptionTimer?.Stop();
@@ -333,38 +351,73 @@ namespace UFOS.ai
             }
         }
 
-        // ===================== Window chrome (unchanged behavior) =====================
+        // ===================== Window chrome =====================
+
+        // Title bar (borderless window, conventions "Borderless windows"): double-click toggles maximize;
+        // dragging a MAXIMIZED window restores it only once the mouse actually moves
+        // with the button held (a plain click does nothing), keeps the cursor at its
+        // relative spot on the title bar, then drags. Same pattern as
+        // HedgeFund/HedgeFundWindow.xaml.cs (TitleBar_MouseMove).
+        private bool _restoreOnDrag;
+        private System.Windows.Point _restoreDragStart;
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
+            if (e.LeftButton != MouseButtonState.Pressed) return;
             if (e.ClickCount == 2)
             {
+                _restoreOnDrag = false;
                 WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
                 return;
             }
-
-            if (e.LeftButton != MouseButtonState.Pressed)
-            {
-                return;
-            }
-
             if (WindowState == WindowState.Maximized)
             {
-                // A plain DragMove() on an already-maximized borderless window doesn't
-                // restore it first (unlike a native title bar), so dragging did nothing
-                // and the window was effectively stuck full-screen. Restore it under the
-                // cursor first, then let the drag continue normally.
-                var cursorScreenPos = PointToScreen(e.GetPosition(this));
-                var mouseRatioX = e.GetPosition(this).X / Math.Max(1, ActualWidth);
-                var restoreBounds = RestoreBounds;
-
-                WindowState = WindowState.Normal;
-
-                Left = cursorScreenPos.X - (restoreBounds.Width * mouseRatioX);
-                Top = cursorScreenPos.Y - 10;
+                _restoreOnDrag = true;
+                _restoreDragStart = e.GetPosition(this);
+                ((UIElement)sender).CaptureMouse();
+                return;
             }
-
             try { DragMove(); } catch { }
+        }
+
+        private void TitleBar_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_restoreOnDrag || e.LeftButton != MouseButtonState.Pressed) return;
+            var pos = e.GetPosition(this);
+            if (Math.Abs(pos.X - _restoreDragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(pos.Y - _restoreDragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+            _restoreOnDrag = false;
+            ((UIElement)sender).ReleaseMouseCapture();
+
+            var ratioX = ActualWidth > 0 ? pos.X / ActualWidth : 0.5;
+            var restoreWidth = RestoreBounds.Width;
+            // Cursor position in screen DIPs (PointToScreen returns device pixels).
+            var toDip = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice
+                        ?? System.Windows.Media.Matrix.Identity;
+            var cursor = toDip.Transform(PointToScreen(pos));
+
+            WindowState = WindowState.Normal;
+            Left = cursor.X - restoreWidth * ratioX;
+            Top = cursor.Y - 9; // middle of the 18 px title bar
+            try { DragMove(); } catch { }
+        }
+
+        private void TitleBar_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_restoreOnDrag) return;
+            _restoreOnDrag = false;
+            ((UIElement)sender).ReleaseMouseCapture();
+        }
+
+        // Maximized: square corners. The WM_GETMINMAXINFO hook (ConstrainMaximizedBoundsToWorkArea) already fits
+        // the maximized window to the work area, and a transparent window has no resize frame
+        // hanging off the screen, so no extra padding is needed.
+        private void Window_StateChanged(object? sender, EventArgs e)
+        {
+            var maximized = WindowState == WindowState.Maximized;
+            RootBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(8);
+            TitleBarBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(8, 8, 0, 0);
         }
 
         private void MinimizeButton_Click(object sender, RoutedEventArgs e)
@@ -516,6 +569,289 @@ namespace UFOS.ai
         {
             _settingsCloseTimer?.Stop();
             _settingsCloseTimer = null;
+        }
+
+        // ===================== Settings popup: Python packages =====================
+        // Services/PythonEnvManager.cs does the work; this only renders its state.
+
+        private const string PythonEnvLogModule = "Python env";
+
+        private static async Task InitPythonEnvAsync()
+        {
+            try
+            {
+                await Task.Run(() => PythonEnvManager.RefreshOffline());
+                // Don't run "pip list --outdated" while the app-start preparation installs
+                // packages; afterwards re-read the (now updated) required-install state.
+                await PythonEnvironment.AllReady;
+                await Task.Run(() => PythonEnvManager.RefreshOffline());
+                await Task.Run(() => PythonEnvManager.RunOnlineCheckIfDueAsync());
+            }
+            catch (Exception ex)
+            {
+                try { AppLog.Warn(PythonEnvLogModule, "Python package check failed.", ex); } catch { }
+            }
+        }
+
+        // ===================== Header: Python environment preparation banner =====================
+        // Shared/PythonEnvironment.cs prepares every module venv once at app start; this
+        // renders its state under the clock: spinner while busy, "ready" for ~4 s, failures stay.
+
+        private static readonly string[] PythonEnvSpinnerFrames = { "|", "/", "-", "\\" };
+        private DispatcherTimer? _pythonEnvSpinnerTimer;
+        private int _pythonEnvSpinnerFrame;
+        private bool _pythonEnvReadyShown;
+
+        private void OnPythonEnvironmentStateChanged()
+        {
+            // Raised on whatever thread changed the state.
+            try { Dispatcher.BeginInvoke(new Action(RenderPythonEnvBanner)); } catch { }
+        }
+
+        private void RenderPythonEnvBanner()
+        {
+            var text = PythonEnvironment.StatusText;
+            if (PythonEnvironment.IsBusy)
+            {
+                PythonEnvBanner.BeginAnimation(OpacityProperty, null);
+                PythonEnvBanner.Opacity = 1;
+                PythonEnvBanner.Cursor = null;
+                PythonEnvBanner.ToolTip = "Module backends start once their Python environment is ready.";
+                PythonEnvBannerIcon.Foreground = PythonEnvBrush("AccentAmberBrush");
+                PythonEnvBannerText.Foreground = PythonEnvBrush("MutedForegroundBrush");
+                PythonEnvBannerText.Text = text;
+                PythonEnvBanner.Visibility = Visibility.Visible;
+                if (_pythonEnvSpinnerTimer == null)
+                {
+                    _pythonEnvSpinnerTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+                    _pythonEnvSpinnerTimer.Tick += (_, __) =>
+                    {
+                        _pythonEnvSpinnerFrame = (_pythonEnvSpinnerFrame + 1) % PythonEnvSpinnerFrames.Length;
+                        PythonEnvBannerIcon.Text = PythonEnvSpinnerFrames[_pythonEnvSpinnerFrame];
+                    };
+                }
+                PythonEnvBannerIcon.Text = PythonEnvSpinnerFrames[_pythonEnvSpinnerFrame];
+                _pythonEnvSpinnerTimer.Start();
+                return;
+            }
+
+            _pythonEnvSpinnerTimer?.Stop();
+            if (string.IsNullOrEmpty(text))
+            {
+                PythonEnvBanner.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            if (PythonEnvironment.FailedModules.Count > 0)
+            {
+                PythonEnvBanner.BeginAnimation(OpacityProperty, null);
+                PythonEnvBanner.Opacity = 1;
+                PythonEnvBanner.Cursor = Cursors.Hand;
+                PythonEnvBanner.ToolTip = "Click to open the Backend Log. The module retries the setup when it starts its backend.";
+                PythonEnvBannerIcon.Text = "!";
+                PythonEnvBannerIcon.Foreground = PythonEnvBrush("CautionBrush");
+                PythonEnvBannerText.Foreground = PythonEnvBrush("CautionBrush");
+                PythonEnvBannerText.Text = text;
+                PythonEnvBanner.Visibility = Visibility.Visible;
+                return;
+            }
+
+            // Ready: show it once, then fade out.
+            if (_pythonEnvReadyShown) return;
+            _pythonEnvReadyShown = true;
+            PythonEnvBanner.Cursor = null;
+            PythonEnvBanner.ToolTip = null;
+            PythonEnvBannerIcon.Text = "✓";
+            PythonEnvBannerIcon.Foreground = PythonEnvBrush("PositiveGreenBrush");
+            PythonEnvBannerText.Foreground = PythonEnvBrush("MutedForegroundBrush");
+            PythonEnvBannerText.Text = text;
+            PythonEnvBanner.Visibility = Visibility.Visible;
+            _ = HidePythonEnvBannerLaterAsync();
+        }
+
+        private async Task HidePythonEnvBannerLaterAsync()
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(4));
+                if (PythonEnvironment.IsBusy || PythonEnvironment.FailedModules.Count > 0) return;
+                var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(600));
+                fade.Completed += (_, __) =>
+                {
+                    if (PythonEnvironment.IsBusy || PythonEnvironment.FailedModules.Count > 0) return;
+                    PythonEnvBanner.Visibility = Visibility.Collapsed;
+                    PythonEnvBanner.BeginAnimation(OpacityProperty, null);
+                    PythonEnvBanner.Opacity = 1;
+                };
+                PythonEnvBanner.BeginAnimation(OpacityProperty, fade);
+            }
+            catch { }
+        }
+
+        private void PythonEnvBanner_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (PythonEnvironment.FailedModules.Count == 0) return;
+            try { BackendLogsWindow.Show(this); }
+            catch (Exception ex)
+            {
+                try { AppLog.Warn(PythonEnvLogModule, "Could not open the Backend Log.", ex); } catch { }
+            }
+        }
+
+        private void OnPythonEnvChanged()
+        {
+            // Raised on whatever thread changed the state.
+            try { Dispatcher.BeginInvoke(new Action(RenderPythonEnvStatus)); } catch { }
+        }
+
+        private void RenderPythonEnvStatus()
+        {
+            var statuses = PythonEnvManager.Statuses;
+            PythonEnvModuleList.Children.Clear();
+            foreach (var status in statuses)
+                PythonEnvModuleList.Children.Add(BuildPythonEnvRow(status));
+
+            var required = statuses.Count(st => st.RequiredReason != null);
+            var updates = statuses.Sum(st => st.Outdated.Count);
+            string summary;
+            if (PythonEnvManager.IsUpdating) summary = "updating…";
+            else if (PythonEnvManager.IsChecking) summary = "checking…";
+            else if (statuses.Count == 0) summary = "checking…";
+            else if (required == 0 && updates == 0) summary = "up to date";
+            else
+            {
+                var parts = new List<string>();
+                if (required > 0) parts.Add($"{required} required");
+                if (updates > 0) parts.Add($"{updates} update{(updates == 1 ? "" : "s")}");
+                summary = string.Join(" · ", parts);
+            }
+            PythonEnvSummaryText.Text = summary;
+            var lastCheck = PythonEnvManager.LastOnlineCheckUtc;
+            PythonEnvSummaryText.ToolTip = lastCheck == null
+                ? "No online update check yet (runs in the background at most once a day)."
+                : "Last online update check: " + lastCheck.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+
+            SettingsUpdateDot.Visibility = PythonEnvManager.HasPending ? Visibility.Visible : Visibility.Collapsed;
+            UpdatePythonPackagesButton.IsEnabled = !PythonEnvManager.IsUpdating;
+            UpdatePythonPackagesButtonText.Text = PythonEnvManager.IsUpdating ? "Updating Python packages…" : "Update Python packages";
+        }
+
+        private UIElement BuildPythonEnvRow(PythonEnvModuleStatus status)
+        {
+            string state;
+            string stateBrush;
+            string? detail = null;
+            if (status.Module == null)
+            {
+                state = "not found";
+                stateBrush = "MutedForegroundBrush";
+                detail = "Backend folder not found next to this app.";
+            }
+            else if (status.Locked)
+            {
+                state = "installing…";
+                stateBrush = "CautionBrush";
+                detail = "An install/update is running — the backend starts once it's done.";
+            }
+            else if (status.RequiredReason != null)
+            {
+                state = "required";
+                stateBrush = "CautionBrush";
+                detail = $"Required — installs automatically on next module start ({status.RequiredReason}).";
+            }
+            else if (status.Outdated.Count > 0)
+            {
+                var n = status.Outdated.Count;
+                state = $"{n} update{(n == 1 ? "" : "s")}";
+                stateBrush = "AccentAmberBrush";
+                detail = $"{n} optional package update{(n == 1 ? "" : "s")}: " +
+                         string.Join(", ", status.Outdated.Take(3)) + (n > 3 ? ", …" : "");
+            }
+            else if (status.CheckError != null)
+            {
+                state = "installed";
+                stateBrush = "MutedForegroundBrush";
+                detail = "Online update check failed: " + status.CheckError;
+            }
+            else
+            {
+                state = "up to date";
+                stateBrush = "PositiveGreenBrush";
+            }
+
+            var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 6) };
+            var header = new Grid();
+            header.Children.Add(new TextBlock
+            {
+                Text = status.Name,
+                FontSize = 11.5,
+                Foreground = PythonEnvBrush("SecondaryForegroundBrush"),
+            });
+            header.Children.Add(new TextBlock
+            {
+                Text = state,
+                FontSize = 11,
+                FontFamily = new FontFamily("Consolas"),
+                Foreground = PythonEnvBrush(stateBrush),
+                HorizontalAlignment = HorizontalAlignment.Right,
+            });
+            panel.Children.Add(header);
+
+            if (detail != null || status.LastResult != null)
+            {
+                var text = new TextBlock
+                {
+                    FontSize = 10.5,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = PythonEnvBrush("MutedForegroundBrush"),
+                    Margin = new Thickness(0, 2, 0, 0),
+                };
+                if (detail != null) text.Inlines.Add(new Run(detail));
+                if (status.LastResult != null)
+                {
+                    if (detail != null) text.Inlines.Add(new LineBreak());
+                    var skipped = status.LastResult.StartsWith("skipped", StringComparison.OrdinalIgnoreCase);
+                    text.Inlines.Add(new Run("Last update: " + status.LastResult)
+                    {
+                        Foreground = PythonEnvBrush(!status.LastResultFailed ? "PositiveGreenBrush"
+                                                    : skipped ? "CautionBrush" : "AccentRedBrush"),
+                    });
+                }
+                panel.Children.Add(text);
+            }
+            return panel;
+        }
+
+        private Brush PythonEnvBrush(string key) => TryFindResource(key) as Brush ?? Brushes.Gray;
+
+        private void ShowPythonEnvResult(string text)
+        {
+            PythonEnvResultText.Text = text;
+            PythonEnvResultText.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        private async void UpdatePythonPackagesButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (PythonEnvManager.IsUpdating) return;
+            UpdatePythonPackagesButton.IsEnabled = false;
+            ShowPythonEnvResult("Starting…");
+            try
+            {
+                await Task.Run(() => PythonEnvManager.UpdateAllAsync(
+                    message => Dispatcher.BeginInvoke(new Action(() => ShowPythonEnvResult(message)))));
+                ShowPythonEnvResult("Done — results per module above. Backends that were stopped are not restarted here: " +
+                                    "each module starts its backend again the next time it needs it (e.g. when you open its window). " +
+                                    "Full output: %LOCALAPPDATA%\\UFOS.ai\\python-env\\update.log");
+            }
+            catch (Exception ex)
+            {
+                ShowPythonEnvResult("Update failed: " + ex.Message);
+                try { AppLog.Error(PythonEnvLogModule, "Update Python packages failed.", ex); } catch { }
+            }
+            finally
+            {
+                RenderPythonEnvStatus();
+            }
         }
 
         private void ShowUfoCheckBox_Changed(object sender, RoutedEventArgs e)

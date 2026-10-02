@@ -11,7 +11,7 @@ EventStore keeps the last N events per category (newest first) and a
 seen-id set, so a re-polled item isn't stored twice.
 """
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Deque, Dict, Optional
 
 MAX_EVENTS_PER_CATEGORY = 60
@@ -25,6 +25,19 @@ MAX_EVENT_AGE_HOURS = 48
 # flight markers are ever shown on the map at the same time. Everything else
 # keeps the default.
 CATEGORY_LIMITS: dict = {}
+
+
+def filed_before_window(event: dict, days: int, now: datetime = None) -> bool:
+    """True when the event's filed_at (ISO-8601, any offset) lies more than
+    `days` before now — used for the Insider Trades display window
+    (2026-09-25). Events without a parsable filed_at are kept (False)."""
+    try:
+        dt = datetime.fromisoformat(str(event.get("filed_at") or "").strip().replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt < (now or datetime.now(timezone.utc)) - timedelta(days=days)
 
 
 def now_iso() -> str:

@@ -111,7 +111,7 @@ namespace UFOS.ai.HedgeFund.Newsroom
 
             try
             {
-                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                using var client = NewsroomBackend.CreateClient(TimeSpan.FromSeconds(10));
                 using var doc = JsonDocument.Parse(await client.GetStringAsync(ItemsUrl));
                 var root = doc.RootElement;
                 var items = root.TryGetProperty("items", out var arr) && arr.ValueKind == JsonValueKind.Array
@@ -244,11 +244,11 @@ namespace UFOS.ai.HedgeFund.Newsroom
             SummaryCost.Visibility = Visibility.Collapsed;
             SummaryHeader.Text = AiContent.LoadingBadge;
             SummaryText.Text = "Asking the language model (OpenRouter)…";
-            AutomationProperties.SetName(SummaryText, "AI summary is being generated");
+            AutomationProperties.SetName(SummaryText, AiContent.LoadingAutomationName("summary"));
 
             try
             {
-                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(75) };
+                using var client = NewsroomBackend.CreateClient(TimeSpan.FromSeconds(75));
                 using var response = await client.PostAsync(SummaryUrl, new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
                 using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
                 var root = doc.RootElement;

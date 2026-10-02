@@ -8,6 +8,26 @@ a multi-agent simulation of a hedge fund decision process (paper trading, no rea
 > No regulated financial product. For research and demonstration only.
 
 ## Status
+- **Paper-trading engine (2026-09-26):** package `fund/` — a loop every 5 min
+  (1–60) during the US session: Technical/Macro (rules), Sentiment
+  (LLM, batch), Risk Manager (rules) → Judge (LLM only when inputs changed,
+  rule fallback, daily AI budget) → recommendation → internal paper broker
+  (long/short/cash, Reg T margin, borrow fees, dividends, SEC Rule 201,
+  5 bps fees/slippage, orders only in the session). Parameters are versioned
+  and apply from the next run. Routes `/fund/*` (token-protected), rule-only
+  backtest, CSV exports, Windows toasts. **Contract: `fund/SPEC.md`.** The
+  notes below about an illustrative dashboard predate this.
+- **24/7 crypto (2026-09-27):** `BTC-USD`, `ETH-USD`, `SOL-USD` join the
+  default watchlist (existing installs: one-time params migration at start,
+  `fund.crypto_rollout`). Crypto trades around the clock with fractional
+  quantities ($10 minimum), own fees (`crypto_fees_bps` 20) and position size
+  (3 %); longs are spot, shorts simulated perpetual futures with isolated
+  margin (50 % / 25 %), liquidation fee and funding every 8 h (positive rate =
+  longs pay shorts, so the simulated shorts receive it). Scheduled full cycles
+  run only during the US session; outside it only "Run now" runs a full cycle
+  (crypto fills at once, equities queue for the open) and a light risk watch
+  (no agents/AI/new orders) checks open crypto positions every
+  `closed_interval_minutes`. Still paper trading only, not investment advice.
 - **Dashboard (agents, verdict, portfolio, execution):** illustrative only —
   hardcoded sample data, no agents or broker connected yet. The WebSocket on
   `WS_PORT` (8865) is a placeholder for the agent pipeline.
@@ -198,6 +218,162 @@ Env `UFOS_AI_COST_LOG` overrides the path (tests). `POST
 Trades view shows the same grey cost line under its AI summary. Tests:
 `python -m unittest tests.test_cost_ledger`.
 
+**Local SQLite store (2026-09-25):** the backend keeps its data in one
+SQLite file per module: `HedgeFund/backend/data/newsroom.db` (moved there the
+same evening from `%LOCALAPPDATA%\UFOS.ai\data\hedgefund.sqlite` — see
+"Local storage (SQLite, 2026-09-25)" below; env `UFOS_HEDGEFUND_DB` overrides
+the full path — used by the tests). Code:
+`newsroom/db.py` (stdlib `sqlite3`, WAL, a connection per call, schema version
+in `PRAGMA user_version` with idempotent migrations). A DB error never stops
+the backend: it is logged and the backend continues in-memory only.
+
+| Table | Content | Retention |
+|---|---|---|
+| `insider_filings` | every Form 4 seen (`accession` PK, `filed_at` in UTC, ticker, issuer, owner, full event JSON, `first_seen`, `last_seen`) | 5 days (by filing time) |
+| `macro_observations` | raw observations per `(series_id, units, frequency, date)` — all FRED series (+ `USREC`) and Eurostat `EUROSTAT_IP_EA20` (`PCH_SM`) | kept (small) |
+| `calendar_snapshot` | the latest Economic Calendar poll (one row) | latest only; events until event date + 1 day |
+| `ai_results` | every AI output: insider summary + Analysis & Reasoning (`feature`, `model`, `tier`, `input_summary` JSON — tile ids/titles or the insider table —, `output_text`, `provenance_json`, `usage_json`) | 90 days |
+| `meta` | `last_prune`, `last_ok:<source>` (last successful poll), `obs_full:<series>:<units>` (last full refetch), FRED release ids + next release dates | — |
+
+- **Startup:** open → migrate → prune → load. Insider filings of the last
+  `INSIDER_DISPLAY_DAYS` (default 5) go into the display list (their parsed
+  details are reused, so a restart doesn't fetch them again), the macro cards,
+  derived indicators and the regime map are rebuilt from the stored
+  observations (they show immediately, before the first FRED poll), and the
+  calendar comes from its snapshot (past dates dropped).
+- **Insider Trades:** every poll upserts all filings (new → inserted, known →
+  `last_seen` updated). The view only gets filings filed within the last
+  `INSIDER_DISPLAY_DAYS` (at most `INSIDER_DISPLAY_MAX`, default 300); the
+  database keeps them `INSIDER_RETENTION_DAYS` (default 5 — no long-term
+  archive any more, set it higher in `.env` to keep one). Clusters and
+  the AI summary work on the displayed set.
+- **FRED incremental:** each series is fetched once as published since 2000,
+  then each poll asks only for observations from (latest stored date − 400
+  days) on (FRED revises CPI, payrolls, IP …) and replaces that tail; a full
+  refetch happens when nothing is stored or 7 days after the last one (per
+  series). Card histories, the monthly long histories (daily/weekly series =
+  local monthly averages, as FRED's `frequency=m` returned before) and all
+  derived values are built from the stored data. Release ids are cached in
+  `meta`. One poll = 18 observation requests + 1 `releases/dates` + 1
+  Eurostat (≈ 20, was ≈ 45, and far smaller responses); the log line
+  "FRED poll done …: N HTTP requests (M full history refetches)" shows it.
+- **AI history:** `GET /newsroom/ai-history?feature=insider-summary|analysis&limit=20`
+  → `{items: [{id, created_at, feature, model, tier, input_summary,
+  output_text, provenance, usage}], stored}` newest first (limit 1–200). Read
+  only; the original model/time label stays in `provenance`.
+- **Pruning:** at startup and every 24 h while running.
+- **Reset:** close the app (so the backend stops), then delete
+  `data/newsroom.db` (and `-wal` / `-shm` next to it if present). The next start
+  recreates it and refetches everything once.
+
+**Macro regime — extended view (2026-09-25):** the `macro-regime` event's
+`macro.regime` keeps all its keys and adds `extended` (for the WPF "Expand"
+view), built by `macro_derived.regime_extended()` from the stored long
+histories with exactly the card's method (3-month smoothing, 6-month momentum):
+
+```
+"extended": {
+  "trail_long": [{"date", "x", "y", "quadrant"}, ...],   // monthly since 2000 (PAYEMS/INDPRO YoY × core PCE YoY, CPI fallback)
+  "recessions": [{"start": "YYYY-MM", "end": "YYYY-MM"}], // FRED USREC (monthly 0/1) since 2000; a running one ends at the last month
+  "components": [{"name", "axis", "latest", "six_months_ago", "change", "unit": "%", "date"}, ...],
+      // "Nonfarm payrolls (YoY)" / "Industrial production (YoY)" (axis "growth"),
+      // "Core PCE inflation (YoY)" or "CPI inflation (YoY)" (axis "inflation"); smoothed values
+  "euro": {"x", "y", "quadrant", "label", "date", "trail": [last 12 {date, x, y, quadrant}],
+           "inputs": "Eurostat industrial production (euro area, YoY) × HICP inflation (YoY)",
+           "source_url": "https://ec.europa.eu/eurostat/databrowser/view/STS_INPR_M/default/table"} | null,
+  "phase_behaviour": {"goldilocks"|"reflation"|"stagflation"|"slowdown":
+                        {"summary", "assets": [{"asset", "tendency"} × Equities, Government bonds,
+                                                Credit, US dollar, Commodities, Sectors]},
+                      "disclaimer": "Historical tendencies, not a forecast and not investment advice."},
+  "note": "…how the component values relate to the axes…"
+}
+```
+
+Euro-area growth = Eurostat `sts_inpr_m` (EA20, B-D, calendar adjusted,
+`PCH_SM` = YoY %), JSON-stat API without key, polled with the FRED collector
+(from the latest stored month − 400 days); inflation = FRED
+`CP0000EZ19M086NEST` YoY. Eurostat failures only leave `euro` null (logged).
+`phase_behaviour` is static, hedged textbook tendencies (no single stocks, no
+AI). Tests: `python -m unittest tests.test_store` (temp DB, offline).
+
+**Local storage (SQLite, 2026-09-25):** decisions from the storage interview,
+built on `newsroom/db.py` (the store above; no second storage module).
+
+- **File:** `HedgeFund/backend/data/newsroom.db` — one database per module in
+  its backend data folder; `*.db`, `*.db-wal`, `*.db-shm`, `*.db.corrupt-*`
+  are git-ignored (`backend/.gitignore`). If it doesn't exist yet and the old
+  `%LOCALAPPDATA%\UFOS.ai\data\hedgefund.sqlite` does, the old file is copied
+  once (SQLite backup API) and left in place — delete it by hand afterwards.
+- **Schema:** `PRAGMA user_version` = 2 (v1 = newsroom tables, v2 = trading
+  tables below). WAL journal, a short-lived connection per call.
+- **Retention** (pruned at every start and every 24 h; env overrides in `config.py`):
+
+| Data | Table | Kept |
+|---|---|---|
+| Insider filings | `insider_filings` | 5 days by `filed_at` (unparsable time → `first_seen`) — `INSIDER_RETENTION_DAYS` |
+| Calendar events | `calendar_snapshot` | until event date + 1 day |
+| AI summaries / analyses | `ai_results` | 90 days — `AI_RESULTS_RETENTION_DAYS` |
+| FRED / Eurostat observations | `macro_observations` | everything FRED returns (history since 2000 is reference data for percentiles, regime trail and derived indicators — deliberate deviation from "market data 2 years"; small) |
+| Prices | `prices` | 2 years |
+| Signals, orders, positions, equity | `signals`, `orders`, `positions`, `equity_curve` | kept (no pruning yet) |
+
+- **Cache first, then reconcile:** at start the stored insider filings, macro
+  cards and calendar are loaded before the collectors start, so `/newsroom/*`
+  answers immediately. Each source with cached data reports
+  `{"ok": true, "message": "from cache (updated HH:MM) — refreshing…", "cached": true}`
+  until its first live poll; polls upsert by stable id (insider accession,
+  macro series/date, the calendar snapshot row). Every successful poll stores
+  `meta.last_ok:<source>`.
+- **First poll skipped when fresh:** FRED and the calendar don't poll at start
+  while their last successful poll is younger than `FRED_POLL_SECONDS` /
+  `CALENDAR_POLL_SECONDS` (status: "from cache (updated HH:MM) — next refresh
+  HH:MM"; logged). Without `FRED_API_KEY` they start at once (and report the
+  missing key). SEC EDGAR always polls at start.
+- **AI outputs:** every successful insider summary and analysis is stored in
+  `ai_results` (text, model, tier, `input_summary` incl. `tiles_used`, usage,
+  provenance, `created_at`) — persistence only, no UI.
+- **Errors:** every DB call is guarded — an error is logged and never breaks a
+  collector or an endpoint. A corrupt file is renamed to
+  `newsroom.db.corrupt-<UTC timestamp>` (with `-wal`/`-shm`) and a fresh
+  database is created; a locked/unopenable file is left alone and the backend
+  runs in-memory only.
+- **`GET /newsroom/status`** now returns `{"sources": [per-source status],
+  "storage": {"path", "size_bytes", "schema_version", "rows": {table: n}}}`
+  (`storage` is `null` when the store is off; no secrets).
+- **Trading tables — prepared for the Hedge Fund trading work, not used yet:**
+  `prices(symbol, ts, open, high, low, close, volume, source; PK symbol+ts)`,
+  `signals(id, ts, source, symbol NULL = market-wide, kind, value, level, payload_json)`,
+  `orders(id, ts, symbol, side, qty, order_type, limit_price, status, broker,
+  broker_order_id, mode 'paper'|'live' DEFAULT 'paper', rationale, provenance_json)`,
+  `positions(symbol PK, qty, avg_price, updated_at)`,
+  `equity_curve(ts PK, equity, cash, mode)`.
+- Tests: `python -m unittest tests.test_storage` (temp directory, offline).
+
+**Expanded regime map (2026-09-25):** second pass on the WPF "Expand" view
+(button top-right of the regime card; popup under the button that closes via
+Collapse, Esc, pointer-leave timer or moving the window; shown inline below the
+card instead when the view is ≥ 1400 px wide and the window ≥ 900 px tall —
+same reparenting as LiveStreamAgent's market grid). `extended` additionally carries:
+
+```
+"episodes": [{"label": "GFC trough (Mar 2009)", "date", "x", "y", "quadrant"}, ...],
+    // fixed reference months (macro_derived.EPISODES: Nov 2001, Jun 2005, Mar 2009, Apr 2020,
+    // Jun 2022) read from trail_long — same method as today's point; only months in the data
+"history": [{"date", "quadrant"}, ...],          // monthly since 2000 (= trail_long without x/y)
+"component_series": {"payrolls_yoy", "indpro_yoy", "inflation_yoy": [{"date", "value"}] (raw YoY %),
+                     "growth_momentum", "inflation_momentum": [...] (the smoothed axes, pp),
+                     "inflation_name": "core PCE" | "CPI"},   // last 36 months each
+"asset_tendencies": {"title", "columns": [Equities, Govt bonds, Credit, USD, Commodities],
+                     "rows": [{"quadrant", "label", "cells": [{"asset", "direction": "up|down|mixed", "text"}]}],
+                     "disclaimer": "Historical tendencies, simplified; not a forecast, not investment advice."}
+```
+
+No extra FRED requests (all from the stored long histories). The expanded map
+defaults to a 36-month trail with quarter labels ("Q1 '25"); it keeps the
+trail's own scale, so an episode outside it is pinned to the edge with an
+arrow in its label and its real values in the tooltip. `asset_tendencies` is
+static, deliberately coarse textbook data — the table's single source.
+
 Also: `GET /newsroom/status` (per-source status), `GET /health`,
 `GET /version` + loopback-only `POST /shutdown` (stale-backend check, same
 mechanism as Global Monitoring).
@@ -217,9 +393,42 @@ current (`/version` vs. the `.py` files on disk), otherwise replaced. Output
 goes to the app-wide "Backend Log" window (module "HedgeFund") and to
 `data/logs/process.log`; Python logging goes to `data/logs/backend.log`.
 The first start creates the venv and installs `requirements.txt` (incl.
-pandas/yfinance) — that can take a few minutes; the views say so.
+pandas/yfinance) — that can take a few minutes; the status line says so
+("installing Python packages"). Later starts only install when
+`requirements.txt` changed (see "Python environment" below).
 
 **Adding a section:** a collector in `newsroom/`, an entry in `main.py`'s
 `NEWSROOM_SOURCES` plus a GET endpoint, a UserControl in
 `HedgeFund/Newsroom/`, and one line in `NewsroomSections.cs` — the window's
 navigation is built from that list (the first entry is the start section).
+
+## Python environment (since 2026-09-25)
+
+**Started from the UFOS.ai app:** the environment is prepared once at app
+start (`Shared/PythonEnvironment.cs`, in the background, one module after the
+other: create the venv if missing, `pip install -r requirements.txt --upgrade`
+only when the stamp doesn't match). The module's launcher (`Newsroom/NewsroomBackend.cs`) awaits
+`PythonEnvironment.WaitForModuleAsync` before starting the script with
+`-SkipInstall` (no venv creation, no pip); a standalone module exe prepares the
+venv itself at that point. The rules below apply when you run the script by hand
+(it writes the same stamp, so the app doesn't reinstall afterwards).
+
+`run_hedgefund_backend.ps1` no longer runs `pip install --upgrade` on every start. It
+installs `requirements.txt` (without `--upgrade`) only when that is
+**required**: `.venv` is missing, `requirements.txt` changed since the last
+successful install (SHA-256 in `.venv/ufos-requirements.sha256`), or the last
+install didn't complete (`.venv/ufos-install-pending`). `-RecreateVenv` still
+rebuilds the venv; `-Upgrade` runs `pip install -r requirements.txt --upgrade`;
+`-EnvOnly` prepares the environment without starting `main.py`.
+
+Every run holds `.venv.lock` (git-ignored, deleted automatically — the handle
+is opened with DeleteOnClose) while it checks or changes the venv, so the
+backend never starts while an install/update of the same venv is running; it
+waits instead. A leftover lock counts as stale when its PID is gone or it is
+older than 30 minutes. The script prints `UFOS_ENV: waiting | installing <reason>
+| upgrading | changed <n> | failed <reason> | ready` marker lines, which
+`Newsroom/NewsroomBackend.cs` turns into a status hint ("Installing Python packages…" /
+"Waiting for the Python package update to finish…").
+
+Optional upgrades are manual only: root app → Settings (gear) → "Update Python
+packages" (upgrades all module venvs one after another; a running backend is stopped via `POST /shutdown` first and restarts the next time the Hedge Fund window needs it).

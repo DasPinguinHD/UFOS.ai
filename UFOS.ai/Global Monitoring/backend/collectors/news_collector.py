@@ -14,6 +14,11 @@ turns relevant, recent, locatable stories into "geopolitics" events:
 
 Per poll, at most MAX_PER_COUNTRY_PER_POLL stories per country, so one big
 story (many outlets covering the same event) can't fill the whole map.
+
+2026-09-25: incremental — main.py sets `is_known` (article id already in the
+local storage, see persistence.py); such articles are skipped before any
+relevance/location work and are not re-emitted. The poll loop ends with
+refresh.wait_next_cycle(), so a stale-data request can wake it early.
 """
 import asyncio
 import hashlib
@@ -24,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 
 import news_feeds
+import refresh
 from config import NEWS_POLL_SECONDS, NEWS_MAX_AGE_HOURS
 from events import make_event
 from geo import country_point, detect_mentioned_country
@@ -31,6 +37,11 @@ from geo import country_point, detect_mentioned_country
 logger = logging.getLogger(__name__)
 
 MAX_PER_COUNTRY_PER_POLL = 4
+SOURCE = "news"
+
+# Optional callback(event_id) -> bool, set by main.py: True if the article is
+# already stored (skip it). None = no incremental skipping.
+is_known = None
 SUMMARY_MAX_CHARS = 320
 
 # --- Relevance scoring (2026-09-24, replaces a single broad keyword regex) ---
@@ -109,12 +120,19 @@ async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> Non
 
     seen = set()
     per_country: dict = {}
-    placed = skipped_old = skipped_topic = skipped_location = 0
+    placed = skipped_old = skipped_topic = skipped_location = already_known = 0
     for item in items:
         eid = _event_id(item["url"])
         if eid in seen:
             continue
         seen.add(eid)
+        if is_known is not None:
+            try:
+                if is_known(eid):
+                    already_known += 1
+                    continue
+            except Exception:
+                pass
 
         if item["published"] and item["published"] < cutoff:
             skipped_old += 1
@@ -152,7 +170,8 @@ async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> Non
         placed += 1
         per_country[country] = per_country.get(country, 0) + 1
 
-    msg = (f"{placed} stories placed from {len(ok_feeds)}/{len(results)} feeds "
+    msg = (f"{placed} new stories placed from {len(ok_feeds)}/{len(results)} feeds "
+           f"({already_known} already known) "
            f"(skipped: {skipped_topic} off-topic, {skipped_location} no location, {skipped_old} older than {NEWS_MAX_AGE_HOURS:.0f}h)")
     if failed:
         msg += " — failed: " + ", ".join(name for name, _, err in results if err is not None)
@@ -167,4 +186,4 @@ async def run(emit, report_status) -> None:
             except Exception as ex:
                 logger.exception("News poll crashed")
                 await report_status(False, f"{type(ex).__name__}: {ex}")
-            await asyncio.sleep(NEWS_POLL_SECONDS)
+            await refresh.wait_next_cycle(SOURCE, NEWS_POLL_SECONDS)

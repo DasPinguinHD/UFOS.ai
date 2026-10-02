@@ -18,10 +18,17 @@ the city or country name — zero extra requests.
 Caches (keyed by "city|country"): a success for LOCALNEWS_CACHE_SECONDS, a
 failure for LOCALNEWS_ERROR_CACHE_SECONDS, so repeated clicks on the same
 star don't re-query.
+
+2026-09-25: successful lookups are also persisted in the module's local
+SQLite storage (storage.py, items source "localnews", key "city|country",
+kept LOCALNEWS_RETENTION_HOURS) via attach_storage(), so a backend restart
+within LOCALNEWS_CACHE_SECONDS doesn't hit Google News again. Failures are
+not persisted.
 """
 import logging
 import re
 import time
+from datetime import datetime, timezone
 from urllib.parse import quote_plus, urlparse
 
 import aiohttp
@@ -39,6 +46,32 @@ _cache: dict[str, tuple[float, dict]] = {}
 # news", /localnews-summary) gets up to this many from the same cached lookup.
 SUMMARY_MAX_RECORDS = 20
 _error_cache: dict[str, tuple[float, str]] = {}
+
+# Local SQLite storage (storage.Storage) or None; set by attach_storage() from main.py.
+STORAGE_SOURCE = "localnews"
+_storage = None
+
+
+def attach_storage(storage) -> int:
+    """Uses storage (storage.Storage) as the persistent copy of the success
+    cache and loads every lookup younger than LOCALNEWS_CACHE_SECONDS into
+    memory. Returns how many were loaded. Never raises."""
+    global _storage
+    _storage = storage
+    loaded = 0
+    try:
+        since = datetime.fromtimestamp(time.time() - LOCALNEWS_CACHE_SECONDS, timezone.utc)
+        rows = storage.load_items(STORAGE_SOURCE, since=since)
+    except Exception as ex:
+        logger.warning("Could not load the persisted local news cache: %s", ex)
+        return 0
+    for row in rows:
+        payload = row.get("payload") or {}
+        if isinstance(payload.get("articles"), list) and isinstance(payload.get("fetched_at"), (int, float)):
+            _cache[row["item_id"]] = (float(payload["fetched_at"]),
+                                      {"articles": payload["articles"], "notice": payload.get("notice")})
+            loaded += 1
+    return loaded
 
 
 def _article(item: dict) -> dict:
@@ -128,6 +161,13 @@ async def fetch_local_news(session: aiohttp.ClientSession, city: str, country: s
 
     full = {"articles": [_article(i) for i in items[:SUMMARY_MAX_RECORDS]], "notice": notice}
     if notice is None:
-        _cache[cache_key] = (time.time(), full)
+        fetched_at = time.time()
+        _cache[cache_key] = (fetched_at, full)
         _error_cache.pop(cache_key, None)
+        if _storage is not None:
+            try:
+                _storage.upsert_items(STORAGE_SOURCE, [(
+                    cache_key, datetime.fromtimestamp(fetched_at, timezone.utc), {"fetched_at": fetched_at, **full})])
+            except Exception as ex:
+                logger.warning("Could not persist the local news lookup for %s: %s", cache_key, ex)
     return {"articles": full["articles"][:limit], "notice": notice}

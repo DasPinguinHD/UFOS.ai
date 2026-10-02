@@ -194,6 +194,14 @@ namespace UFOS.ai
         private WebSocketService? _wsService;
         private CancellationTokenSource? _wsCts;
         private Process? _backendProcess;
+        // Python environment hint from run_backend.ps1's "UFOS_ENV: ..." marker lines
+        // (installing packages / waiting for an update); null = nothing to show.
+        private volatile string? _envStatusText;
+        // Backend start waiting for the Python environment (Shared/PythonEnvironment.cs):
+        // guards against double starts (Restart button) and starts after the window closed.
+        private int _backendStartPending;
+        private volatile bool _windowClosing;
+        private string? _lastConnectionStatus;
         // flag to detect first real transcript input from backend
         private bool _transcriptReceived = false;
         private MarketUpdateMessage? _latestMarketUpdate;
@@ -1001,7 +1009,9 @@ namespace UFOS.ai
                 try { DebugLogger.Log($"[UI] Health check result: {ok}"); } catch { }
 
                 _wsCts = new CancellationTokenSource();
-                _wsService = new WebSocketService("ws://127.0.0.1:8765");
+                // Token from LiveStreamAgent/backend/data/api-token (the backend requires it).
+                _wsService = new WebSocketService("ws://127.0.0.1:8765",
+                    () => BackendAuth.ReadToken(BackendAuth.FindBackendDir("LiveStreamAgent", "backend")));
                 _wsService.OnTicker += msg => Dispatcher.Invoke(() => UpdateTicker(msg.Index == 0 ? 1 : msg.Index, msg.Name, msg.Value, msg.Tendency));
                 _wsService.OnMarketUpdate += mu => Dispatcher.Invoke(() => RenderMarketUpdate(mu));
                 _wsService.OnConfidence += v => Dispatcher.Invoke(() => { AddConfidenceSample(v); UpdateConfidence(v); });
@@ -1090,6 +1100,7 @@ namespace UFOS.ai
 
         private async void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
+            _windowClosing = true;
             try
             {
                 CloseMarketDataPopup();
@@ -1148,10 +1159,56 @@ namespace UFOS.ai
                     return;
                 }
 
+                // Python environments are prepared once at app start (Shared/PythonEnvironment.cs);
+                // the process is started once this backend's .venv is ready.
+                _ = StartBackendWhenEnvReadyAsync(script);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Waits for this backend's Python environment (prepared at app start; a standalone
+        /// LiveStreamAgent.exe prepares it here), then starts run_backend.ps1 -SkipInstall.
+        /// </summary>
+        private async Task StartBackendWhenEnvReadyAsync(string script)
+        {
+            if (Interlocked.CompareExchange(ref _backendStartPending, 1, 0) != 0) return; // already waiting
+            try
+            {
+                var envOk = await PythonEnvironment.WaitForModuleAsync(System.IO.Path.GetDirectoryName(script)!, "LiveStream Agent",
+                    PythonEnvironment.ProgressOf(text =>
+                    {
+                        if (!_windowClosing) SetEnvStatus("Python environment: " + text);
+                    }));
+                if (_windowClosing) return;
+                if (!envOk)
+                {
+                    try { AppLog.Error("Backend", "Python environment setup failed — the LiveStream Agent backend was not started."); } catch { }
+                    try { lock (_backendLogBuffer) { _backendLogBuffer.AppendLine("[BACKEND] Python environment setup failed — backend not started (see Backend Log)"); } } catch { }
+                    SetEnvStatus("Python environment setup failed — see Backend Log");
+                    return;
+                }
+                SetEnvStatus(null);
+                StartBackendProcess(script);
+            }
+            catch (Exception ex)
+            {
+                try { AppLog.Error("Backend", "Failed to start the LiveStream Agent backend.", ex); } catch { }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _backendStartPending, 0);
+            }
+        }
+
+        private void StartBackendProcess(string script)
+        {
+            try
+            {
                 var psi = new ProcessStartInfo
                 {
                     FileName = "powershell.exe",
-                    Arguments = $"-ExecutionPolicy Bypass -File \"{script}\"",
+                    Arguments = $"-ExecutionPolicy Bypass -File \"{script}\" -SkipInstall",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
@@ -1162,6 +1219,7 @@ namespace UFOS.ai
                         _backendProcess.OutputDataReceived += (s, e) => {
                     if (string.IsNullOrEmpty(e.Data)) return;
                     try { AppLog.Info("Backend", e.Data); } catch { }
+                    HandleEnvMarker(e.Data);
                 };
                 _backendProcess.ErrorDataReceived += (s, e) => {
                     if (string.IsNullOrEmpty(e.Data)) return;
@@ -1170,6 +1228,7 @@ namespace UFOS.ai
                 _backendProcess.Exited += (s, e) => {
                     try
                     {
+                        SetEnvStatus(null);
                         var p = s as Process;
                         var exit = "?";
                         try { if (p != null) exit = p.ExitCode.ToString(); } catch { }
@@ -1268,6 +1327,33 @@ namespace UFOS.ai
             catch { }
         }
 
+        /// <summary>
+        /// run_backend.ps1 prints "UFOS_ENV: &lt;state&gt;" lines while it prepares the Python
+        /// environment (protocol in the script header): waiting / installing &lt;reason&gt; /
+        /// upgrading / changed &lt;n&gt; / failed &lt;reason&gt; / ready. While packages are being
+        /// installed the connection status shows that instead of a bare "Connecting".
+        /// </summary>
+        private void HandleEnvMarker(string line)
+        {
+            const string prefix = "UFOS_ENV:";
+            if (!line.StartsWith(prefix, StringComparison.Ordinal)) return;
+            var marker = line.Substring(prefix.Length).Trim();
+            if (marker.StartsWith("waiting", StringComparison.OrdinalIgnoreCase))
+                SetEnvStatus("Waiting for the Python package update to finish…");
+            else if (marker.StartsWith("installing", StringComparison.OrdinalIgnoreCase) ||
+                     marker.StartsWith("upgrading", StringComparison.OrdinalIgnoreCase))
+                SetEnvStatus("Installing Python packages (first start or requirements changed)…");
+            else if (marker.StartsWith("failed", StringComparison.OrdinalIgnoreCase) ||
+                     marker.StartsWith("ready", StringComparison.OrdinalIgnoreCase))
+                SetEnvStatus(null); // a failed install is logged; the backend starts with what's installed
+        }
+
+        private void SetEnvStatus(string? text)
+        {
+            _envStatusText = text;
+            try { Dispatcher.BeginInvoke(new Action(() => UpdateConnectionStatus(_lastConnectionStatus ?? "Connecting"))); } catch { }
+        }
+
         private void TryStopBackendHelper()
         {
             try
@@ -1358,6 +1444,7 @@ namespace UFOS.ai
         {
             Dispatcher.Invoke(() =>
             {
+                _lastConnectionStatus = status;
                 var s = (status ?? string.Empty).ToUpperInvariant();
                 Brush color = Brushes.Gray;
                 string text = status ?? "";
@@ -1365,6 +1452,15 @@ namespace UFOS.ai
                 else if (s.Contains("CONNECTING") || s.Contains("RECONNECT")) color = Brushes.Gold;
                 else if (s.Contains("ERROR")) color = Brushes.Red;
                 else if (s.Contains("DISCONNECTED")) color = Brushes.Gray;
+
+                // While run_backend.ps1 installs Python packages, say so instead of
+                // "Connecting"/"Error" (the backend simply isn't up yet).
+                var envText = _envStatusText;
+                if (envText != null && !(s.Contains("CONNECTED") && !s.Contains("DISCONNECTED")))
+                {
+                    color = envText.Contains("failed", StringComparison.OrdinalIgnoreCase) ? Brushes.OrangeRed : Brushes.Gold;
+                    text = envText;
+                }
 
                 ConnectionIndicator.Fill = color;
                 ConnectionStatusText.Text = text;
@@ -1390,36 +1486,71 @@ namespace UFOS.ai
 
         }
 
+        // Title bar (borderless window, conventions "Borderless windows"): double-click toggles maximize;
+        // dragging a MAXIMIZED window restores it only once the mouse actually moves
+        // with the button held (a plain click does nothing), keeps the cursor at its
+        // relative spot on the title bar, then drags. Same pattern as
+        // HedgeFund/HedgeFundWindow.xaml.cs (TitleBar_MouseMove).
+        private bool _restoreOnDrag;
+        private System.Windows.Point _restoreDragStart;
+
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
+            if (e.LeftButton != MouseButtonState.Pressed) return;
             if (e.ClickCount == 2)
             {
+                _restoreOnDrag = false;
                 WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
                 return;
             }
-
-            if (e.LeftButton != MouseButtonState.Pressed)
-            {
-                return;
-            }
-
             if (WindowState == WindowState.Maximized)
             {
-                // A plain DragMove() on an already-maximized borderless window doesn't
-                // restore it first (unlike a native title bar), so dragging did nothing
-                // and the window was effectively stuck full-screen. Restore it under the
-                // cursor first, then let the drag continue normally.
-                var cursorScreenPos = PointToScreen(e.GetPosition(this));
-                var mouseRatioX = e.GetPosition(this).X / Math.Max(1, ActualWidth);
-                var restoreBounds = RestoreBounds;
-
-                WindowState = WindowState.Normal;
-
-                Left = cursorScreenPos.X - (restoreBounds.Width * mouseRatioX);
-                Top = cursorScreenPos.Y - 10;
+                _restoreOnDrag = true;
+                _restoreDragStart = e.GetPosition(this);
+                ((UIElement)sender).CaptureMouse();
+                return;
             }
+            try { DragMove(); } catch { }
+        }
 
-            try { this.DragMove(); } catch { }
+        private void TitleBar_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_restoreOnDrag || e.LeftButton != MouseButtonState.Pressed) return;
+            var pos = e.GetPosition(this);
+            if (Math.Abs(pos.X - _restoreDragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(pos.Y - _restoreDragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+            _restoreOnDrag = false;
+            ((UIElement)sender).ReleaseMouseCapture();
+
+            var ratioX = ActualWidth > 0 ? pos.X / ActualWidth : 0.5;
+            var restoreWidth = RestoreBounds.Width;
+            // Cursor position in screen DIPs (PointToScreen returns device pixels).
+            var toDip = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice
+                        ?? System.Windows.Media.Matrix.Identity;
+            var cursor = toDip.Transform(PointToScreen(pos));
+
+            WindowState = WindowState.Normal;
+            Left = cursor.X - restoreWidth * ratioX;
+            Top = cursor.Y - 9; // middle of the 18 px title bar
+            try { DragMove(); } catch { }
+        }
+
+        private void TitleBar_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_restoreOnDrag) return;
+            _restoreOnDrag = false;
+            ((UIElement)sender).ReleaseMouseCapture();
+        }
+
+        // Maximized: square corners. The WM_GETMINMAXINFO hook (ConstrainMaximizedBoundsToWorkArea) already fits
+        // the maximized window to the work area, and a transparent window has no resize frame
+        // hanging off the screen, so no extra padding is needed.
+        private void Window_StateChanged(object? sender, EventArgs e)
+        {
+            var maximized = WindowState == WindowState.Maximized;
+            RootBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(8);
+            TitleBarBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(8, 8, 0, 0);
         }
 
         private void MinimizeButton_Click(object sender, RoutedEventArgs e)
@@ -1540,7 +1671,7 @@ namespace UFOS.ai
                 : AiContent.Glyph + " AI VERDICTS · written automatically by a language model";
             VerdictAiCaveat.Visibility = hasVerdict ? Visibility.Visible : Visibility.Collapsed;
             System.Windows.Automation.AutomationProperties.SetName(VerdictTextPanel,
-                hasVerdict ? AiContent.AutomationName(model, generatedAt) : "AI verdicts will appear here");
+                hasVerdict ? AiContent.AutomationName(model, generatedAt) : "AI-generated verdicts will appear here");
         }
 
         public void UpdateReason(string reason)

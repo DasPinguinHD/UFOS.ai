@@ -9,8 +9,9 @@
         Loaded="Window_Loaded"
         Closing="Window_Closing"
         SizeChanged="Window_SizeChanged"
-        WindowStyle="None" AllowsTransparency="True" Background="Transparent">
-    <Border Background="#111111" CornerRadius="8" Padding="0" SnapsToDevicePixels="True">
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        StateChanged="Window_StateChanged">
+    <Border x:Name="RootBorder" Background="#111111" CornerRadius="8" Padding="0" SnapsToDevicePixels="True">
         <Grid>
             <Grid.Resources>
                 <!-- Round button style for Apple-like controls -->
@@ -160,7 +161,8 @@
             </Grid.RowDefinitions>
 
             <!-- Custom title bar (half size, black, rounded top corners) -->
-            <Border Grid.Row="0" Background="Black" CornerRadius="8,8,0,0" Height="18" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+            <Border x:Name="TitleBarBorder" Grid.Row="0" Background="Black" CornerRadius="8,8,0,0" Height="18" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
+                    MouseMove="TitleBar_MouseMove" MouseLeftButtonUp="TitleBar_MouseLeftButtonUp">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0">
                     <!-- Minimize: amber round button with minus symbol -->
                     <Button x:Name="MinimizeButton" Click="MinimizeButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFEDB400" BorderBrush="Transparent">

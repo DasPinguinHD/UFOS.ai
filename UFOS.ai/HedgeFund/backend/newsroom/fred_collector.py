@@ -16,15 +16,24 @@ of the raw index level, which nobody reads directly.
 
 Each poll emits one event per series with the stable id "macro-<SERIES>"
 (main.py keeps only the latest per id).
+
+2026-09-25: observations are kept in the local SQLite store (newsroom/db.py)
+and fetched incrementally (see "Incremental fetching" below); the regime event
+also carries the extended view (US trail since 2000, recessions, components,
+euro-area point from Eurostat, phase behaviour).
 """
 import asyncio
+import json
 import logging
+import time
+from datetime import date, timedelta
 
 import aiohttp
 
 from config import FRED_API_KEY, FRED_POLL_SECONDS
 from .store import make_event
 from . import macro_derived
+from . import db as store_db
 from .macro_rules import stability_signal, describe_rules
 
 logger = logging.getLogger(__name__)
@@ -93,24 +102,126 @@ SAHM_SERIES = "SAHMREALTIME"
 LONG_HISTORY_START = "2000-01-01"
 
 
-async def _fetch_series(session: aiohttp.ClientSession, series_id: str, units,
-                        points_wanted: int = HISTORY_POINTS, frequency: str = None) -> list:
-    """Returns up to points_wanted observations, oldest first, as
-    [{"date": "YYYY-MM-DD", "value": float}]. FRED marks missing values '.'.
-    frequency="m" lets FRED aggregate a daily series to monthly averages."""
+# --- Incremental fetching + local SQLite store (2026-09-25) ---
+# Every series is fetched as published ("native" frequency) since
+# LONG_HISTORY_START ONCE, kept in _OBS and mirrored to the SQLite store
+# (newsroom/db.py, table macro_observations). Later polls only ask FRED for
+# observations from (latest stored date − REVISION_WINDOW_DAYS) onward —
+# FRED revises CPI, payrolls, industrial production etc. — and replace that
+# tail. A full refetch happens when nothing is stored or every
+# FULL_REFRESH_SECONDS (7 days, per series, meta key "obs_full:<id>:<units>").
+# The card history (last 24/48 points), the monthly long history (monthly
+# series as they are; daily/weekly series as local monthly averages, the same
+# thing FRED's frequency=m&aggregation_method=avg returned before) and every
+# derived indicator are built from this cache — so the cards also show
+# instantly at startup (load_state() + build_events()).
+# Before: ~45 requests per poll (recent + long history per series). Now: one
+# small request per series (18) + Eurostat (1) + releases/dates (1).
+FREQ_NATIVE = "native"
+FULL_REFRESH_SECONDS = 7 * 86400
+REVISION_WINDOW_DAYS = 400
+RECESSION_SERIES = "USREC"  # NBER-based recession indicator, monthly 0/1 (extended regime view)
+# Euro-area industrial production (extended regime view): Eurostat JSON-stat API, no key.
+EURO_IP_SERIES = "EUROSTAT_IP_EA20"
+EURO_IP_UNITS = "PCH_SM"   # % change vs. same month a year earlier (= YoY)
+EURO_HICP_SERIES = "CP0000EZ19M086NEST"
+EUROSTAT_URL = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/sts_inpr_m"
+EUROSTAT_PARAMS = {"geo": "EA20", "nace_r2": "B-D", "s_adj": "CA", "unit": EURO_IP_UNITS,
+                   "format": "JSON", "lang": "EN"}
+
+_OBS: dict = {}          # (series_id, units key) -> {date: raw value (unscaled)}
+_LAST_FULL: dict = {}    # (series_id, units key) -> epoch seconds of the last full refetch
+_NEXT_RELEASE: dict = {} # series_id -> {"date", "release"} (last known, also stored in meta)
+_requests = 0            # HTTP requests of the current poll (logged)
+
+
+def _ukey(units) -> str:
+    return units or "lin"  # FRED's own code for "levels"
+
+
+def fetch_specs() -> list:
+    """Every (series_id, FRED units) one poll fetches."""
+    specs = [(sid, units) for sid, _l, _u, units, _n in SERIES]
+    specs += [(SAHM_SERIES, None)] + [(sid, "pc1") for sid in REGIME_AUX_SERIES] + [(RECESSION_SERIES, None)]
+    return specs
+
+
+def _native_monthly(series_id: str) -> bool:
+    return series_id in MONTHLY_SERIES or series_id in (SAHM_SERIES, RECESSION_SERIES, *REGIME_AUX_SERIES)
+
+
+def plan_fetch(key: tuple, now: float = None) -> tuple:
+    """(observation_start "YYYY-MM-DD", full refetch?) for one cached series."""
+    now = time.time() if now is None else now
+    obs = _OBS.get(key)
+    if not obs or now - _LAST_FULL.get(key, 0) >= FULL_REFRESH_SECONDS:
+        return LONG_HISTORY_START, True
+    start = date.fromisoformat(max(obs)[:10]) - timedelta(days=REVISION_WINDOW_DAYS)
+    return max(start.isoformat(), LONG_HISTORY_START), False
+
+
+def apply_fetch(key: tuple, points: list, start: str, full: bool, now: float = None) -> None:
+    """Merges fetched points into the cache: full = replace the series,
+    otherwise replace everything on/after start (revisions, withdrawn values).
+    An empty answer never wipes cached data."""
+    if not points:
+        return
+    cur = _OBS.setdefault(key, {})
+    if full:
+        cur.clear()
+        _LAST_FULL[key] = time.time() if now is None else now
+    else:
+        for d in [d for d in cur if d >= start]:
+            del cur[d]
+    for p in points:
+        cur[p["date"]] = p["value"]
+
+
+async def _persist(key: tuple, points: list, start: str, full: bool) -> None:
+    if not points or not store_db.is_enabled():
+        return
+    sid, units = key
+    await asyncio.to_thread(store_db.replace_observations, sid, units, FREQ_NATIVE, points,
+                            None if full else start, full)
+    if full:
+        store_db.meta_set(f"obs_full:{sid}:{units}", _LAST_FULL.get(key, time.time()))
+
+
+def load_state() -> int:
+    """Startup: fills the observation cache, the full-refetch times, the
+    release-id cache and the last known next-release dates from the SQLite
+    store. Returns the number of series loaded (0 when the store is off)."""
+    stored = store_db.load_observations(FREQ_NATIVE)
+    for (sid, units, _freq), pts in stored.items():
+        _OBS[(sid, units)] = {p["date"]: p["value"] for p in pts}
+    for k, v in store_db.meta_prefix("obs_full:").items():
+        try:
+            _, sid, units = k.split(":", 2)
+            _LAST_FULL[(sid, units)] = float(v)
+        except ValueError:
+            continue
+    try:
+        for sid, (rid, name) in json.loads(store_db.meta_get("fred_release_ids") or "{}").items():
+            _RELEASE_IDS[sid] = (rid, name)
+        _NEXT_RELEASE.update(json.loads(store_db.meta_get("fred_next_release") or "{}"))
+    except Exception as ex:
+        logger.warning("Stored FRED release info unreadable: %s", ex)
+    return len(stored)
+
+
+async def _fetch_observations(session: aiohttp.ClientSession, series_id: str, units,
+                              observation_start: str) -> list:
+    """Native observations from observation_start on, oldest first, as
+    [{"date": "YYYY-MM-DD", "value": float}]. FRED marks missing values '.'."""
+    global _requests
     params = {
-        "series_id": series_id,
-        "api_key": FRED_API_KEY,
-        "file_type": "json",
-        "sort_order": "desc",
-        "limit": str(points_wanted + 10),  # a few spare for '.' gaps (holidays)
+        "series_id": series_id, "api_key": FRED_API_KEY, "file_type": "json",
+        "sort_order": "asc", "observation_start": observation_start,
     }
     if units:
         params["units"] = units
-    if frequency:
-        params["frequency"] = frequency
-        params["aggregation_method"] = "avg"
-    async with session.get(OBSERVATIONS_URL, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+    _requests += 1
+    async with session.get(OBSERVATIONS_URL, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
         resp.raise_for_status()
         data = await resp.json(content_type=None)
     points = []
@@ -119,32 +230,68 @@ async def _fetch_series(session: aiohttp.ClientSession, series_id: str, units,
             points.append({"date": obs["date"], "value": float(obs["value"])})
         except (KeyError, TypeError, ValueError):
             continue  # '.' = no value for that date
-        if len(points) >= points_wanted:
-            break
-    points.reverse()
     return points
 
 
-async def _fetch_long(session: aiohttp.ClientSession, series_id: str, units) -> list:
-    """Monthly averages since LONG_HISTORY_START, oldest first (FRED aggregates
-    daily/weekly series itself with frequency=m)."""
-    params = {
-        "series_id": series_id, "api_key": FRED_API_KEY, "file_type": "json",
-        "sort_order": "asc", "observation_start": LONG_HISTORY_START,
-        "frequency": "m", "aggregation_method": "avg",
-    }
-    if units:
-        params["units"] = units
-    async with session.get(OBSERVATIONS_URL, params=params, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+def parse_jsonstat(payload: dict) -> list:
+    """Eurostat JSON-stat 2.0 -> [{"date": "YYYY-MM-01", "value"}] oldest first.
+    `value` is a sparse object {"<flat index>": number} (or a list); the time
+    labels live in dimension.time.category.index ({"2025-01": 0, ...}). Every
+    other dimension is expected to have one category (index 0)."""
+    time_index = payload["dimension"]["time"]["category"]["index"]
+    if isinstance(time_index, list):
+        time_index = {label: i for i, label in enumerate(time_index)}
+    ids, sizes = payload.get("id") or ["time"], payload.get("size") or [len(time_index)]
+    stride = 1
+    for dim, size in zip(reversed(ids), reversed(sizes)):
+        if dim == "time":
+            break
+        stride *= size
+    values = payload.get("value") or {}
+    out = []
+    for label, i in time_index.items():
+        flat = int(i) * stride
+        v = values.get(str(flat)) if isinstance(values, dict) else (values[flat] if flat < len(values) else None)
+        if v is None:
+            continue
+        month = str(label).replace("M", "-") if "M" in str(label) else str(label)  # old "2025M01" style
+        try:
+            out.append({"date": f"{month[:7]}-01", "value": float(v)})
+        except (TypeError, ValueError):
+            continue
+    out.sort(key=lambda p: p["date"])
+    return out
+
+
+async def _fetch_eurostat_ip(session: aiohttp.ClientSession, since_month: str) -> list:
+    global _requests
+    _requests += 1
+    params = {**EUROSTAT_PARAMS, "sinceTimePeriod": since_month}
+    async with session.get(EUROSTAT_URL, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
         resp.raise_for_status()
         data = await resp.json(content_type=None)
-    points = []
-    for obs in data.get("observations") or []:
-        try:
-            points.append({"date": obs["date"], "value": float(obs["value"])})
-        except (KeyError, TypeError, ValueError):
-            continue
-    return points
+    return parse_jsonstat(data)
+
+
+def monthly_average(points: list) -> list:
+    """Daily/weekly points -> monthly averages dated YYYY-MM-01 (the current,
+    partial month included — as FRED's frequency=m aggregation does)."""
+    buckets: dict = {}
+    for p in points:
+        buckets.setdefault(p["date"][:7], []).append(p["value"])
+    return [{"date": f"{m}-01", "value": round(sum(v) / len(v), 4)} for m, v in sorted(buckets.items())]
+
+
+def _points(series_id: str, units) -> list:
+    obs = _OBS.get((series_id, _ukey(units))) or {}
+    pts = [{"date": d, "value": v} for d, v in sorted(obs.items())]
+    if series_id in SCALE:
+        pts = [{"date": p["date"], "value": round(p["value"] * SCALE[series_id], 4)} for p in pts]
+    return pts
+
+
+def _long_of(series_id: str, pts: list) -> list:
+    return pts if _native_monthly(series_id) else monthly_average(pts)
 
 
 def _ordinal(n: int) -> str:
@@ -190,6 +337,8 @@ _RELEASE_IDS: dict = {}  # series_id -> (release_id, release_name); cached for t
 
 
 async def _get_json(session, endpoint: str, params: dict) -> dict:
+    global _requests
+    _requests += 1
     params = {**params, "api_key": FRED_API_KEY, "file_type": "json"}
     async with session.get(f"https://api.stlouisfed.org/fred/{endpoint}", params=params,
                            timeout=aiohttp.ClientTimeout(total=15)) as resp:
@@ -251,117 +400,90 @@ def _fmt(value: float, unit: str) -> str:
     return f"{value:.2f}{'%' if unit == '%' else ' ' + unit}"
 
 
-async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> None:
-    placed = 0
-    errors = []
-    full = {}
-    cards = {}
-    # Series are fetched concurrently (at most FRED_CONCURRENCY requests at a time)
-    # and each card is emitted as soon as its series arrives. Sequentially, the
-    # 14 requests took long enough that the view sat on "loading" for a while.
-    sem = asyncio.Semaphore(FRED_CONCURRENCY)
+def _upcoming_releases(next_release: dict = None) -> dict:
+    today = date.today().isoformat()
+    source = _NEXT_RELEASE if next_release is None else next_release
+    return {sid: r for sid, r in source.items() if isinstance(r, dict) and (r.get("date") or "") >= today}
 
-    async def _one(series_id, label, unit, units, note):
-        nonlocal placed
+
+def _card_event(spec: tuple, pts: list, long_pts: list, upcoming: dict) -> tuple:
+    """(card event, recent points used for the derived indicators)."""
+    series_id, label, unit, _units, note = spec
+    fetched = pts[-(MONTHLY_FETCH_POINTS if series_id in MONTHLY_SERIES else HISTORY_POINTS):]
+    history = fetched[-HISTORY_POINTS:]
+    latest = history[-1]
+    previous = history[-2] if len(history) > 1 else None
+    change = round(latest["value"] - previous["value"], 4) if previous else None
+
+    summary = f"{_fmt(latest['value'], unit)} as of {latest['date']}"
+    if previous:
+        summary += f" ({change:+.2f} {'pp' if unit in ('%', 'pp') else unit} vs. {previous['date']})"
+
+    event = make_event(
+        event_id=f"macro-{series_id}",
+        category="macro",
+        title=label,
+        summary=summary,
+        source="FRED",
+        url=f"https://fred.stlouisfed.org/series/{series_id}",
+    )
+    m = {
+        "series_id": series_id,
+        "group": GROUP.get(series_id, "us"),
+        "unit": unit,
+        "value": latest["value"],
+        "date": latest["date"],
+        "previous": previous["value"] if previous else None,
+        "previous_date": previous["date"] if previous else None,
+        "change": change,
+        "history": history,
+        "note": note,
+        "signal": {**stability_signal(series_id, history), "rules": describe_rules(series_id)},
+    }
+    if long_pts:
+        m["long_history"] = long_pts
+        m["context"] = history_context(long_pts, m["value"])
+    if series_id in upcoming:
+        m["next_release"] = upcoming[series_id]
+    event["macro"] = m
+    return event, fetched
+
+
+def build_events(next_release: dict = None) -> tuple:
+    """Every macro event (cards, derived indicators, regime map incl. the
+    extended view) from the local observation cache — no I/O. Used after each
+    poll and at startup (cards from the SQLite store before the first poll).
+    Returns (events, card count, derived count, errors)."""
+    upcoming = _upcoming_releases(next_release)
+    events, errors = [], []
+    full, long = {}, {}
+    for spec in SERIES:
+        sid = spec[0]
+        pts = _points(sid, spec[3])
+        if not pts:
+            continue
         try:
-            wanted = MONTHLY_FETCH_POINTS if series_id in MONTHLY_SERIES else HISTORY_POINTS
-            async with sem:
-                fetched = await _fetch_series(session, series_id, units, points_wanted=wanted)
-            if not fetched:
-                return
-            if series_id in SCALE:
-                fetched = [{"date": p["date"], "value": round(p["value"] * SCALE[series_id], 4)} for p in fetched]
-            full[series_id] = fetched
-            history = fetched[-HISTORY_POINTS:]
-            latest = history[-1]
-            previous = history[-2] if len(history) > 1 else None
-            change = round(latest["value"] - previous["value"], 4) if previous else None
-
-            summary = f"{_fmt(latest['value'], unit)} as of {latest['date']}"
-            if previous:
-                summary += f" ({change:+.2f} {'pp' if unit in ('%', 'pp') else unit} vs. {previous['date']})"
-
-            event = make_event(
-                event_id=f"macro-{series_id}",
-                category="macro",
-                title=label,
-                summary=summary,
-                source="FRED",
-                url=f"https://fred.stlouisfed.org/series/{series_id}",
-            )
-            event["macro"] = {
-                "series_id": series_id,
-                "group": GROUP.get(series_id, "us"),
-                "unit": unit,
-                "value": latest["value"],
-                "date": latest["date"],
-                "previous": previous["value"] if previous else None,
-                "previous_date": previous["date"] if previous else None,
-                "change": change,
-                "history": history,
-                "note": note,
-                "signal": {**stability_signal(series_id, history), "rules": describe_rules(series_id)},
-            }
-            emit(event)          # show the card right away …
-            cards[series_id] = event  # … and re-emit it below with long history / context / next release
-            placed += 1
+            long[sid] = _long_of(sid, pts)
+            event, full[sid] = _card_event(spec, pts, long[sid], upcoming)
+            events.append(event)
         except Exception as ex:
-            msg = str(ex) or type(ex).__name__
-            errors.append(f"{series_id}: {msg}")
-            logger.warning("FRED series %s failed: %s", series_id, msg)
-
-    # Inputs only used for derived indicators / the regime map (no cards).
-    async def _extra(series_id, units, points, frequency=None):
-        try:
-            async with sem:
-                return await _fetch_series(session, series_id, units, points_wanted=points, frequency=frequency)
-        except Exception as ex:
-            errors.append(f"{series_id} (extra): {str(ex) or type(ex).__name__}")
-            logger.warning("FRED extra series %s failed: %s", series_id, ex)
-            return []
-
-    started = asyncio.get_running_loop().time()
-    # Card series first in the queue (they show up first), extras behind them.
-    _, extras = await asyncio.gather(
-        asyncio.gather(*(_one(*spec) for spec in SERIES)),
-        asyncio.gather(_extra("T10Y2Y", None, CURVE_MONTHLY_POINTS, frequency="m"),
-                       _extra(SAHM_SERIES, None, CURVE_MONTHLY_POINTS),
-                       *(_extra(sid, "pc1", MONTHLY_FETCH_POINTS) for sid in REGIME_AUX_SERIES)))
-    curve_monthly, sahm_recent, *aux_lists = extras
-    aux = dict(zip(REGIME_AUX_SERIES, aux_lists))
-
-    # --- Second stage: long monthly history since 2000 + next release dates ---
-    async def _long(series_id, units):
-        try:
-            async with sem:
-                pts = await _fetch_long(session, series_id, units)
-            if series_id in SCALE:
-                pts = [{"date": p["date"], "value": round(p["value"] * SCALE[series_id], 4)} for p in pts]
-            return series_id, pts
-        except Exception as ex:
-            logger.warning("FRED long history %s failed: %s", series_id, ex)
-            return series_id, []
-
-    long_specs = [(sid, units) for sid, _l, _u, units, _n in SERIES] + [(SAHM_SERIES, None)]
-    long_results, next_release = await asyncio.gather(
-        asyncio.gather(*(_long(sid, units) for sid, units in long_specs)),
-        _next_releases(session, [sid for sid, *_ in SERIES if sid not in DAILY_SERIES], sem))
-    long = {sid: pts for sid, pts in long_results if pts}
-    for series_id, event in cards.items():
-        m = event["macro"]
-        if long.get(series_id):
-            m["long_history"] = long[series_id]
-            m["context"] = history_context(long[series_id], m["value"])
-        if series_id in next_release:
-            m["next_release"] = next_release[series_id]
-        emit(event)
+            errors.append(f"{sid}: {str(ex) or type(ex).__name__}")
+            logger.exception("FRED card %s failed", sid)
+    placed = len(events)
+    sahm = _points(SAHM_SERIES, None)
+    if sahm:
+        long[SAHM_SERIES] = sahm
+    curve_monthly = (long.get("T10Y2Y") or [])[-CURVE_MONTHLY_POINTS:]
+    aux_long = {sid: _points(sid, "pc1") for sid in REGIME_AUX_SERIES}
+    aux = {sid: pts[-MONTHLY_FETCH_POINTS:] for sid, pts in aux_long.items()}
 
     # --- Derived indicators (macro_derived.py) ---
     derived_placed = 0
     try:
         long_derived = macro_derived.compute(long, long.get("T10Y2Y") or [], long.get(SAHM_SERIES))
-        for key, series in macro_derived.compute(full, curve_monthly, sahm_recent).items():
-            d = macro_derived.to_macro(key, series, long_derived.get(key))
+        recent = macro_derived.compute(full, curve_monthly, sahm[-CURVE_MONTHLY_POINTS:])
+        for key, series in recent.items():
+            d = macro_derived.to_macro(key, series, long_derived.get(key), recent.formulas.get(key))
             if long_derived.get(key):
                 d["macro"]["context"] = history_context(long_derived[key], d["macro"]["value"])
             m = d["macro"]
@@ -374,16 +496,25 @@ async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> Non
                 url=None,
             )
             event["macro"] = m
-            emit(event)
+            events.append(event)
             derived_placed += 1
     except Exception as ex:
         errors.append(f"derived: {str(ex) or type(ex).__name__}")
         logger.exception("Derived macro indicators failed")
 
-    # --- Macro regime map (growth × inflation momentum) ---
+    # --- Macro regime map (growth × inflation momentum) + extended view ---
     try:
         reg = macro_derived.regime(full, aux)
         if reg:
+            try:
+                reg["extended"] = macro_derived.regime_extended(
+                    {**aux_long, "PCEPILFE": long.get("PCEPILFE"), "CPIAUCSL": long.get("CPIAUCSL")},
+                    usrec=_points(RECESSION_SERIES, None),
+                    euro_ip=_points(EURO_IP_SERIES, EURO_IP_UNITS),
+                    euro_hicp=long.get(EURO_HICP_SERIES))
+            except Exception as ex:
+                errors.append(f"regime extended: {str(ex) or type(ex).__name__}")
+                logger.exception("Extended regime view failed")
             event = make_event(
                 event_id="macro-regime",
                 category="macro",
@@ -393,13 +524,89 @@ async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> Non
                 url=None,
             )
             event["macro"] = {"series_id": "REGIME", "group": "regime", "regime": reg}
-            emit(event)
+            events.append(event)
     except Exception as ex:
         errors.append(f"regime: {str(ex) or type(ex).__name__}")
         logger.exception("Macro regime map failed")
+    return events, placed, derived_placed, errors
 
-    logger.info("FRED poll done in %.1fs: %d series, %d derived, %d error(s)",
-                asyncio.get_running_loop().time() - started, placed, derived_placed, len(errors))
+
+async def _refresh_next_releases(session, sem) -> None:
+    try:
+        found = await _next_releases(session, [sid for sid, *_ in SERIES if sid not in DAILY_SERIES], sem)
+    except Exception as ex:
+        logger.warning("FRED next release dates failed: %s", ex)
+        return
+    if found:
+        _NEXT_RELEASE.clear()
+        _NEXT_RELEASE.update(found)
+        store_db.meta_set("fred_next_release", json.dumps(found))
+    if _RELEASE_IDS:
+        store_db.meta_set("fred_release_ids", json.dumps({sid: list(v) for sid, v in _RELEASE_IDS.items()}))
+
+
+async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> None:
+    global _requests
+    _requests = 0
+    errors = []
+    full_refetches = 0
+    # At most FRED_CONCURRENCY requests at a time; each card is emitted as soon
+    # as its series arrives (matters on the very first start, when nothing is stored).
+    sem = asyncio.Semaphore(FRED_CONCURRENCY)
+    cards = {spec[0]: spec for spec in SERIES}
+    started = asyncio.get_running_loop().time()
+
+    async def _one(series_id, units):
+        nonlocal full_refetches
+        key = (series_id, _ukey(units))
+        start, full = plan_fetch(key)
+        try:
+            async with sem:
+                pts = await _fetch_observations(session, series_id, units, start)
+        except Exception as ex:
+            msg = str(ex) or type(ex).__name__
+            errors.append(f"{series_id}: {msg}")
+            logger.warning("FRED series %s failed (keeping stored data): %s", series_id, msg)
+            return
+        full_refetches += 1 if full else 0
+        apply_fetch(key, pts, start, full)
+        await _persist(key, pts, start, full)
+        if series_id in cards and _OBS.get(key):
+            try:
+                all_pts = _points(series_id, units)
+                emit(_card_event(cards[series_id], all_pts, _long_of(series_id, all_pts), _upcoming_releases())[0])
+            except Exception:
+                logger.exception("FRED card %s failed", series_id)
+
+    async def _euro():
+        nonlocal full_refetches
+        key = (EURO_IP_SERIES, EURO_IP_UNITS)
+        start, full = plan_fetch(key)
+        try:
+            async with sem:
+                pts = await _fetch_eurostat_ip(session, start[:7])
+        except Exception as ex:
+            logger.warning("Eurostat industrial production failed (euro-area regime point keeps stored data "
+                           "or stays empty): %s", str(ex) or type(ex).__name__)
+            return
+        if not pts:
+            logger.warning("Eurostat industrial production: no observations since %s", start[:7])
+            return
+        full_refetches += 1 if full else 0
+        apply_fetch(key, pts, start, full)
+        await _persist(key, pts, start, full)
+
+    await asyncio.gather(asyncio.gather(*(_one(sid, units) for sid, units in fetch_specs())),
+                         _euro(), _refresh_next_releases(session, sem))
+
+    events, placed, derived_placed, build_errors = build_events()
+    for event in events:
+        emit(event)
+    errors += build_errors
+
+    logger.info("FRED poll done in %.1fs: %d HTTP requests (%d full history refetches), %d series, %d derived, "
+                "%d error(s)", asyncio.get_running_loop().time() - started, _requests, full_refetches,
+                placed, derived_placed, len(errors))
     if errors and placed == 0:
         await report_status(False, "; ".join(errors))
     else:

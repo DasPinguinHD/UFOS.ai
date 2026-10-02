@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 
 namespace UFOS.ai.Logging
 {
@@ -20,6 +21,32 @@ namespace UFOS.ai.Logging
         private static readonly object _sync = new();
         private static readonly LinkedList<LogEntry> _buffer = new();
         private static readonly string _logFilePath = ResolveLogFilePath();
+
+        // File sink (2026-09-25, Copilot review "batch logging instead of forcing per-message
+        // fsync"): lines are queued and appended in one batch about once per second instead of
+        // opening the file and forcing it to disk (Flush(true)) for every single message — the
+        // LiveStreamAgent logs every WebSocket message. A durable flush (fsync) only happens for
+        // errors (so the lines before a crash are on disk), on process exit and on Flush().
+        // Trade-off: after a hard kill up to ~1 s of Info/Warn lines can be missing.
+        private const int FlushIntervalMs = 1000;
+        private const int MaxPendingLines = 20000;
+        private static readonly object _pendingSync = new();
+        private static readonly object _fileSync = new();
+        private static readonly List<string> _pending = new();
+        private static readonly Timer _flushTimer = new(_ => FlushPending(durable: false), null, FlushIntervalMs, FlushIntervalMs);
+
+        static AppLog()
+        {
+            try
+            {
+                AppDomain.CurrentDomain.ProcessExit += (_, _) => Flush();
+                AppDomain.CurrentDomain.UnhandledException += (_, _) => Flush();
+            }
+            catch { }
+        }
+
+        /// <summary>Writes all queued lines to the log file and forces them to disk.</summary>
+        public static void Flush() => FlushPending(durable: true);
 
         /// <summary>
         /// Wird für jeden neuen Log-Eintrag ausgelöst. Abonnenten (z.B. ein Log-Fenster)
@@ -73,29 +100,50 @@ namespace UFOS.ai.Logging
                 }
             }
 
-            TryAppendToFile(entry);
+            QueueForFile(entry);
 
             try { LogAdded?.Invoke(entry); } catch { /* never let a listener crash logging */ }
         }
 
-        private static void TryAppendToFile(LogEntry entry)
+        private static void QueueForFile(LogEntry entry)
         {
-            try
+            lock (_pendingSync)
             {
-                var dir = Path.GetDirectoryName(_logFilePath);
-                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                {
-                    Directory.CreateDirectory(dir);
-                }
-
-                var bytes = Encoding.UTF8.GetBytes(entry + Environment.NewLine);
-                using var fs = new FileStream(_logFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
-                fs.Write(bytes, 0, bytes.Length);
-                fs.Flush(true);
+                _pending.Add(entry + Environment.NewLine);
+                if (_pending.Count > MaxPendingLines) _pending.RemoveRange(0, _pending.Count - MaxPendingLines);
             }
-            catch
+            if (entry.Level == LogLevel.Error) FlushPending(durable: true);
+        }
+
+        private static void FlushPending(bool durable)
+        {
+            // _fileSync keeps batches in order when the timer and an Error flush overlap.
+            lock (_fileSync)
             {
-                // swallow to avoid crashing the calling module because of logging failures
+                string batch;
+                lock (_pendingSync)
+                {
+                    if (_pending.Count == 0) return;
+                    batch = string.Concat(_pending);
+                    _pending.Clear();
+                }
+                try
+                {
+                    var dir = Path.GetDirectoryName(_logFilePath);
+                    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+
+                    var bytes = Encoding.UTF8.GetBytes(batch);
+                    using var fs = new FileStream(_logFilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                    fs.Write(bytes, 0, bytes.Length);
+                    if (durable) fs.Flush(true);
+                }
+                catch
+                {
+                    // swallow to avoid crashing the calling module because of logging failures
+                }
             }
         }
 

@@ -37,7 +37,18 @@ DERIVED = {
 from .macro_rules import stability_signal, describe_rules
 
 OK_REASON = "Within its usual range."
-_formula_override: dict = {}
+
+
+class DerivedSeries(dict):
+    """key -> derived history, plus .formulas: key -> formula text that differs
+    from DERIVED (e.g. the Sahm fallback). Returned per compute() call instead of
+    the former module-level _formula_override dict, whose content depended on
+    which of the two compute() calls ran last (Copilot review 2026-09-25,
+    "SAHM ... initialization order")."""
+
+    def __init__(self, *args, formulas: dict = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.formulas = dict(formulas or {})
 
 
 def _by_date(points: list) -> dict:
@@ -83,32 +94,33 @@ def compute(full: dict, curve_monthly: list, sahm_official: list = None) -> dict
     """full: series_id -> monthly history (oldest first). Returns key -> derived history.
     Called twice per poll: with the recent histories (cards, signals) and with the
     long monthly histories since 2000 (range switcher, percentiles)."""
-    out = {}
+    out, formulas = {}, {}
     inflation = full.get("PCEPILFE") or full.get("CPIAUCSL")
     if full.get("FEDFUNDS") and inflation:
         # Core PCE lags a month behind Fed funds: _combine keeps the common dates.
         out["REAL_POLICY_RATE"] = _combine(full["FEDFUNDS"], inflation, lambda a, b: a - b)
-        _formula_override["REAL_POLICY_RATE"] = (None if full.get("PCEPILFE")
-                                                 else "Fed funds rate − CPI inflation (YoY) — core PCE unavailable")
+        if not full.get("PCEPILFE"):
+            formulas["REAL_POLICY_RATE"] = "Fed funds rate − CPI inflation (YoY) — core PCE unavailable"
     if curve_monthly:
         out["CURVE_UNINVERSION"] = curve_monthly
     if sahm_official:
         # FRED's official real-time Sahm indicator (SAHMREALTIME, Claudia Sahm) —
         # preferred over our own reconstruction, which is only the fallback.
         out["SAHM_RULE"] = sahm_official
-        _formula_override["SAHM_RULE"] = None
     elif full.get("UNRATE"):
         out["SAHM_RULE"] = _sahm_series(full["UNRATE"])
-        _formula_override["SAHM_RULE"] = ("3-month avg. unemployment − its low of the previous 12 months "
-                                          "(own calculation; official SAHMREALTIME unavailable)")
+        formulas["SAHM_RULE"] = ("3-month avg. unemployment − its low of the previous 12 months "
+                                 "(own calculation; official SAHMREALTIME unavailable)")
     if full.get("UNRATE") and full.get("CPIAUCSL"):
         out["MISERY_INDEX"] = _combine(full["UNRATE"], full["CPIAUCSL"], lambda a, b: a + b)
-    return {k: v for k, v in out.items() if len(v) >= 2}
+    kept = {k: v for k, v in out.items() if len(v) >= 2}
+    return DerivedSeries(kept, formulas={k: f for k, f in formulas.items() if k in kept})
 
 
-def to_macro(key: str, full: list, long_history: list = None) -> dict:
-    label, unit, formula, note = DERIVED[key]
-    formula = _formula_override.get(key) or formula
+def to_macro(key: str, full: list, long_history: list = None, formula: str = None) -> dict:
+    """formula: the text from compute()'s .formulas (None = the default from DERIVED)."""
+    label, unit, default_formula, note = DERIVED[key]
+    formula = formula or default_formula
     history = full[-DISPLAY_POINTS:]
     latest, previous = history[-1], history[-2]
     return {
@@ -180,6 +192,20 @@ def _quadrant(x: float, y: float) -> str:
     return "stagflation" if y >= 0 else "slowdown"
 
 
+def _axes(payems: list, indpro: list, inflation: list) -> tuple:
+    """(growth momentum by date, inflation momentum by date) — the one method
+    behind the map's point, its trails and the euro-area point."""
+    growth_level = _smooth(_combine(payems, indpro, lambda a, b: (a + b) / 2), REGIME_SMOOTHING_MONTHS)
+    gx = _by_date(_momentum(growth_level, REGIME_MOMENTUM_MONTHS))
+    iy = _by_date(_momentum(_smooth(inflation, REGIME_SMOOTHING_MONTHS), REGIME_MOMENTUM_MONTHS))
+    return gx, iy
+
+
+def _trail(gx: dict, iy: dict, since: str = None) -> list:
+    return [{"date": d, "x": round(gx[d], 3), "y": round(iy[d], 3), "quadrant": _quadrant(gx[d], iy[d])}
+            for d in sorted(d for d in gx if d in iy) if since is None or d >= since]
+
+
 def regime(full: dict, aux: dict):
     """full: raw monthly series; aux: {"PAYEMS": [...], "INDPRO": [...]} as YoY %.
     Returns the regime dict or None when inputs are missing."""
@@ -188,9 +214,7 @@ def regime(full: dict, aux: dict):
     inflation_name = "core PCE" if full.get("PCEPILFE") else "CPI"
     if not (payems and indpro and inflation):
         return None
-    growth_level = _smooth(_combine(payems, indpro, lambda a, b: (a + b) / 2), REGIME_SMOOTHING_MONTHS)
-    gx = _by_date(_momentum(growth_level, REGIME_MOMENTUM_MONTHS))
-    iy = _by_date(_momentum(_smooth(inflation, REGIME_SMOOTHING_MONTHS), REGIME_MOMENTUM_MONTHS))
+    gx, iy = _axes(payems, indpro, inflation)
     dates = sorted(d for d in gx if d in iy)
     if not dates:
         return None
@@ -228,3 +252,220 @@ def regime(full: dict, aux: dict):
                    f"YoY; both smoothed over {REGIME_SMOOTHING_MONTHS} months. Momentum, not levels — "
                    "a reading aid, not a forecast."),
     }
+
+
+# --- Extended regime view (2026-09-25, WPF "Expand") ---
+# Everything here reuses _axes()/_smooth()/_momentum() above, so the long
+# trail, the components and the euro-area point are built exactly like the
+# card's point. Static texts only; no AI.
+
+EXTENDED_SINCE = "2000-01-01"
+EURO_TRAIL_MONTHS = 12
+EURO_INPUTS = "Eurostat industrial production (euro area, YoY) × HICP inflation (YoY)"
+EURO_SOURCE_URL = "https://ec.europa.eu/eurostat/databrowser/view/STS_INPR_M/default/table"
+EXTENDED_NOTE = (f"Component values are {REGIME_SMOOTHING_MONTHS}-month moving averages of the YoY rates — the "
+                 "smoothed values the map's axes are built from; change = latest minus six months earlier "
+                 f"({REGIME_MOMENTUM_MONTHS}-month momentum). The growth axis is the average of the payroll and "
+                 "industrial-production momentum. Shaded periods: NBER-based US recession indicator (FRED USREC). "
+                 "A reading aid, not a forecast.")
+
+_ASSETS = ("Equities", "Government bonds", "Credit", "US dollar", "Commodities", "Sectors")
+_PHASES = {
+    "goldilocks": ("Growth picking up while inflation cools — historically the most benign mix for risk assets.", (
+        "Historically the friendliest phase; broad equity markets have tended to do well, often led by cyclical "
+        "and growth-oriented areas.",
+        "Mixed: cooling inflation has tended to support bonds, while improving growth can push yields up; returns "
+        "have tended to be modest.",
+        "Has tended to do well as default risk eases; spreads have usually been stable or narrowing.",
+        "No consistent pattern; it has often been softer when global growth broadens.",
+        "Mixed: cooling inflation has tended to cap gains, although industrial metals can benefit from stronger "
+        "growth.",
+        "Cyclical and technology/growth sectors have tended to lead; defensive sectors have tended to lag.")),
+    "reflation": ("Growth and inflation both accelerating — supportive for real activity, with the risk of "
+                  "overheating and rising rates.", (
+        "Have tended to rise, but with more volatility as rate expectations climb; value and cyclical stocks have "
+        "often done better than long-duration growth stocks.",
+        "Have tended to struggle as yields rise with inflation and expected policy tightening.",
+        "Often supported by strong growth, with spreads tending to stay tight, though higher rates weigh on total "
+        "returns.",
+        "Mixed; it has depended largely on whether US policy tightens faster than elsewhere.",
+        "Historically one of the stronger phases for commodities, especially energy and industrial metals.",
+        "Energy, materials, industrials and financials have tended to outperform; utilities and other "
+        "rate-sensitive defensives have tended to lag.")),
+    "stagflation": ("Growth slowing while inflation rises — historically the most difficult mix for traditional "
+                    "portfolios.", (
+        "Have historically tended to struggle, facing weaker earnings expectations and higher discount rates at the "
+        "same time.",
+        "Have also tended to struggle, since sticky inflation limits how far yields can fall; the usual "
+        "stock–bond diversification has often been weak.",
+        "Spreads have tended to widen as growth slows while financing costs stay high; lower-quality credit has "
+        "been most exposed.",
+        "Mixed: safe-haven demand can support it, while high US inflation can weigh on it.",
+        "Commodities and other real assets have tended to hold up relatively better, especially when the "
+        "inflation came from supply shocks such as energy.",
+        "Energy and defensive sectors (consumer staples, health care, utilities) have tended to hold up better "
+        "than cyclical and long-duration growth sectors.")),
+    "slowdown": ("Growth and inflation both cooling — the phase in which central banks have typically eased; "
+                 "recession risk rises if it deepens.", (
+        "Have tended to be choppy: earnings expectations often fall, while the prospect of central-bank easing "
+        "can provide support.",
+        "Historically the strongest phase for high-quality government bonds, as yields fall with inflation and "
+        "expected rate cuts.",
+        "Investment grade has tended to hold up better than high yield; spreads have tended to widen if the "
+        "slowdown deepened toward recession.",
+        "Often firm in risk-off episodes (safe-haven demand), although falling US rates can weigh on it.",
+        "Have tended to weaken with slowing demand; gold has sometimes held up better than industrial "
+        "commodities.",
+        "Defensive sectors (consumer staples, health care, utilities) and higher-quality companies have tended to "
+        "outperform cyclicals.")),
+}
+PHASE_BEHAVIOUR = {q: {"summary": summary,
+                       "assets": [{"asset": a, "tendency": t} for a, t in zip(_ASSETS, tendencies)]}
+                   for q, (summary, tendencies) in _PHASES.items()}
+PHASE_BEHAVIOUR["disclaimer"] = "Historical tendencies, not a forecast and not investment advice."
+
+
+def recessions(usrec: list, since: str = EXTENDED_SINCE) -> list:
+    """FRED USREC (monthly 0/1) -> [{"start": "YYYY-MM", "end": "YYYY-MM"}].
+    A recession still running at the last observation ends at that month."""
+    out, start, last = [], None, None
+    for p in sorted(usrec or [], key=lambda p: p["date"]):
+        if p["value"] >= 0.5:
+            start = start or p["date"]
+            last = p["date"]
+        elif start:
+            out.append((start, last))
+            start = None
+    if start:
+        out.append((start, last))
+    return [{"start": s[:7], "end": e[:7]} for s, e in out if e >= since]
+
+
+def _component(name: str, axis: str, points: list):
+    s = _smooth(points or [], REGIME_SMOOTHING_MONTHS)
+    if len(s) <= REGIME_MOMENTUM_MONTHS:
+        return None
+    latest, before = s[-1], s[-1 - REGIME_MOMENTUM_MONTHS]
+    return {"name": name, "axis": axis, "latest": round(latest["value"], 3),
+            "six_months_ago": round(before["value"], 3),
+            "change": round(latest["value"] - before["value"], 3), "unit": "%", "date": latest["date"]}
+
+
+def euro_point(ip_yoy: list, hicp_yoy: list):
+    """Euro-area point: Eurostat industrial production YoY × HICP YoY, same
+    smoothing/momentum as the US point (single growth input). None if short."""
+    if not ip_yoy or not hicp_yoy:
+        return None
+    gx = _by_date(_momentum(_smooth(ip_yoy, REGIME_SMOOTHING_MONTHS), REGIME_MOMENTUM_MONTHS))
+    iy = _by_date(_momentum(_smooth(hicp_yoy, REGIME_SMOOTHING_MONTHS), REGIME_MOMENTUM_MONTHS))
+    trail = _trail(gx, iy)[-EURO_TRAIL_MONTHS:]
+    if not trail:
+        return None
+    now = trail[-1]
+    return {"x": now["x"], "y": now["y"], "quadrant": now["quadrant"], "label": REGIMES[now["quadrant"]][0],
+            "date": now["date"], "trail": trail, "inputs": EURO_INPUTS, "source_url": EURO_SOURCE_URL}
+
+
+def regime_extended(long_inputs: dict, usrec: list = None, euro_ip: list = None, euro_hicp: list = None) -> dict:
+    """long_inputs: monthly YoY histories since 2000 — "PAYEMS", "INDPRO",
+    "PCEPILFE" (core PCE; "CPIAUCSL" as fallback). Contract: see README
+    "Macro regime — extended view"."""
+    payems, indpro = long_inputs.get("PAYEMS") or [], long_inputs.get("INDPRO") or []
+    core = long_inputs.get("PCEPILFE")
+    inflation = core or long_inputs.get("CPIAUCSL") or []
+    trail_long = []
+    if payems and indpro and inflation:
+        trail_long = _trail(*_axes(payems, indpro, inflation), since=EXTENDED_SINCE)
+    components = [c for c in (
+        _component("Nonfarm payrolls (YoY)", "growth", payems),
+        _component("Industrial production (YoY)", "growth", indpro),
+        _component("Core PCE inflation (YoY)" if core else "CPI inflation (YoY)", "inflation", inflation),
+    ) if c]
+    euro = None
+    try:
+        euro = euro_point(euro_ip, euro_hicp)
+    except Exception:
+        euro = None
+    return {"trail_long": trail_long, "recessions": recessions(usrec), "components": components,
+            "euro": euro, "phase_behaviour": PHASE_BEHAVIOUR, "note": EXTENDED_NOTE,
+            # Added for the expanded map (2026-09-25, second pass):
+            "episodes": episodes(trail_long),
+            "history": [{"date": p["date"], "quadrant": p["quadrant"]} for p in trail_long],
+            "component_series": component_series(payems, indpro, inflation,
+                                                 "core PCE" if core else "CPI"),
+            "asset_tendencies": ASSET_TENDENCIES}
+
+
+# --- Expanded map, second pass (2026-09-25): episodes, component sparklines,
+# compact asset-tendency table. Pure functions over the long histories above.
+
+COMPONENT_SERIES_MONTHS = 36
+
+# Reference months for past phases. Each marker is the regime reading of that
+# month, computed with exactly the same method as today's point (read from
+# trail_long) — so it only appears when the month is in the data.
+EPISODES = (
+    ("Dot-com bust", "2001-11-01"),
+    ("Mid-2000s expansion", "2005-06-01"),
+    ("GFC trough", "2009-03-01"),
+    ("COVID shock", "2020-04-01"),
+    ("Inflation peak", "2022-06-01"),
+)
+
+
+def _month_name(date: str) -> str:
+    months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    return f"{months[int(date[5:7]) - 1]} {date[:4]}"
+
+
+def episodes(trail_long: list) -> list:
+    """[{label, date, x, y, quadrant}] for the EPISODES months present in trail_long."""
+    by_date = {p["date"]: p for p in trail_long or []}
+    out = []
+    for name, date in EPISODES:
+        p = by_date.get(date)
+        if p:
+            out.append({"label": f"{name} ({_month_name(date)})", "date": date,
+                        "x": p["x"], "y": p["y"], "quadrant": p["quadrant"]})
+    return out
+
+
+def _tail(points: list, months: int = COMPONENT_SERIES_MONTHS) -> list:
+    return [{"date": p["date"], "value": round(p["value"], 3)} for p in (points or [])[-months:]]
+
+
+def component_series(payems: list, indpro: list, inflation: list, inflation_name: str) -> dict:
+    """Monthly inputs for the sparklines (last 36 months each): raw YoY rates and
+    the two smoothed momentum series the map's axes are made of."""
+    growth_m, inflation_m = [], []
+    if payems and indpro:
+        growth_level = _smooth(_combine(payems, indpro, lambda a, b: (a + b) / 2), REGIME_SMOOTHING_MONTHS)
+        growth_m = _momentum(growth_level, REGIME_MOMENTUM_MONTHS)
+    if inflation:
+        inflation_m = _momentum(_smooth(inflation, REGIME_SMOOTHING_MONTHS), REGIME_MOMENTUM_MONTHS)
+    return {"payrolls_yoy": _tail(payems), "indpro_yoy": _tail(indpro),
+            "inflation_yoy": _tail(inflation), "inflation_name": inflation_name,
+            "growth_momentum": _tail(growth_m), "inflation_momentum": _tail(inflation_m)}
+
+
+# Compact "how asset classes have tended to behave" table (single source; the
+# WPF view only renders it). direction: "up" | "down" | "mixed". Deliberately
+# coarse and hedged — textbook tendencies, not a forecast, not advice.
+_TENDENCY_ASSETS = ("Equities", "Govt bonds", "Credit", "USD", "Commodities")
+_TENDENCY_TEXT = {"up": "↑ tended to rise", "down": "↓ tended to fall", "mixed": "mixed"}
+_TENDENCY_ROWS = (
+    ("goldilocks", "Goldilocks", (("up", ""), ("mixed", ""), ("up", ""), ("mixed", ""), ("mixed", ""))),
+    ("reflation", "Reflation", (("up", "led by cyclicals"), ("down", ""), ("up", ""), ("mixed", ""), ("up", ""))),
+    ("stagflation", "Stagflation", (("down", ""), ("down", ""), ("down", ""), ("mixed", ""), ("up", ""))),
+    ("slowdown", "Slowdown", (("down", "or mixed"), ("up", ""), ("down", ""), ("up", ""), ("down", ""))),
+)
+ASSET_TENDENCIES = {
+    "title": "How asset classes have tended to behave in each regime",
+    "columns": list(_TENDENCY_ASSETS),
+    "rows": [{"quadrant": q, "label": label,
+              "cells": [{"asset": a, "direction": d,
+                         "text": _TENDENCY_TEXT[d] + (f" ({note})" if note else "")}
+                        for a, (d, note) in zip(_TENDENCY_ASSETS, cells)]}
+             for q, label, cells in _TENDENCY_ROWS],
+    "disclaimer": "Historical tendencies, simplified; not a forecast, not investment advice.",
+}

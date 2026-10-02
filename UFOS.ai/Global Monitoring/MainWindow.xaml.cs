@@ -14,6 +14,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using Microsoft.Web.WebView2.Core;
 using UFOS.ai.Logging;
+using UFOS.ai.Shared;
 
 namespace UFOS.ai.GlobalMonitoring
 {
@@ -27,8 +28,25 @@ namespace UFOS.ai.GlobalMonitoring
         // 5s, so unlike LiveStreamAgent we don't need to block window load on a health
         // check here: the page just connects whenever the backend becomes ready.
         private Process? _backendProcess;
+
+        private static string? _backendDir;
+
+        /// <summary>The backend folder (…\Global Monitoring\backend): where it publishes its API session token.</summary>
+        private static string? BackendDir
+        {
+            get
+            {
+                if (_backendDir != null) return _backendDir;
+                var script = FindBackendScript(out _);
+                _backendDir = script == null ? null : Path.GetDirectoryName(script);
+                return _backendDir;
+            }
+        }
         private bool _weStartedBackend;
         private StreamWriter? _backendLogWriter;
+        // Set in Window_Closing: a backend start still waiting for the Python environment
+        // must not launch the process after the window was closed.
+        private volatile bool _windowClosing;
 
         // Insider Trades and Macro Indicators are no longer part of this module:
         // moved to the Hedge Fund module's Financial Newsroom on 2026-09-24
@@ -93,6 +111,24 @@ namespace UFOS.ai.GlobalMonitoring
                     "Tried: " + string.Join(" | ", triedPaths));
                 return;
             }
+
+            // Python environments are prepared once at app start (Shared/PythonEnvironment.cs);
+            // wait until this backend's .venv is ready (standalone GlobalMonitoring.exe: prepare
+            // it here). The script then runs with -SkipInstall and never touches pip.
+            var envOk = await PythonEnvironment.WaitForModuleAsync(Path.GetDirectoryName(script)!, "Global Monitoring",
+                PythonEnvironment.ProgressOf(text =>
+                {
+                    if (!_windowClosing) ShowBackendEnvStatus("Python environment: " + text);
+                }));
+            if (_windowClosing) return;
+            if (!envOk)
+            {
+                AppLog.Error("Global Monitoring", "Python environment setup failed — the backend was not started.");
+                ShowBackendEnvStatus("Python environment setup failed — see Backend Log");
+                return;
+            }
+            ShowBackendEnvStatus(null);
+
             AppLog.Info("Global Monitoring", "Starting backend via " + script);
 
             // The subprocess's stdout/stderr (venv setup, pip install, and
@@ -121,7 +157,7 @@ namespace UFOS.ai.GlobalMonitoring
             var psi = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-ExecutionPolicy Bypass -File \"{script}\"",
+                Arguments = $"-ExecutionPolicy Bypass -File \"{script}\" -SkipInstall",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -136,6 +172,7 @@ namespace UFOS.ai.GlobalMonitoring
                 Debug.WriteLine("[GMS Backend] " + args.Data);
                 try { _backendLogWriter?.WriteLine($"[{DateTime.Now:HH:mm:ss}] {args.Data}"); } catch { }
                 try { AppLog.Info("Global Monitoring", args.Data); } catch { }
+                HandleEnvMarker(args.Data);
             };
             _backendProcess.ErrorDataReceived += (s, args) =>
             {
@@ -149,6 +186,7 @@ namespace UFOS.ai.GlobalMonitoring
                 Debug.WriteLine("[GMS Backend] process exited.");
                 try { _backendLogWriter?.WriteLine($"--- {DateTime.Now:yyyy-MM-dd HH:mm:ss} process exited ---"); } catch { }
                 try { AppLog.Warn("Global Monitoring", "Backend process exited."); } catch { }
+                ShowBackendEnvStatus(null);
             };
 
             try
@@ -167,6 +205,58 @@ namespace UFOS.ai.GlobalMonitoring
                 AppLog.Error("Global Monitoring", "Failed to start backend process (run_backend.ps1).", ex);
                 _backendProcess = null;
             }
+        }
+
+        /// <summary>
+        /// run_backend.ps1 prints "UFOS_ENV: &lt;state&gt;" lines while it prepares the Python
+        /// environment (protocol in the script header): waiting / installing &lt;reason&gt; /
+        /// upgrading / changed &lt;n&gt; / failed &lt;reason&gt; / ready. Show a hint in the title
+        /// bar while packages are being installed, so a slow first start isn't a mystery.
+        /// </summary>
+        private void HandleEnvMarker(string line)
+        {
+            const string prefix = "UFOS_ENV:";
+            if (!line.StartsWith(prefix, StringComparison.Ordinal)) return;
+            var marker = line.Substring(prefix.Length).Trim();
+            if (marker.StartsWith("waiting", StringComparison.OrdinalIgnoreCase))
+                ShowBackendEnvStatus("Waiting for the Python package update to finish…");
+            else if (marker.StartsWith("installing", StringComparison.OrdinalIgnoreCase) ||
+                     marker.StartsWith("upgrading", StringComparison.OrdinalIgnoreCase))
+                ShowBackendEnvStatus("Installing Python packages (first start or requirements changed)…");
+            else if (marker.StartsWith("failed", StringComparison.OrdinalIgnoreCase))
+            {
+                const string failed = "Python package install failed — starting with the installed packages (see Backend Log)";
+                ShowBackendEnvStatus(failed);
+                _ = ClearBackendEnvStatusLaterAsync(failed);
+            }
+            else if (marker.StartsWith("ready", StringComparison.OrdinalIgnoreCase))
+                ShowBackendEnvStatus(null);
+        }
+
+        private void ShowBackendEnvStatus(string? text)
+        {
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    BackendEnvStatusText.Text = text ?? string.Empty;
+                    BackendEnvStatusText.Visibility = text == null ? Visibility.Collapsed : Visibility.Visible;
+                }));
+            }
+            catch { }
+        }
+
+        private async Task ClearBackendEnvStatusLaterAsync(string text)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30));
+            try
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (BackendEnvStatusText.Text == text) ShowBackendEnvStatus(null);
+                });
+            }
+            catch { }
         }
 
         /// <summary>
@@ -256,7 +346,8 @@ namespace UFOS.ai.GlobalMonitoring
             AppLog.Warn("Global Monitoring", "Running backend is older than the code on disk — asking it to shut down and starting a fresh one.");
             try
             {
-                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+                // /shutdown needs the running backend's session token (Shared/BackendAuth.cs).
+                using var client = BackendAuth.CreateClient(BackendDir, TimeSpan.FromSeconds(2));
                 await client.PostAsync("http://127.0.0.1:8768/shutdown", new StringContent(""));
             }
             catch { /* it may drop the connection while exiting — that's fine */ }
@@ -424,6 +515,23 @@ namespace UFOS.ai.GlobalMonitoring
                     // "Read full article" / local-news links (globe.html's openExternal()).
                     OpenInDefaultBrowser(urlProp.GetString());
                 }
+                else if (type == "getApiToken")
+                {
+                    // globe.html needs the backend's current session token for its fetch()
+                    // and WebSocket calls (backend/api_auth.py). Only our own embedded page
+                    // gets it: http(s) navigations are cancelled in NavigationStarting, so
+                    // the WebView never shows a foreign page — checked here again anyway.
+                    var source = e.Source ?? string.Empty;
+                    if (source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                        source.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AppLog.Warn("Global Monitoring", "Refused API token request from a web page: " + source);
+                        return;
+                    }
+                    var token = BackendAuth.ReadToken(BackendDir) ?? string.Empty;
+                    GlobeView.CoreWebView2?.PostWebMessageAsJson(
+                        JsonSerializer.Serialize(new { type = "apiToken", token }));
+                }
             }
             catch (Exception ex)
             {
@@ -475,21 +583,75 @@ namespace UFOS.ai.GlobalMonitoring
 
         private void Window_Closing(object? sender, CancelEventArgs e)
         {
+            _windowClosing = true;
             TryStopBackendHelper();
         }
 
+        // Title bar (borderless window, conventions "Borderless windows"): double-click toggles maximize;
+        // dragging a MAXIMIZED window restores it only once the mouse actually moves
+        // with the button held (a plain click does nothing), keeps the cursor at its
+        // relative spot on the title bar, then drags. Same pattern as
+        // HedgeFund/HedgeFundWindow.xaml.cs (TitleBar_MouseMove).
+        private bool _restoreOnDrag;
+        private System.Windows.Point _restoreDragStart;
+
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if (e.LeftButton == MouseButtonState.Pressed)
+            if (e.LeftButton != MouseButtonState.Pressed) return;
+            if (e.ClickCount == 2)
             {
-                if (e.ClickCount == 2)
-                {
-                    WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
-                    return;
-                }
-
-                try { DragMove(); } catch { }
+                _restoreOnDrag = false;
+                WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+                return;
             }
+            if (WindowState == WindowState.Maximized)
+            {
+                _restoreOnDrag = true;
+                _restoreDragStart = e.GetPosition(this);
+                ((UIElement)sender).CaptureMouse();
+                return;
+            }
+            try { DragMove(); } catch { }
+        }
+
+        private void TitleBar_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_restoreOnDrag || e.LeftButton != MouseButtonState.Pressed) return;
+            var pos = e.GetPosition(this);
+            if (Math.Abs(pos.X - _restoreDragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(pos.Y - _restoreDragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+            _restoreOnDrag = false;
+            ((UIElement)sender).ReleaseMouseCapture();
+
+            var ratioX = ActualWidth > 0 ? pos.X / ActualWidth : 0.5;
+            var restoreWidth = RestoreBounds.Width;
+            // Cursor position in screen DIPs (PointToScreen returns device pixels).
+            var toDip = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice
+                        ?? System.Windows.Media.Matrix.Identity;
+            var cursor = toDip.Transform(PointToScreen(pos));
+
+            WindowState = WindowState.Normal;
+            Left = cursor.X - restoreWidth * ratioX;
+            Top = cursor.Y - 9; // middle of the 18 px title bar
+            try { DragMove(); } catch { }
+        }
+
+        private void TitleBar_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_restoreOnDrag) return;
+            _restoreOnDrag = false;
+            ((UIElement)sender).ReleaseMouseCapture();
+        }
+
+        // Maximized: square corners. The WM_GETMINMAXINFO hook (ConstrainMaximizedBoundsToWorkArea) already fits
+        // the maximized window to the work area, and a transparent window has no resize frame
+        // hanging off the screen, so no extra padding is needed.
+        private void Window_StateChanged(object? sender, EventArgs e)
+        {
+            var maximized = WindowState == WindowState.Maximized;
+            RootBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(8);
+            TitleBarBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(8, 8, 0, 0);
         }
 
         private void MinimizeButton_Click(object sender, RoutedEventArgs e)

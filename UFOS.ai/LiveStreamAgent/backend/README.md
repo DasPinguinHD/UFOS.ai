@@ -37,7 +37,8 @@ cached; each LLM call uses the latest cached snapshot.
 ## Setup
 
 1. Install [ffmpeg](https://ffmpeg.org/) and ensure it's on your `PATH`.
-2. `pip install -r requirements.txt`
+2. `pip install -r requirements.txt` (or let `run_backend.ps1` do it — see
+   "Python environment" below)
 3. Copy `.env.example` to `.env` and fill in:
    - `DEEPGRAM_API_KEY` — Deepgram streaming transcription API key
    - `OPENROUTER_API_KEY` — OpenRouter API key (used to call DeepSeek v3)
@@ -79,3 +80,75 @@ the verdict history. Tests: `python -m unittest tests.test_cost_ledger -v` (from
 - Yahoo Finance scraping has no fallback data source; if Yahoo changes its page structure or
   blocks requests, market snapshots will silently go stale for the affected tickers (see logs).
 - No frontend is included yet — the WebSocket server and JSONL logs are the integration surface.
+
+## Python environment (since 2026-09-25)
+
+**Started from the UFOS.ai app:** the environment is prepared once at app
+start (`Shared/PythonEnvironment.cs`, in the background, one module after the
+other: create the venv if missing, `pip install -r requirements.txt --upgrade`
+only when the stamp doesn't match). The module's launcher (`LivestreamAgent.xaml.cs`) awaits
+`PythonEnvironment.WaitForModuleAsync` before starting the script with
+`-SkipInstall` (no venv creation, no pip); a standalone module exe prepares the
+venv itself at that point. The rules below apply when you run the script by hand
+(it writes the same stamp, so the app doesn't reinstall afterwards).
+
+`run_backend.ps1` no longer runs `pip install --upgrade` on every start. It
+installs `requirements.txt` (without `--upgrade`) only when that is
+**required**: `.venv` is missing, `requirements.txt` changed since the last
+successful install (SHA-256 in `.venv/ufos-requirements.sha256`), or the last
+install didn't complete (`.venv/ufos-install-pending`). `-RecreateVenv` still
+rebuilds the venv; `-Upgrade` runs `pip install -r requirements.txt --upgrade`;
+`-EnvOnly` prepares the environment without starting `main.py`.
+
+Every run holds `.venv.lock` (git-ignored, deleted automatically — the handle
+is opened with DeleteOnClose) while it checks or changes the venv, so the
+backend never starts while an install/update of the same venv is running; it
+waits instead. A leftover lock counts as stale when its PID is gone or it is
+older than 30 minutes. The script prints `UFOS_ENV: waiting | installing <reason>
+| upgrading | changed <n> | failed <reason> | ready` marker lines, which
+`LivestreamAgent.xaml.cs` (connection status) turns into a status hint ("Installing Python packages…" /
+"Waiting for the Python package update to finish…").
+
+Optional upgrades are manual only: root app → Settings (gear) → "Update Python
+packages" (upgrades all module venvs one after another; this backend has no `/shutdown` endpoint, so it is skipped while running — close the LiveStream Agent window first).
+
+## Local storage (SQLite, 2026-09-25)
+
+`storage.py` (the `Storage`/`Store` class) keeps what this backend produced across restarts. One
+file per module (project convention "compartmentalization"; Global Monitoring and HedgeFund have
+their own copies):
+
+- **File:** `backend/data/livestream.db` (+ `-wal`/`-shm`; git-ignored). `UFOS_LSA_DB` (full file
+  path) overrides it, e.g. for tests.
+- **Behaviour:** WAL mode, one connection (`check_same_thread=False`) behind a lock, schema
+  versioned via `PRAGMA user_version` (`storage.MIGRATIONS`, append-only). It never crashes the
+  backend: every call logs its own SQLite error and returns a neutral default. A corrupt file is
+  renamed to `livestream.db.corrupt-<UTC timestamp>` and a fresh database is created; if the
+  file can't be used at all, an in-memory database is used for that session.
+- **Startup:** retention runs, then the verdicts of the last 90 days (max. 500, the WPF history's
+  cap) are restored into memory. Every newly connected WebSocket client gets the newest 20 as one
+  `verdict_history` message (`{"verdicts": [...newest first, same shape as "verdict"...],
+  "source": "local_storage"}`), plus the cached market snapshot; all of them are served
+  read-only at `GET http://127.0.0.1:8766/verdicts?limit=100` and `GET /history/ai`.
+  **Follow-up (WPF):** `WebSocketService.cs` ignores unknown message types, so the window's
+  verdict history still starts empty after a restart until it handles `verdict_history` (or
+  calls `/verdicts`) — the data is kept meanwhile.
+- **While running:** every broadcast verdict and every successful per-segment analysis is stored
+  by `llm_analyst.py` (failed/empty LLM results are not), transcript segments and quotes by
+  `main.py`; a daily task re-applies the retention rules.
+
+| Table | Content | Retention |
+|---|---|---|
+| `ai_outputs` | every verdict (`feature` "verdict") and analysis ("analysis"): `ts` (= provenance time), model, `input_json` (transcript + market snapshot), `output_text`, `provenance_json`, `usage_json` | 90 days |
+| `items` source `transcript` | transcript segments (text) | 7 days |
+| `items` source `quote` | latest quote per symbol (stored at most every 60 s) | 2 days |
+| `prices` | `symbol, ts, price, source` — one point per symbol at most every 5 min and only when the price changed | 2 years |
+| `source_state`, `meta` | last success/error of the quote feed; `last_retention_ts` | kept (one row each) |
+
+**Reset:** stop the backend and delete `data/livestream.db` (plus `-wal`/`-shm`); it is recreated
+empty on the next start.
+
+Tests: `python -m unittest discover -s tests -t .` (from `backend/`, stdlib only, temp DB files;
+`tests/test_storage.py`). This replaces the earlier `db.py` store
+(`%LOCALAPPDATA%\UFOS.ai\data\livestream.sqlite`) and the first `storage.py` draft
+(`data/livestreamagent.db`); those files are no longer read and can be deleted if they exist.

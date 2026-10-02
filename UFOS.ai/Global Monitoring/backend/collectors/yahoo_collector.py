@@ -5,12 +5,13 @@ LiveStreamAgent/backend/market_data.py — same endpoint and header pattern).
 Each tracked index is pinned to its exchange's financial-center coordinates
 (see geo.FINANCIAL_CENTERS) for the Markets layer.
 """
-import asyncio
 import logging
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 import aiohttp
 
+import refresh
 from config import YAHOO_POLL_SECONDS
 from events import make_event
 from geo import FINANCIAL_CENTERS
@@ -35,7 +36,9 @@ async def _fetch_quote(session: aiohttp.ClientSession, symbol: str) -> dict:
     change_pct = None
     if price is not None and previous_close:
         change_pct = (price - previous_close) / previous_close * 100
-    return {"price": price, "change_percent": change_pct}
+    # regularMarketTime (unix seconds) = when the (delayed) quote was set;
+    # used as the stored price point's time (persistence.py, prices table).
+    return {"price": price, "change_percent": change_pct, "quote_time": meta.get("regularMarketTime")}
 
 
 async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> None:
@@ -56,6 +59,12 @@ async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> Non
                 lat=center["lat"], lon=center["lon"],
                 url=f"https://finance.yahoo.com/quote/{quote(symbol)}",
             )
+            # 2026-09-25: raw values for local storage (persistence.py: prices table).
+            event["symbol"] = symbol
+            event["price"] = price
+            event["change_percent"] = change_pct
+            if isinstance(quote_data.get("quote_time"), (int, float)):
+                event["quote_time"] = datetime.fromtimestamp(quote_data["quote_time"], timezone.utc).isoformat(timespec="seconds")
             emit(event)
             placed += 1
         except Exception as ex:
@@ -72,4 +81,5 @@ async def run(emit, report_status) -> None:
     async with aiohttp.ClientSession() as session:
         while True:
             await _poll_once(session, emit, report_status)
-            await asyncio.sleep(YAHOO_POLL_SECONDS)
+            # stale-while-revalidate: a request for stale data wakes this early (refresh.py)
+            await refresh.wait_next_cycle("yahoo", YAHOO_POLL_SECONDS)

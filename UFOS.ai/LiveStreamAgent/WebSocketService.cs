@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using UFOS.ai.Logging;
+using UFOS.ai.Shared;
 
 namespace UFOS.ai
 {
@@ -29,9 +30,14 @@ namespace UFOS.ai
         public event Action<string>? OnConnectionStatus;
         public event Action<string>? OnRawMessage;
 
-        public WebSocketService(string url)
+        // Returns the backend's current API session token (Shared/BackendAuth.cs); read
+        // before every connect attempt because it changes on each backend start.
+        private readonly Func<string?>? _tokenProvider;
+
+        public WebSocketService(string url, Func<string?>? tokenProvider = null)
         {
             _uri = new Uri(url);
+            _tokenProvider = tokenProvider;
         }
 
         private void EmitConnectionStatus(string s)
@@ -108,6 +114,10 @@ namespace UFOS.ai
                     // Ensure we use a fresh ClientWebSocket for each connect attempt.
                     try { _ws?.Dispose(); } catch { }
                     _ws = new ClientWebSocket();
+                    // The backend refuses connections without its session token (api_auth.py).
+                    string? apiToken = null;
+                    try { apiToken = _tokenProvider?.Invoke(); } catch { }
+                    if (!string.IsNullOrEmpty(apiToken)) _ws.Options.SetRequestHeader(BackendAuth.HeaderName, apiToken);
 
                     try { EmitRaw($"[WS CONNECT ATTEMPT] {attempt} -> {_uri}"); } catch { }
 

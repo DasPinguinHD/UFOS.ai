@@ -14,6 +14,7 @@ from email.utils import parsedate_to_datetime
 
 import aiohttp
 
+import refresh
 from config import GDACS_POLL_SECONDS, GDACS_MAX_HOURS_SINCE_END
 from events import make_event
 
@@ -189,4 +190,5 @@ async def run(emit, report_status) -> None:
     async with aiohttp.ClientSession() as session:
         while True:
             await _poll_once(session, emit, report_status)
-            await asyncio.sleep(GDACS_POLL_SECONDS)
+            # stale-while-revalidate: a request for stale data wakes this early (refresh.py)
+            await refresh.wait_next_cycle("gdacs", GDACS_POLL_SECONDS)

@@ -1,6 +1,6 @@
 # Async and networking
 aiohttp>=3.9.0
-websockets>=12.0
+websockets>=14.0  # process_request(connection, request) API used by api_auth.py
 
 # Configuration
 python-dotenv>=1.0.0
@@ -11,3 +11,6 @@ pandas>=2.1.0
 
 # LLM access (needed in phase 3)
 openai>=1.10.0
+
+# Time zones on Windows (zoneinfo needs the IANA database; fund/market.py)
+tzdata>=2024.1

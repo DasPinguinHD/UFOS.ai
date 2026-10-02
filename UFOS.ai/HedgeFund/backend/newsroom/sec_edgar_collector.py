@@ -200,6 +200,18 @@ def _parse_form4(xml_text) -> dict:
     }
 
 
+def seed_details(events: list) -> int:
+    """Startup (2026-09-25): parsed details of filings loaded from the SQLite
+    store, so a restart doesn't fetch index.json + XML for them again."""
+    n = 0
+    for e in events or []:
+        eid, details = str(e.get("id") or ""), e.get("details")
+        if eid.startswith("insider-") and details:
+            _details_cache[eid[len("insider-"):]] = details
+            n += 1
+    return n
+
+
 async def _fetch_details(session: aiohttp.ClientSession, filing_index_url: str, headers: dict) -> dict:
     """filing_index_url is the Atom <link>, e.g.
     https://www.sec.gov/Archives/edgar/data/<cik>/<acc-no-dashes>/<acc>-index.htm"""

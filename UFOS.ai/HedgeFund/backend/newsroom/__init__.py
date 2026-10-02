@@ -13,6 +13,10 @@ view in HedgeFund/Newsroom/:
   Analysis &         overview.py (no collector; GET /newsroom/overview,     (WPF side)
   Reasoning          reads the data above)     POST /newsroom/analysis (AI)
 
+Local SQLite store (2026-09-25): db.py — insider archive, FRED/Eurostat
+observations, calendar snapshot, AI outputs (GET /newsroom/ai-history);
+see the backend README, "Local SQLite store".
+
 Adding a section later = a collector module here, an entry in
 main.py's NEWSROOM_SOURCES + a GET endpoint, and a UserControl view in
 HedgeFund/Newsroom/ registered with one line in NewsroomSections.cs (the

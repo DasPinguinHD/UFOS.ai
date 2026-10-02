@@ -87,11 +87,31 @@ def _format_snapshot(snapshot: MarketSnapshot) -> str:
     return "\n".join(lines) if lines else "(no market data available yet)"
 
 
+def _snapshot_dict(snapshot: MarketSnapshot) -> dict:
+    """The market snapshot as stored with an AI output (local storage input_json)."""
+    return {
+        "timestamp": snapshot.timestamp,
+        "quotes": {s: {"price": q.price, "change_percent": q.change_percent} for s, q in snapshot.quotes.items()},
+    }
+
+
 class LLMAnalyst:
-    def __init__(self) -> None:
+    def __init__(self, store=None) -> None:
         self._client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
         self._scenarios = _load_scenarios()
         self._recent_transcript: deque[str] = deque(maxlen=TRANSCRIPT_CONTEXT_LINES)
+        # Optional storage.Storage: every successful AI output is saved (2026-09-25).
+        self.store = store
+
+    def _save_output(self, feature: str, model, output: dict, input_data: dict, prov: dict, usage) -> None:
+        """Persist one AI output next to its cost-ledger entry. Never raises."""
+        if self.store is None:
+            return
+        try:
+            self.store.save_ai_output(feature, model, json.dumps(output, ensure_ascii=False, default=str),
+                                      input_data=input_data, provenance=prov, usage=usage)
+        except Exception as ex:
+            logger.warning("Could not store AI %s: %s", feature, ex)
 
     def note(self, transcript_segment: str) -> None:
         """Record a segment in the rolling context without triggering an LLM call."""
@@ -146,7 +166,7 @@ class LLMAnalyst:
             if len(reason) > max_reason_chars:
                 reason = reason[:max_reason_chars].rstrip()
 
-            return {
+            result = {
                 "verdict": verdict.upper(),
                 "ticker": ticker,
                 "confidence": confidence,
@@ -155,6 +175,12 @@ class LLMAnalyst:
                 # Optional cost/token info for the WPF window ("Cost: $0.0021 · 812 in / 190 out").
                 "usage": usage,
             }
+            self._save_output(
+                "verdict", used_model,
+                {k: result[k] for k in ("verdict", "ticker", "confidence", "reason")},
+                {"transcript": transcript_text, "market_snapshot": _snapshot_dict(snapshot)},
+                result["provenance"], usage)
+            return result
         except Exception as ex:
             logger.exception("LLM generate_verdict failed: %s", ex)
             return {"error": "llm_failed", "detail": str(ex)}
@@ -191,4 +217,10 @@ class LLMAnalyst:
         if isinstance(result, dict):
             result["provenance"] = provenance("analysis", getattr(response, "model", None))
             result["usage"] = usage
+            self._save_output(
+                "analysis", getattr(response, "model", None) or OPENROUTER_MODEL,
+                {k: v for k, v in result.items() if k not in ("provenance", "usage")},
+                {"segment": transcript_segment, "transcript": list(self._recent_transcript),
+                 "market_snapshot": _snapshot_dict(snapshot)},
+                result["provenance"], usage)
         return result

@@ -6,6 +6,18 @@ Exits 0 on success (connect + optional ping), 1 on connect error, 2 on missing m
 import argparse
 import asyncio
 import sys
+from pathlib import Path
+
+# The backend requires its per-start session token (backend/api_auth.py).
+TOKEN_FILE = Path(__file__).resolve().parents[1] / "backend" / "data" / "api-token"
+TOKEN_HEADER = "X-UFOS-Token"
+
+
+def read_token():
+    try:
+        return TOKEN_FILE.read_text(encoding="ascii").strip() or None
+    except OSError:
+        return None
 
 try:
     import websockets
@@ -16,7 +28,11 @@ except Exception as e:
 async def run(uri: str, timeout: int) -> int:
     try:
         print("TRY_CONNECT", uri)
-        async with websockets.connect(uri) as ws:
+        token = read_token()
+        if token is None:
+            print("NO_TOKEN (backend not started yet? expected", TOKEN_FILE, ")")
+        headers = {TOKEN_HEADER: token} if token else None
+        async with websockets.connect(uri, additional_headers=headers) as ws:
             print("CONNECTED")
             # try to send a ping-like text message
             try:

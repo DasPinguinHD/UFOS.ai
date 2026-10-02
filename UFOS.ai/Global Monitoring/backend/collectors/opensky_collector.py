@@ -13,9 +13,11 @@ prefix list that needs periodic upkeep (see that module's docstring).
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 
 import aiohttp
 
+import refresh
 from config import OPENSKY_POLL_SECONDS, OPENSKY_CLIENT_ID, OPENSKY_CLIENT_SECRET, OPENSKY_MIN_NOTABLE_ALTITUDE_METERS
 from events import make_event
 from .military_registry import is_notable_military, describe_callsign
@@ -26,7 +28,7 @@ STATES_URL = "https://opensky-network.org/api/states/all"
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
 
 # states/all row layout (subset we use): index -> field
-IDX_ICAO24, IDX_CALLSIGN, IDX_ORIGIN_COUNTRY = 0, 1, 2
+IDX_ICAO24, IDX_CALLSIGN, IDX_ORIGIN_COUNTRY, IDX_TIME_POSITION, IDX_LAST_CONTACT = 0, 1, 2, 3, 4
 IDX_LON, IDX_LAT, IDX_BARO_ALT, IDX_ON_GROUND, IDX_VELOCITY, IDX_HEADING = 5, 6, 7, 8, 9, 10
 IDX_VERTICAL_RATE, IDX_SQUAWK = 11, 14
 
@@ -156,6 +158,15 @@ async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> Non
                 source="OpenSky",
                 lat=lat, lon=lon,
             )
+            # 2026-09-25: raw telemetry for the stored position observation
+            # (persistence.py: one row per icao24 + observed_at = flight track).
+            event["icao24"] = str(icao24).lower()
+            observed = row[IDX_TIME_POSITION] or row[IDX_LAST_CONTACT] or data.get("time")
+            if isinstance(observed, (int, float)):
+                event["observed_at"] = datetime.fromtimestamp(observed, timezone.utc).isoformat(timespec="seconds")
+            event["altitude_m"] = altitude
+            event["heading_deg"] = heading if isinstance(heading, (int, float)) else None
+            event["velocity_ms"] = velocity if isinstance(velocity, (int, float)) else None
             emit(event)
             placed += 1
         except Exception:
@@ -168,4 +179,6 @@ async def run(emit, report_status) -> None:
     async with aiohttp.ClientSession() as session:
         while True:
             await _poll_once(session, emit, report_status)
-            await asyncio.sleep(OPENSKY_POLL_SECONDS)
+            # stale-while-revalidate (refresh.py); its minimum interval equals
+            # OPENSKY_POLL_SECONDS, so an early wake-up never exceeds the quota
+            await refresh.wait_next_cycle("opensky", OPENSKY_POLL_SECONDS)
