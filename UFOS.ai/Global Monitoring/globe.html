@@ -2,6 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<!-- Security audit S10-A2 M4. Nothing but the local backend (fetch 8768 / WebSocket 8767) and — only while this build
+     has no vendored copy — the pinned Natural Earth file may be loaded; no frames, plugins, images, forms or base
+     changes. MainWindow.xaml.cs (PrepareGlobeHtml) replaces both placeholders at load time: script-src = the sha256 of
+     the one inline script below (unreplaced → script blocked); the NE connect-src placeholder = the pinned CDN URL in CDN mode,
+     removed when the vendored copy is used (unreplaced → ignored keyword, no CDN). Keep connect-src in step with
+     BACKEND_*_URL / NE_SOURCE_URL and with MainWindow.xaml.cs's resource allow-list. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-GM_INLINE_SCRIPT_HASH'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src http://127.0.0.1:8768 ws://127.0.0.1:8767 'GM_NE_CONNECT_SRC'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; manifest-src 'none'; base-uri 'none'; form-action 'none'" />
 <title>Global Monitoring</title>
 <style>
   :root {
@@ -54,6 +61,7 @@
 
   #globeWrap { position: relative; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 45%, #1a1f26, #0c0d0f); cursor: grab; }
   #globeWrap.dragging { cursor: grabbing; }
+  .ne-source-note { position: absolute; left: 12px; bottom: 8px; max-width: 70%; font-size: 9.5px; color: var(--lo); pointer-events: none; }
   svg { width: 100%; height: 100%; }
 
   .marker { cursor: pointer; }
@@ -112,6 +120,7 @@
   <div class="sidebar" id="leftSidebar"></div>
   <div id="globeWrap">
     <svg id="globeSvg" viewBox="0 0 1000 930"></svg>
+    <div class="ne-source-note" id="neSourceNote" role="note">Coastlines: waiting for the app…</div>
   </div>
   <div class="sidebar right" id="rightSidebar"></div>
 </div>
@@ -176,6 +185,8 @@
       if (data && data.type === 'apiToken') {
         apiToken = data.token || '';
         flushTokenWaiters();
+      } else if (data && data.type === 'naturalEarth') {
+        onNaturalEarthAnswer(data);
       }
     });
   }
@@ -573,16 +584,21 @@
       });
   }
 
-  // --- Natural Earth 110m land data: fetched once, then cached in this
-  // WebView2 profile's localStorage (persists across app restarts because
-  // the host app points WebView2 at a fixed per-app user-data folder).
+  // --- Natural Earth 110m land data (world-atlas@2.0.2), S10-A2 M4. The app
+  // decides the source per page load and the page never mixes them:
+  //   'vendored' — the host sends the JSON itself (vendor/land-110m.json,
+  //                embedded at build time, sha256 checked); no network.
+  //   'cdn'      — no vendored copy in this build: the exact pinned CDN file
+  //                (the only remote URL the CSP / host allow in this mode).
+  //   'rejected' — a vendored copy failed its check: hand-drawn outlines,
+  //                no CDN as a substitute.
+  // The line under the globe (#neSourceNote) always says which one is shown.
+  // (No localStorage cache: the page has an opaque origin, where it throws.)
   // Natural Earth data is public domain ("No permission is needed to use
   // Natural Earth. Crediting the authors is unnecessary." — naturalearthdata.com/about/terms-of-use),
-  // so there is no licensing reason to avoid fetching or caching it; the
-  // cache exists purely so the module works offline after the first
-  // successful fetch and doesn't re-download on every launch.
-  var NE_CACHE_KEY = 'ufos_gms_ne110m_land_v1';
-  var NE_SOURCE_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json';
+  // so there is no licensing reason to avoid fetching, caching or vendoring
+  // it. world-atlas itself is ISC-licensed (Mike Bostock).
+  var NE_SOURCE_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/land-110m.json';
 
   function decodeTopoJsonLand(topology) {
     var scale = topology.transform.scale;
@@ -635,32 +651,58 @@
       if (rings.length > 0) {
         COASTLINES = rings;
         renderGlobe();
+        return true;
       }
     } catch (err) {
       console.error('Failed to decode Natural Earth topojson', err);
     }
+    return false;
+  }
+
+  var NE_LABEL = 'Natural Earth 1:110m (world-atlas 2.0.2)';
+  var neAnswered = false;
+
+  function setNeSourceNote(text) {
+    var el = document.getElementById('neSourceNote');
+    if (el) el.textContent = text;
   }
 
   function loadNaturalEarthData() {
-    var cached = null;
-    try { cached = localStorage.getItem(NE_CACHE_KEY); } catch (err) { /* storage unavailable */ }
-
-    if (cached) {
-      applyNaturalEarthData(cached);
+    if (!(window.chrome && window.chrome.webview)) {
+      setNeSourceNote('Coastlines: hand-drawn outlines (not running inside the app).');
+      return;
     }
+    try { window.chrome.webview.postMessage(JSON.stringify({ type: 'getNaturalEarth' })); } catch (e) {}
+    setTimeout(function () {
+      if (!neAnswered) setNeSourceNote('Coastlines: hand-drawn outlines \u2014 the app did not say which Natural Earth source to use.');
+    }, 5000);
+  }
 
-    // Refresh in the background (also covers the first run, where there is
-    // no cache yet). If this fails — no internet, blocked host, etc. — the
-    // cached or hand-drawn fallback outlines stay in place.
-    fetch(NE_SOURCE_URL)
-      .then(function (res) { return res.ok ? res.text() : Promise.reject(new Error('HTTP ' + res.status)); })
-      .then(function (text) {
-        applyNaturalEarthData(text);
-        try { localStorage.setItem(NE_CACHE_KEY, text); } catch (err) { /* storage full/unavailable */ }
-      })
-      .catch(function (err) {
-        console.warn('Natural Earth fetch failed, keeping current coastlines:', err);
-      });
+  function onNaturalEarthAnswer(answer) {
+    if (neAnswered) return; // one source per page load
+    neAnswered = true;
+    if (answer.source === 'vendored' && typeof answer.data === 'string') {
+      setNeSourceNote(applyNaturalEarthData(answer.data)
+        ? 'Coastlines: ' + NE_LABEL + ' \u2014 vendored copy (sha256 checked).'
+        : 'Coastlines: hand-drawn outlines \u2014 the vendored copy could not be decoded.');
+    } else if (answer.source === 'cdn') {
+      setNeSourceNote('Coastlines: loading ' + NE_LABEL + ' from the pinned CDN file (no vendored copy in this build)\u2026');
+      // No cookies, no referrer to the CDN; the response is only ever JSON.parse'd into numbers.
+      fetch(NE_SOURCE_URL, { credentials: 'omit', referrerPolicy: 'no-referrer' })
+        .then(function (res) { return res.ok ? res.text() : Promise.reject(new Error('HTTP ' + res.status)); })
+        .then(function (text) {
+          setNeSourceNote(applyNaturalEarthData(text)
+            ? 'Coastlines: ' + NE_LABEL + ' \u2014 pinned CDN file (no vendored copy in this build).'
+            : 'Coastlines: hand-drawn outlines \u2014 the CDN file could not be decoded.');
+        })
+        .catch(function (err) {
+          console.warn('Natural Earth fetch failed, keeping the hand-drawn coastlines:', err);
+          setNeSourceNote('Coastlines: hand-drawn outlines \u2014 the pinned CDN file could not be loaded (no vendored copy in this build).');
+        });
+    } else {
+      setNeSourceNote('Coastlines: hand-drawn outlines \u2014 vendored copy rejected: ' +
+        String(answer.reason || 'unknown problem') + ' (the CDN is not used as a substitute).');
+    }
   }
 
   // A light lat/long graticule for spatial reference (drawn as lines, not dots).
@@ -824,8 +866,9 @@
   // labelled "✦ AI-generated · <model> · <time>" from the first moment it's visible
   // (loading state included), carries the backend's machine-readable "provenance"
   // as data-* attributes, and ends with AI_CAVEAT.
-  var AI_TRIGGER_TOOLTIP = 'Generates an AI analysis via a third-party language model (OpenRouter). May contain errors \u2014 not investment advice.';
-  var AI_CAVEAT = 'Automated AI analysis \u2014 may be inaccurate or incomplete. Not investment advice. Verify independently.';
+  // Wording = AiContent.TriggerTooltip / AiContent.AnalysisNotice (Stage 10 context-specific notices, S10-A2 L7).
+  var AI_TRIGGER_TOOLTIP = 'Generates an AI analysis via a third-party language model (OpenRouter). May contain errors \u2014 information, not a recommendation.';
+  var AI_CAVEAT = 'AI-generated analysis \u2014 may be inaccurate; information, not a recommendation.';
 
   function aiShortModel(model) {
     if (!model) return '';

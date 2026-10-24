@@ -11,7 +11,7 @@ import unittest
 from datetime import datetime, timezone
 
 from fund import store
-from fund.types import AgentSignal, Bar
+from strategy_platform.core.types import AgentSignal, Bar
 from newsroom import db
 
 

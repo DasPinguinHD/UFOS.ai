@@ -4,15 +4,22 @@
   Prepares the Python environment of the HedgeFund (Financial Newsroom) backend and starts it.
 
   - creates the virtualenv backend/.venv (if missing)
-  - installs requirements.txt ONLY when that is required:
+  - installs ONLY from requirements.lock (stage 10, pinned dependencies:
+    every package "==" pinned with its sha256; made by make_lockfile.py from
+    requirements.txt) with "pip install --require-hashes -r requirements.lock",
+    and only when that is required:
       * .venv is missing,
-      * requirements.txt differs from the version installed last time
-        (SHA-256 recorded in .venv/ufos-requirements.sha256), or
+      * requirements.lock differs from the version installed last time
+        (SHA-256 recorded in .venv/ufos-requirements.sha256; before the first
+        lock: the requirements.txt hash), or
       * the last install did not complete (.venv/ufos-install-pending).
-    A normal start does NOT run "pip install --upgrade" any more.
-  - optional upgrades are manual: -Upgrade runs
-    "pip install -r requirements.txt --upgrade" (the root UFOS.ai app's
-    Settings -> "Update Python packages" calls this with -Upgrade -EnvOnly).
+    A missing lock, or one made from an older requirements.txt, refuses the
+    install ("UFOS_ENV: failed ..." with the command to run) - never an
+    unpinned install.
+  - optional upgrades are deliberate: -Upgrade first regenerates the lock
+    (make_lockfile.py --update: newest versions requirements.txt allows),
+    then installs exactly that lock (the root UFOS.ai app's Settings ->
+    "Update Python packages" calls this with -Upgrade -EnvOnly).
   - starts the backend (main.py) unless -EnvOnly is given.
   - -SkipInstall (used by the UFOS.ai app's launchers): no venv creation and
     no pip at all - the app prepares every module's environment once at
@@ -22,6 +29,11 @@
     Without -SkipInstall (a developer running the script by hand) the
     required-install behaviour above is unchanged and writes the same stamp,
     so the app does not reinstall afterwards.
+  - optional broker package (2026-10-18, Strategy Platform SPEC 18.13): after the
+    main environment, requirements-broker.txt (ccxt, pinned) is installed in its
+    OWN pip run - also with -SkipInstall, under the same lock. Its failure never
+    marks the environment failed: it is recorded in .venv\ufos-optional-status.txt
+    and only the Binance demo broker shows it as unavailable.
 
   Locking: every run holds backend/.venv.lock while it checks/changes the
   venv, so a backend never starts while an install/upgrade of the same venv
@@ -120,9 +132,16 @@ $VenvDir = Join-Path $PSScriptRoot '.venv'
 $VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
 $Requirements = Join-Path $PSScriptRoot 'requirements.txt'
 $HashFile = Join-Path $VenvDir 'ufos-requirements.sha256'
+$ReqLock = Join-Path $PSScriptRoot 'requirements.lock'
+$LockTool = Join-Path $PSScriptRoot 'tools\make_lockfile.py'
+$LockToolHint = 'tools\make_lockfile.py'
 $PendingFile = Join-Path $VenvDir 'ufos-install-pending'
 $LockFile = Join-Path $PSScriptRoot '.venv.lock'
 $LockStaleMinutes = 30
+$OptionalRequirements = Join-Path $PSScriptRoot 'requirements-broker.txt'
+$OptionalLock = Join-Path $PSScriptRoot 'requirements-broker.lock'
+$OptionalStatusFile = Join-Path $VenvDir 'ufos-optional-status.txt'
+$OptionalRetryHours = 24
 $script:LockStream = $null
 $script:EnvOk = $false
 
@@ -132,8 +151,27 @@ function Write-EnvMarker([string]$Text) {
 }
 
 function Get-RequirementsHash {
+	# Stage 10 (pinned dependencies): the stamp is the SHA-256 of requirements.lock once it exists. Before the
+	# first lock it is the old requirements.txt hash, so an installed environment keeps starting until the lock
+	# is made - an install itself always needs the lock (Invoke-EnvSetup).
+	if (Test-Path -LiteralPath $ReqLock) { return (Get-FileHash -LiteralPath $ReqLock -Algorithm SHA256).Hash }
 	if (-not (Test-Path -LiteralPath $Requirements)) { return 'none' }
 	return (Get-FileHash -LiteralPath $Requirements -Algorithm SHA256).Hash
+}
+
+# $null when the lock exists and was made from the current requirements file (its "# source: ... sha256=" line),
+# otherwise the reason with the command to run.
+function Get-LockProblem([string]$Req, [string]$Lock, [string]$Name) {
+	if (-not (Test-Path -LiteralPath $Lock)) {
+		return ($Name + ' missing - run once (needs internet): .venv\Scripts\python.exe ' + $LockToolHint)
+	}
+	$want = (Get-FileHash -LiteralPath $Req -Algorithm SHA256).Hash.ToLowerInvariant()
+	$line = Select-String -LiteralPath $Lock -Pattern '^# source: \S+ sha256=([0-9a-f]{64})$' | Select-Object -First 1
+	if ($null -eq $line) { return ($Name + ' has no source line - regenerate it: .venv\Scripts\python.exe ' + $LockToolHint) }
+	if ($line.Matches[0].Groups[1].Value -ne $want) {
+		return ($Name + ' is out of date (requirements changed) - run: .venv\Scripts\python.exe ' + $LockToolHint + ' --update')
+	}
+	return $null
 }
 
 # Returns $null when no install is needed, otherwise a short reason.
@@ -143,7 +181,7 @@ function Get-InstallReason {
 	if (-not (Test-Path -LiteralPath $HashFile)) { return 'requirements not recorded yet' }
 	$recorded = ''
 	try { $recorded = ([string](Get-Content -LiteralPath $HashFile -Raw -ErrorAction Stop)).Trim() } catch { }
-	if ($recorded -ne (Get-RequirementsHash)) { return 'requirements.txt changed' }
+	if ($recorded -ne (Get-RequirementsHash)) { return 'requirements changed' }
 	return $null
 }
 
@@ -272,9 +310,24 @@ function Invoke-EnvSetup {
 	$before = @()
 	if ($Upgrade) { $before = @(& $VenvPython -m pip freeze --disable-pip-version-check 2>$null) }
 
+	if ($Upgrade) {
+		# "Update Python packages": regenerate the lock deliberately, then install exactly that lock - never
+		# "pip install --upgrade" in place (stage 10, pinned dependencies).
+		Write-Out 'Regenerating requirements.lock (make_lockfile.py --update, needs internet)...'
+		& $VenvPython $LockTool --update | Out-ScriptHost
+		if ($LASTEXITCODE -ne 0) {
+			Write-EnvMarker ('failed could not regenerate requirements.lock (make_lockfile.py exited with code ' + $LASTEXITCODE + ' - offline? see log)')
+			return
+		}
+	}
+	$lockProblem = Get-LockProblem $Requirements $ReqLock 'requirements.lock'
+	if ($lockProblem) {
+		Write-EnvMarker ('failed ' + $lockProblem)
+		return
+	}
+
 	Set-Content -LiteralPath $PendingFile -Value 'install started' -Encoding Ascii
-	$pipArgs = @('-m', 'pip', 'install', '-r', $Requirements, '--disable-pip-version-check', '--no-input', '--progress-bar', 'off')
-	if ($Upgrade) { $pipArgs += '--upgrade' }
+	$pipArgs = @('-m', 'pip', 'install', '--require-hashes', '-r', $ReqLock, '--disable-pip-version-check', '--no-input', '--progress-bar', 'off')
 	Write-Out ('Running: python ' + ($pipArgs -join ' '))
 	& $VenvPython @pipArgs | Out-ScriptHost
 	$pipExit = $LASTEXITCODE
@@ -298,10 +351,71 @@ function Invoke-EnvSetup {
 	$script:EnvOk = $true
 }
 
+# Optional packages (Strategy Platform stage 8, SPEC 18.13 review fix): ccxt for the Binance Spot DEMO (SPEC 18.14; was: Kraken demo, retired)
+# broker, pinned in requirements-broker.txt. Installed in its OWN pip run after the main environment;
+# a failure NEVER marks the environment failed and never stops the backend - it is written to
+# .venv\ufos-optional-status.txt ("failed <hash> <utc> <reason>") and the backend shows it verbatim on
+# the binance-demo broker ("ccxt could not be installed (<reason>)"); everything else starts normally.
+# Retried when requirements-broker.txt changes, with -Upgrade, or 24 h after a failure. It runs also
+# with -SkipInstall (the app's launchers): requirements.txt stays the app's job (Shared/PythonEnvironment.cs),
+# this optional set is only known here; it runs under .venv.lock like every pip run of this script.
+function Invoke-OptionalInstall {
+	if (-not (Test-Path -LiteralPath $OptionalRequirements)) { return }
+	if (-not (Test-Path -LiteralPath $VenvPython)) { return }
+	# stage 10: installed only from requirements-broker.lock (--require-hashes); its hash is the status stamp once it
+	# exists (before the first lock: the requirements-broker.txt hash, so an installed ccxt stays "ok")
+	$hash = (Get-FileHash -LiteralPath $OptionalRequirements -Algorithm SHA256).Hash
+	if (Test-Path -LiteralPath $OptionalLock) { $hash = (Get-FileHash -LiteralPath $OptionalLock -Algorithm SHA256).Hash }
+	$status = ''
+	try { $status = ([string](Get-Content -LiteralPath $OptionalStatusFile -TotalCount 1 -ErrorAction Stop)).Trim() } catch { }
+	$parts = $status -split ' ', 4
+	if ((-not $Upgrade) -and $parts.Length -ge 2 -and $parts[0] -eq 'ok' -and $parts[1] -eq $hash) { return }
+	if ((-not $Upgrade) -and $parts.Length -ge 3 -and $parts[0] -eq 'failed' -and $parts[1] -eq $hash) {
+		$when = [datetime]::MinValue
+		$styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+		if ([datetime]::TryParse($parts[2], [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$when)) {
+			if (((Get-Date).ToUniversalTime() - $when).TotalHours -lt $OptionalRetryHours) {
+				Write-Out 'Optional broker package (ccxt): the last install failed - retried after 24 h, with -Upgrade or when requirements-broker.txt changes.'
+				return
+			}
+		}
+	}
+	$now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+	$lockProblem = Get-LockProblem $OptionalRequirements $OptionalLock 'requirements-broker.lock'
+	if ($lockProblem) {
+		Set-Content -LiteralPath $OptionalStatusFile -Value ('failed ' + $hash + ' ' + $now + ' ' + $lockProblem) -Encoding Ascii
+		Write-Out ('Optional broker package (ccxt) not installed - only the Binance demo broker is unavailable: ' + $lockProblem)
+		return
+	}
+	Write-Out 'Installing the optional broker package (ccxt, requirements-broker.lock) in a separate step...'
+	$optArgs = @('-m', 'pip', 'install', '--require-hashes', '-r', $OptionalLock, '--disable-pip-version-check', '--no-input', '--progress-bar', 'off', '--retries', '1', '--timeout', '20')
+	$lines = @(& $VenvPython @optArgs 2>&1 | ForEach-Object { [string]$_ })
+	$optExit = $LASTEXITCODE
+	$lines | Out-ScriptHost
+	$now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+	if ($optExit -eq 0) {
+		Set-Content -LiteralPath $OptionalStatusFile -Value ('ok ' + $hash + ' ' + $now) -Encoding Ascii
+		Write-Out 'Optional broker package (ccxt) installed.'
+		return
+	}
+	$reason = 'pip exited with code ' + $optExit
+	$errLine = $lines | Where-Object { $_ -match '^ERROR' } | Select-Object -Last 1
+	if ($errLine) { $reason = $reason + ': ' + $errLine }
+	$reason = ($reason -replace '[^\x20-\x7E]', ' ').Trim()
+	if ($reason.Length -gt 280) { $reason = $reason.Substring(0, 280) }
+	Set-Content -LiteralPath $OptionalStatusFile -Value ('failed ' + $hash + ' ' + $now + ' ' + $reason) -Encoding Ascii
+	Write-Out ('Optional broker package (ccxt) could not be installed - only the Binance demo broker is unavailable: ' + $reason)
+}
+
 $purpose = 'start'
 if ($Upgrade) { $purpose = 'upgrade' }
 if (Enter-EnvLock $purpose) {
-	try { Invoke-EnvSetup }
+	try {
+		Invoke-EnvSetup
+		# optional broker package in its own step - its failure never changes $script:EnvOk
+		try { Invoke-OptionalInstall }
+		catch { Write-Out ('Optional broker package step failed: ' + $_.Exception.Message) }
+	}
 	catch {
 		Write-EnvMarker ('failed ' + $_.Exception.Message)
 		$script:EnvOk = $false

@@ -1,0 +1,160 @@
+<UserControl x:Class="UFOS.ai.HedgeFund.Platform.LibraryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             AutomationProperties.Name="Strategy library">
+    <!-- Hedge Fund → navigation rail → "Library" (Strategy Platform stage 2, backend/strategy_platform/SPEC.md §7.12).
+         Board (one column per lifecycle state), Alpha library table, detail pane. Everything comes from the
+         /v2 strategy routes (Platform/PlatformClient.Strategies.cs). Strategy texts (names, descriptions, tags,
+         claims of imported files) are DATA: always plain TextBlocks, never markup or links (§7.6).
+         Colours/styles: local copies of HedgeFundWindow.xaml (the module has no DesignSystem access, and a
+         UserControl's StaticResources resolve before it joins the window's tree). -->
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="FocusBrush" Color="#FF7C8CF8" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#FF1A1A1A" />
+        <SolidColorBrush x:Key="PanelBorderBrush" Color="#FF2A2A2A" />
+        <SolidColorBrush x:Key="HairlineBrush" Color="#FF242424" />
+        <SolidColorBrush x:Key="KillBrush" Color="#FFED6A5A" />
+
+        <Style x:Key="RoundedDarkButtonStyle" TargetType="Button">
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="MinHeight" Value="22" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Background" Value="#FF242424" />
+            <Setter Property="BorderBrush" Value="#FF333333" />
+            <Setter Property="Foreground" Value="#FFBFBFBF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.88" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="PrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource RoundedDarkButtonStyle}">
+            <Setter Property="Background" Value="#267C8CF8" />
+            <Setter Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+            <Setter Property="Foreground" Value="#FFD5DAFB" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <!-- Board / Alpha library switch: same segmented pill as the dashboard's ModeTabStyle -->
+        <Style x:Key="TabStyle" TargetType="RadioButton">
+            <Setter Property="Padding" Value="14,5" />
+            <Setter Property="Foreground" Value="#FF9A9A9A" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="bd" CornerRadius="999" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF242424" />
+                                <Setter Property="Foreground" Value="#FFBFBFBF" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#FFBFBFBF" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Scroll bars: the shared Hedge Fund design (Styles/ScrollBars.xaml), merged by the hosting window. -->
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" MinWidth="360" />
+            <ColumnDefinition Width="400" />
+        </Grid.ColumnDefinitions>
+
+        <!-- ===== Header: tabs left, actions right ===== -->
+        <Grid Grid.Row="0" Grid.ColumnSpan="2" Margin="0,0,0,8">
+            <Border HorizontalAlignment="Left" Background="#FF161616" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="999" Padding="3">
+                <StackPanel Orientation="Horizontal" KeyboardNavigation.DirectionalNavigation="Cycle">
+                    <RadioButton x:Name="BoardTab" GroupName="LibraryTabs" Style="{StaticResource TabStyle}" Content="Board" IsChecked="True"
+                                 Checked="Tab_Checked" AutomationProperties.Name="Board: strategies by lifecycle state" />
+                    <RadioButton x:Name="AlphaTab" GroupName="LibraryTabs" Style="{StaticResource TabStyle}" Content="Alpha library"
+                                 Checked="Tab_Checked" AutomationProperties.Name="Alpha library: table of the built-in strategies" />
+                </StackPanel>
+            </Border>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <TextBlock x:Name="StatusText" FontSize="10.5" Foreground="#FF6A6A6A" VerticalAlignment="Center" Margin="0,0,10,0"
+                           TextTrimming="CharacterEllipsis" MaxWidth="420" />
+                <Button x:Name="GateSettingsButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="⚙ Validation gates" Margin="0,0,8,0"
+                        Click="GateSettingsButton_Click" AutomationProperties.Name="Validation gate settings: preset Lenient, Standard or Strict"
+                        ToolTip="Thresholds of the validation gates G1–G8 (preset Lenient / Standard / Strict). Changes are audited." />
+                <Button x:Name="RefreshButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="↻ Refresh" Click="RefreshButton_Click"
+                        AutomationProperties.Name="Reload the strategy list" />
+                <Button x:Name="ImportButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="Import…" Margin="8,0,0,0" Click="ImportButton_Click"
+                        AutomationProperties.Name="Import a strategy from a JSON file"
+                        ToolTip="Imports a strategy JSON file (max. 256 KB). Imported strategies are untrusted: they start as draft and their claims are shown as unverified." />
+                <Button x:Name="NewStrategyButton" Style="{StaticResource PrimaryButtonStyle}" Content="+ New strategy" Margin="8,0,0,0" Click="NewStrategyButton_Click"
+                        AutomationProperties.Name="Create a new strategy in the JSON editor" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Backend error (verbatim) -->
+        <Border x:Name="ErrorBanner" Grid.Row="1" Grid.ColumnSpan="2" Visibility="Collapsed" Background="#26ED6A5A" BorderBrush="{StaticResource KillBrush}"
+                BorderThickness="1" CornerRadius="6" Padding="12,7" Margin="0,0,0,8">
+            <TextBlock x:Name="ErrorText" FontSize="11.5" Foreground="#FFF4A197" TextWrapping="Wrap" />
+        </Border>
+
+        <!-- ===== Board ===== -->
+        <ScrollViewer x:Name="BoardScroll" Grid.Row="2" Grid.Column="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                      SizeChanged="BoardScroll_SizeChanged" Focusable="False">
+            <Grid x:Name="BoardGrid" HorizontalAlignment="Left" />
+        </ScrollViewer>
+
+        <!-- ===== Alpha library table ===== -->
+        <Border x:Name="AlphaPanel" Grid.Row="2" Grid.Column="0" Visibility="Collapsed" Background="{StaticResource PanelBrush}"
+                BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="0,6,0,6">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Grid x:Name="AlphaHeader" Grid.Row="0" Margin="12,2,12,6" />
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Focusable="False">
+                    <StackPanel x:Name="AlphaRows" />
+                </ScrollViewer>
+            </Grid>
+        </Border>
+
+        <!-- ===== Detail pane ===== -->
+        <Border Grid.Row="2" Grid.Column="1" Margin="12,0,0,0" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}"
+                BorderThickness="1" CornerRadius="8">
+            <ScrollViewer x:Name="DetailScroll" VerticalScrollBarVisibility="Auto" Focusable="False">
+                <StackPanel x:Name="DetailPanel" Margin="14,12,14,14" AutomationProperties.Name="Strategy details" />
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</UserControl>

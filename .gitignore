@@ -10,7 +10,15 @@
 *.userosscache
 *.sln.docstates
 CLAUDE.md
-docs/
+# Private planning docs: only the repo-root docs/ folder (incl. docs/todo.md) and the second todo copy
+# UFOS.ai/docs/todo.md stay unversioned; UFOS.ai/docs/ and UFOS.ai/HedgeFund/docs/ are versioned
+# (user decision 2026-10-24).
+/docs/
+/UFOS.ai/docs/todo.md
+# Agent rollback copies (renamed instead of deleted; removed in the stage-10 deletion steps) and local backup
+# folders (e.g. HedgeFund/backend/data/stage10*-backup/) are never versioned (2026-10-24).
+*.stale
+*-backup/
 
 
 # User-specific files (MonoDevelop/Xamarin Studio)

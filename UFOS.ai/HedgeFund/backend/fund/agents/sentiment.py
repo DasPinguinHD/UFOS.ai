@@ -4,8 +4,9 @@
 -> {symbol: AgentSignal}``
 
 Input per symbol: the last ≤ 8 headlines of ≤ 72 h from ``ctx.news[symbol]``
-(``[{title, publisher, published_at, url}]``, market.parse_news_item shape;
-headlines without a timestamp are skipped because their age is unknown) plus
+(``[{title, publisher, published_at, url}]`` from the Alpaca news API via
+fund.market.AlpacaFeed.news; headlines without a timestamp are skipped
+because their age is unknown) plus
 insider flags for that ticker computed in code from ``ctx.insider`` (the
 newsroom's Form 4 events) with ``newsroom.insider_summary.find_clusters``
 (CLUSTER-BUY / CLUSTER-SELL) and counts of open-market buys / unplanned sales.
@@ -17,9 +18,16 @@ reuse the cached signal (``source="cached"``, original provenance kept). The
 lives in memory across cycles. Headlines are untrusted: they sit in a
 delimited data block and the prompt says to ignore instructions inside.
 
+A failed news fetch is not "no headlines": when the engine marks it with an
+error item (``ctx.news[symbol] == [{"error": "<user message>"}]``) the symbol
+is ``unavailable`` with that reason — no LLM call on incomplete input (project
+rule "no unrequested fallbacks", 2026-10-02).
+
 ``source``: "llm" (fresh, with provenance + usage share), "cached",
-"unavailable" (no inputs / weight 0 / no key / budget / error / bad answer —
-score 0, confidence 0, the summary says why; never dressed as AI).
+"unavailable" (no inputs / weight 0 / no key / budget / error / bad answer /
+news fetch failed — score 0, confidence 0, the summary says why, e.g. "News
+could not be loaded: …" or "AI budget reached — raise the limit in Settings to
+continue."; never dressed as AI, no stand-in reading).
 Paper-trading proof of concept, not investment advice.
 """
 from __future__ import annotations
@@ -29,9 +37,9 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
-from .. import llm as llm_mod
-from ..llm import LlmUnavailable, chat_json
-from ..types import AgentSignal
+from strategy_platform.core import llm as llm_mod
+from strategy_platform.core.llm import LlmUnavailable, chat_json
+from strategy_platform.core.types import AgentSignal
 
 AGENT = "sentiment"
 FEATURE = "fund-sentiment"
@@ -94,8 +102,26 @@ def recent_headlines(items, now, limit: int = MAX_HEADLINES, max_age_hours: int 
     return out[:limit]
 
 
+def news_error(items) -> Optional[str]:
+    """The user message of a failed news fetch (engine error item
+    ``{"error": msg}`` in ``ctx.news[symbol]``), else None."""
+    if isinstance(items, dict):
+        items = [items]
+    for it in items or []:
+        if isinstance(it, dict) and it.get("error") and not it.get("title"):
+            return llm_mod.sanitize_untrusted(str(it.get("error")), 300) or "news source failed"
+    return None
+
+
+class InsiderDataUnavailable(Exception):
+    """The insider input could not be computed (accessor or cluster detection
+    failed) — reported, never treated as "no insider activity"."""
+
+
 def insider_flags(insider_events, symbol: str) -> List[str]:
-    """Code-computed insider flags for one ticker from the newsroom's Form 4 events."""
+    """Code-computed insider flags for one ticker from the newsroom's Form 4
+    events. A failing cluster detection raises InsiderDataUnavailable (user
+    decision 2026-10-02: no silent "no flags")."""
     sym = str(symbol).upper()
     flags: List[str] = []
     events = [e for e in insider_events or [] if isinstance(e, dict) and isinstance(e.get("details"), dict)]
@@ -108,8 +134,8 @@ def insider_flags(insider_events, symbol: str) -> List[str]:
                 flags.append(f"CLUSTER-{str(c.get('kind')).upper()}: {c.get('count')} insiders "
                              f"{'bought' if c.get('kind') == 'buy' else 'sold'} between {c.get('first_date')} "
                              f"and {c.get('last_date')}, about ${float(c.get('total_usd') or 0):,.0f}")
-    except Exception:
-        pass
+    except Exception as ex:
+        raise InsiderDataUnavailable(f"insider cluster detection failed ({type(ex).__name__})") from ex
     buys = sells = 0
     for e in events:
         d = e["details"]
@@ -175,7 +201,8 @@ def build_messages(inputs: Dict[str, dict]) -> List[dict]:
         else:
             lines.append("- (no headlines in the last 72 h)")
         for f in inp["flags"]:
-            lines.append(f"- INSIDER FLAG: {llm_mod.sanitize_untrusted(f, 200)}")
+            lines.append(f"- {'' if f.startswith('INSIDER DATA UNAVAILABLE') else 'INSIDER FLAG: '}"
+                         f"{llm_mod.sanitize_untrusted(f, 200)}")
     lines.append("DATA>>>")
     user = ("Rate these symbols: " + ", ".join(inputs) + ".\n" + "\n".join(lines)
             + "\nReturn the JSON array only.")
@@ -194,13 +221,34 @@ async def evaluate_batch(ctx, symbols, cache: dict, budget, llm=chat_json) -> Di
         return {s: unavailable(s, "Sentiment agent is switched off (weight 0).") for s in symbols}
 
     todo: Dict[str, dict] = {}
+    ins_errs: Dict[str, str] = {}
     for sym in symbols:
-        heads = recent_headlines((getattr(ctx, "news", None) or {}).get(sym), ctx.now)
-        flags = insider_flags(getattr(ctx, "insider", None), sym)
-        if not heads and not flags:
-            out[sym] = unavailable(sym, "No headlines in the last 72 h — no sentiment reading.",
-                                   {"headlines": 0})
+        raw_news = (getattr(ctx, "news", None) or {}).get(sym)
+        err = news_error(raw_news)
+        if err:
+            # no LLM call on incomplete input; no stand-in reading (no unrequested fallbacks)
+            out[sym] = unavailable(sym, f"News could not be loaded: {err}",
+                                   {"headlines": 0, "news_error": err})
             continue
+        heads = recent_headlines(raw_news, ctx.now)
+        ins_err = getattr(ctx, "insider_error", None)
+        flags: List[str] = []
+        if not ins_err:
+            try:
+                flags = insider_flags(getattr(ctx, "insider", None), sym)
+            except InsiderDataUnavailable as ex:
+                ins_err = str(ex)
+        if ins_err:
+            # the model is told that insider data is missing (not "no insider activity")
+            flags = [f"INSIDER DATA UNAVAILABLE: {ins_err} — do not assume there was no insider activity"]
+        if not heads and (ins_err or not flags):
+            why = "No headlines in the last 72 h — no sentiment reading."
+            if ins_err:
+                why = f"No headlines in the last 72 h and insider data unavailable ({ins_err}) — no sentiment reading."
+            out[sym] = unavailable(sym, why, {"headlines": 0, **({"insider_unavailable": ins_err} if ins_err else {})})
+            continue
+        if ins_err:
+            ins_errs[sym] = ins_err
         h = input_hash(sym, heads, flags)
         entry = cache.get(sym)
         if isinstance(entry, dict) and entry.get("hash") == h and isinstance(entry.get("signal"), AgentSignal):
@@ -213,29 +261,45 @@ async def evaluate_batch(ctx, symbols, cache: dict, budget, llm=chat_json) -> Di
     if not todo:
         return out
 
-    base = {s: {"headlines": len(i["headlines"]), "insider_flags": list(i["flags"])} for s, i in todo.items()}
-    limit = float(params.get("ai_daily_budget_usd", 1.0) or 0.0) if params else None
-    if limit is not None and params and limit <= 0:
+    base = {s: {"headlines": len(i["headlines"]), "insider_flags": list(i["flags"]),
+                **({"insider_unavailable": ins_errs[s]} if s in ins_errs else {})} for s, i in todo.items()}
+    # the validated params always carry the budget: read it strictly, no default
+    try:
+        limit = float(params["ai_daily_budget_usd"])
+        if limit != limit:
+            raise ValueError("NaN")
+    except (KeyError, TypeError, ValueError):
         for s in todo:
-            out[s] = unavailable(s, "Sentiment unavailable — AI disabled (daily budget 0).", base[s])
+            out[s] = unavailable(s, "Sentiment unavailable — the AI budget setting is missing or invalid "
+                                    "(check Settings).", base[s])
+        return out
+    if limit <= 0:
+        for s in todo:
+            out[s] = unavailable(s, llm_mod.AI_DISABLED_MESSAGE, base[s])
         return out
     model = llm_mod.models()["standard"]
     messages = build_messages(todo)
     max_tokens = min(3000, 80 + 70 * len(todo))
     estimate = llm_mod.estimate_cost(messages, max_tokens, "standard")
     if budget is not None and not budget.can_spend(estimate):
+        msg = llm_mod.budget_message(budget)
         for s in todo:
-            out[s] = unavailable(s, "Sentiment unavailable — AI budget reached for today.", base[s])
+            out[s] = unavailable(s, msg, base[s])
         return out
     try:
         parsed, _raw, used_model, usage = await llm(messages, model, max_tokens, FEATURE, FEATURE_LABEL,
                                                    temperature=0.2)
     except LlmUnavailable as ex:
         llm_mod.charge_failed_call(budget, ex, estimate)   # completed call / sent but timed out
-        why = {"no_key": "AI not configured (no OpenRouter key)", "bad_json": "AI answer was invalid",
-               "budget": "AI budget reached for today"}.get(ex.reason, "AI request failed")
+        if ex.reason == "no_key":           # the key's own message: "… enter it in Hedge Fund → Settings → Keys."
+            msg = ex.message or "OpenRouter API key is not set — enter it in Hedge Fund → Settings → Keys."
+        elif ex.reason == "budget":
+            msg = llm_mod.BUDGET_REACHED_MESSAGE
+        else:
+            msg = "Sentiment unavailable — " + ("AI answer was invalid." if ex.reason == "bad_json"
+                                               else "AI request failed.")
         for s in todo:
-            out[s] = unavailable(s, f"Sentiment unavailable — {why}.", {**base[s], "error": ex.message[:200]})
+            out[s] = unavailable(s, msg, {**base[s], "error": ex.message[:200]})
         return out
     except Exception as ex:  # a broken fake / unexpected client error
         for s in todo:
@@ -261,8 +325,12 @@ async def evaluate_batch(ctx, symbols, cache: dict, budget, llm=chat_json) -> Di
                                    base[sym])
             continue
         summary = llm_mod.sanitize_untrusted(item.get("summary") or "", SUMMARY_MAX_CHARS) or "(no summary)"
+        extra = {}
+        if sym in ins_errs:
+            summary = f"{summary} (insider data unavailable)"
+            extra = {"insider_unavailable": ins_errs[sym]}
         sig = AgentSignal(agent=AGENT, symbol=sym, score=round(score, 4), confidence=round(conf, 4),
-                          summary=summary, details={**base[sym], "model": used_model},
+                          summary=summary, details={**base[sym], "model": used_model, **extra},
                           source="llm", provenance=dict(prov), usage=dict(share))
         out[sym] = sig
         cache[sym] = {"hash": inp["hash"], "signal": sig, "at": now}

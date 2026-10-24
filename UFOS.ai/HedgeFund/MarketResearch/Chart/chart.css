@@ -1,0 +1,108 @@
+/* UFOS.ai — Market Research chart page (MR3a). Colours are UFOS DesignSystem.xaml tokens;
+   chart.js overrides the custom properties from the host's `init.theme`. No external fonts. */
+:root {
+  --bg: #111111;            /* WindowBackgroundBrush */
+  --grid: #202020;          /* SubtleBorderBrush */
+  --text: #BFBFBF;          /* PrimaryForegroundBrush */
+  --axis-text: #8F8F8F;     /* TertiaryForegroundBrush */
+  --muted: #6F6F6F;         /* MutedForegroundBrush */
+  --up: #4ADE80;            /* PositiveGreenBrush */
+  --down: #ED6A5A;          /* AccentRedBrush */
+  --accent: #5AC8FA;        /* AccentBlueBrush */
+  --caution: #F0B429;       /* CautionBrush */
+  --font: Consolas, "Cascadia Mono", "Courier New", monospace;
+  color-scheme: dark;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 11px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#root { position: relative; width: 100%; height: 100%; }
+#chart { position: absolute; inset: 0; }
+
+#legend {
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  right: 80px;            /* keep clear of the price axis */
+  pointer-events: none;
+  z-index: 5;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#legend .row { overflow: hidden; text-overflow: ellipsis; }
+#legend .sym { color: var(--text); margin-right: 10px; letter-spacing: 0.04em; }
+#legend .k { color: var(--muted); margin-right: 3px; }
+#legend .val { color: var(--text); margin-right: 9px; font-variant-numeric: tabular-nums; }
+#legend .up { color: var(--up); }
+#legend .down { color: var(--down); }
+#legend .flat { color: var(--muted); }
+#legend .chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--grid);
+  border-radius: 3px;
+  color: var(--axis-text);
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.04em;
+}
+#legend .chip.tail { color: var(--caution); border-color: var(--caution); opacity: 0.85; }
+#legend .muted, .muted { color: var(--muted); }
+#legend .ind { margin-right: 12px; }
+#legend .ind-name { margin-right: 4px; }
+#legend .ind .val { margin-right: 4px; }
+#legend .mark { margin-right: 12px; }
+#legend .mark-glyph { margin-right: 4px; }
+#legend .mark-label { color: var(--text); }
+#legend .mark.caution .mark-glyph { color: var(--caution); }
+#legend .mark.up .mark-glyph { color: var(--up); }
+#legend .mark.down .mark-glyph { color: var(--down); }
+
+/* MR5: inline note editor (plain text, max 280 chars) and the freehand preview layer */
+#note-editor {
+  position: absolute;
+  z-index: 8;
+  width: 220px;
+  min-height: 46px;
+  resize: none;
+  padding: 4px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 11px;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.brush-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 4; }
+
+#fatal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--down);
+  background: var(--bg);
+  z-index: 10;
+  white-space: pre-wrap;
+}
+#fatal[hidden] { display: none; }

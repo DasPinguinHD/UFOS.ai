@@ -219,7 +219,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0">
                 <TextBlock Text="Analysis &amp; Reasoning" FontSize="16" FontWeight="Bold" Foreground="{StaticResource HighEmphasisForegroundBrush}" />
-                <TextBlock Text="Everything from Insider Trades, Macro Indicators and the Economic Calendar at a glance — pick two or more items and let the AI connect them. Proof of concept, not investment advice."
+                <TextBlock Text="Everything from Insider Trades, Macro Indicators and the Economic Calendar at a glance — pick two or more items and let the AI connect them. Proof of concept — AI-generated analysis may be inaccurate; information, not a recommendation."
                            FontSize="10.5" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
                 <TextBlock x:Name="LastUpdatedText" Text="" FontSize="9.5" Margin="0,3,0,0" FontFamily="Consolas"
                            Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />

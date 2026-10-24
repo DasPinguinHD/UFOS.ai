@@ -17,12 +17,12 @@ except ImportError:  # pragma: no cover - run as package
     from tests.crypto_testkit import BTC, ETH, CryptoCase
     from tests.fund_testkit import FRI, MON, SAT
 
-from fund import market
-from fund import params as P
+from strategy_platform.data import market_feed as market
+from strategy_platform.core import params as P
 from fund import store
-from fund.agents import macro as macro_agent
-from fund.broker import PROTECTIVE_ORIGINS, fmt_qty, round_qty
-from fund.types import Quote
+from strategy_platform.strategy.features import macro_agent
+from strategy_platform.execution.paper_broker import PROTECTIVE_ORIGINS, fmt_qty, round_qty
+from strategy_platform.core.types import Quote
 
 
 class DetectionTest(unittest.TestCase):

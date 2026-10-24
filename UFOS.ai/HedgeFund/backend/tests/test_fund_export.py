@@ -13,7 +13,7 @@ import unittest
 
 from fund import export
 from fund import store
-from fund.types import AgentSignal
+from strategy_platform.core.types import AgentSignal
 from newsroom import db
 
 TS = "2026-10-02T14:00:00+00:00"

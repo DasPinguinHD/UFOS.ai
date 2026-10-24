@@ -30,6 +30,11 @@ namespace UFOS.ai
         public TransactionLogWindow()
         {
             InitializeComponent();
+            // user request 2026-10-23: start maximized within the monitor's work area (taskbar visible); the hook replaces the
+            // frame padding below, and the maximized look is applied once (no StateChanged for the initial state)
+            UFOS.ai.Shared.WindowMaximize.ConstrainToWorkArea(this);
+            UFOS.ai.Shared.WindowMaximize.StartMaximized(this);
+            Window_StateChanged(this, EventArgs.Empty);
 
             _reloadDebounce = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
             {
@@ -304,18 +309,13 @@ namespace UFOS.ai
             ((UIElement)sender).ReleaseMouseCapture();
         }
 
-        // A maximized borderless window (WindowStyle=None) is placed by Windows so that its
-        // invisible resize frame hangs off the screen edges, cutting off the title bar and
-        // the top corners. Pad the content by that frame while maximized and drop the
-        // rounded corners there (same fix as HedgeFund/HedgeFundWindow.xaml.cs).
+        // Maximized: square corners. The WM_GETMINMAXINFO hook (Shared/WindowMaximize.cs, 2026-10-23) fits the maximized window
+        // to the monitor's work area, so no frame padding is needed any more.
         private void Window_StateChanged(object? sender, EventArgs e)
         {
             if (WindowState == WindowState.Maximized)
             {
-                var frame = SystemParameters.WindowResizeBorderThickness;
-                const double paddedBorder = 4; // SM_CXPADDEDBORDER, not exposed by SystemParameters
-                RootBorder.Margin = new Thickness(frame.Left + paddedBorder, frame.Top + paddedBorder,
-                                                  frame.Right + paddedBorder, frame.Bottom + paddedBorder);
+                RootBorder.Margin = new Thickness(0);
                 RootBorder.CornerRadius = new CornerRadius(0);
                 TitleBarBorder.CornerRadius = new CornerRadius(0);
             }

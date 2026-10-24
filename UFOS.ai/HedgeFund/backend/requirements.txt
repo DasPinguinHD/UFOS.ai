@@ -1,16 +1,26 @@
 # Async and networking
 aiohttp>=3.9.0
+certifi>=2024.2.2  # strategy_platform/core/tls.py: system roots + certifi roots for the collectors (2026-10-22)
 websockets>=14.0  # process_request(connection, request) API used by api_auth.py
 
 # Configuration
-python-dotenv>=1.0.0
 
-# Market data (included early to reduce friction later)
-yfinance>=0.2.65
-pandas>=2.1.0
+# Market data: Alpaca via the official SDK (strategy_platform/data/providers/alpaca.py,
+# lazy import). yfinance was removed from the HedgeFund module (user decision 2026-10-02).
+alpaca-py>=0.44
+pandas>=2.1.0  # alpaca-py dependency; planned for research/backtests
+numpy>=2.1  # strategy_platform/strategy evaluator (stage 2; lazy import)
+
+# Crypto broker (Strategy Platform stage 8, SPEC §18.3/§18.13): ccxt is NOT listed here on purpose — it is an
+# optional package in requirements-broker.txt, installed by run_hedgefund_backend.ps1 in its own pip run, so a
+# failed ccxt install can never mark this environment failed (only the binance-demo broker becomes unavailable).
 
 # LLM access (needed in phase 3)
 openai>=1.10.0
 
 # Time zones on Windows (zoneinfo needs the IANA database; fund/market.py)
 tzdata>=2024.1
+
+# Paper import (Strategy Platform stage 5b, SPEC §14.1): PDF -> text, pure Python (runs on 3.14), pinned;
+# used only in the research/pdf_worker.py subprocess (no JavaScript, no attachments, no OCR).
+pypdf==6.18.0

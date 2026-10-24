@@ -4,15 +4,22 @@
   Prepares the Python environment of the LiveStreamAgent backend and starts it.
 
   - creates the virtualenv backend/.venv (if missing)
-  - installs requirements.txt ONLY when that is required:
+  - installs ONLY from requirements.lock (stage 10, pinned dependencies:
+    every package "==" pinned with its sha256; made by make_lockfile.py from
+    requirements.txt) with "pip install --require-hashes -r requirements.lock",
+    and only when that is required:
       * .venv is missing,
-      * requirements.txt differs from the version installed last time
-        (SHA-256 recorded in .venv/ufos-requirements.sha256), or
+      * requirements.lock differs from the version installed last time
+        (SHA-256 recorded in .venv/ufos-requirements.sha256; before the first
+        lock: the requirements.txt hash), or
       * the last install did not complete (.venv/ufos-install-pending).
-    A normal start does NOT run "pip install --upgrade" any more.
-  - optional upgrades are manual: -Upgrade runs
-    "pip install -r requirements.txt --upgrade" (the root UFOS.ai app's
-    Settings -> "Update Python packages" calls this with -Upgrade -EnvOnly).
+    A missing lock, or one made from an older requirements.txt, refuses the
+    install ("UFOS_ENV: failed ..." with the command to run) - never an
+    unpinned install.
+  - optional upgrades are deliberate: -Upgrade first regenerates the lock
+    (make_lockfile.py --update: newest versions requirements.txt allows),
+    then installs exactly that lock (the root UFOS.ai app's Settings ->
+    "Update Python packages" calls this with -Upgrade -EnvOnly).
   - starts the backend (main.py) unless -EnvOnly is given.
   - -SkipInstall (used by the UFOS.ai app's launchers): no venv creation and
     no pip at all - the app prepares every module's environment once at
@@ -64,6 +71,9 @@ $VenvDir = Join-Path $PSScriptRoot '.venv'
 $VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
 $Requirements = Join-Path $PSScriptRoot 'requirements.txt'
 $HashFile = Join-Path $VenvDir 'ufos-requirements.sha256'
+$ReqLock = Join-Path $PSScriptRoot 'requirements.lock'
+$LockTool = Join-Path $PSScriptRoot 'make_lockfile.py'
+$LockToolHint = 'make_lockfile.py'
 $PendingFile = Join-Path $VenvDir 'ufos-install-pending'
 $LockFile = Join-Path $PSScriptRoot '.venv.lock'
 $LockStaleMinutes = 30
@@ -76,8 +86,27 @@ function Write-EnvMarker([string]$Text) {
 }
 
 function Get-RequirementsHash {
+	# Stage 10 (pinned dependencies): the stamp is the SHA-256 of requirements.lock once it exists. Before the
+	# first lock it is the old requirements.txt hash, so an installed environment keeps starting until the lock
+	# is made - an install itself always needs the lock (Invoke-EnvSetup).
+	if (Test-Path -LiteralPath $ReqLock) { return (Get-FileHash -LiteralPath $ReqLock -Algorithm SHA256).Hash }
 	if (-not (Test-Path -LiteralPath $Requirements)) { return 'none' }
 	return (Get-FileHash -LiteralPath $Requirements -Algorithm SHA256).Hash
+}
+
+# $null when the lock exists and was made from the current requirements file (its "# source: ... sha256=" line),
+# otherwise the reason with the command to run.
+function Get-LockProblem([string]$Req, [string]$Lock, [string]$Name) {
+	if (-not (Test-Path -LiteralPath $Lock)) {
+		return ($Name + ' missing - run once (needs internet): .venv\Scripts\python.exe ' + $LockToolHint)
+	}
+	$want = (Get-FileHash -LiteralPath $Req -Algorithm SHA256).Hash.ToLowerInvariant()
+	$line = Select-String -LiteralPath $Lock -Pattern '^# source: \S+ sha256=([0-9a-f]{64})$' | Select-Object -First 1
+	if ($null -eq $line) { return ($Name + ' has no source line - regenerate it: .venv\Scripts\python.exe ' + $LockToolHint) }
+	if ($line.Matches[0].Groups[1].Value -ne $want) {
+		return ($Name + ' is out of date (requirements changed) - run: .venv\Scripts\python.exe ' + $LockToolHint + ' --update')
+	}
+	return $null
 }
 
 # Returns $null when no install is needed, otherwise a short reason.
@@ -87,7 +116,7 @@ function Get-InstallReason {
 	if (-not (Test-Path -LiteralPath $HashFile)) { return 'requirements not recorded yet' }
 	$recorded = ''
 	try { $recorded = ([string](Get-Content -LiteralPath $HashFile -Raw -ErrorAction Stop)).Trim() } catch { }
-	if ($recorded -ne (Get-RequirementsHash)) { return 'requirements.txt changed' }
+	if ($recorded -ne (Get-RequirementsHash)) { return 'requirements changed' }
 	return $null
 }
 
@@ -216,9 +245,24 @@ function Invoke-EnvSetup {
 	$before = @()
 	if ($Upgrade) { $before = @(& $VenvPython -m pip freeze --disable-pip-version-check 2>$null) }
 
+	if ($Upgrade) {
+		# "Update Python packages": regenerate the lock deliberately, then install exactly that lock - never
+		# "pip install --upgrade" in place (stage 10, pinned dependencies).
+		Write-Host 'Regenerating requirements.lock (make_lockfile.py --update, needs internet)...'
+		& $VenvPython $LockTool --update | Out-Host
+		if ($LASTEXITCODE -ne 0) {
+			Write-EnvMarker ('failed could not regenerate requirements.lock (make_lockfile.py exited with code ' + $LASTEXITCODE + ' - offline? see log)')
+			return
+		}
+	}
+	$lockProblem = Get-LockProblem $Requirements $ReqLock 'requirements.lock'
+	if ($lockProblem) {
+		Write-EnvMarker ('failed ' + $lockProblem)
+		return
+	}
+
 	Set-Content -LiteralPath $PendingFile -Value 'install started' -Encoding Ascii
-	$pipArgs = @('-m', 'pip', 'install', '-r', $Requirements, '--disable-pip-version-check', '--no-input', '--progress-bar', 'off')
-	if ($Upgrade) { $pipArgs += '--upgrade' }
+	$pipArgs = @('-m', 'pip', 'install', '--require-hashes', '-r', $ReqLock, '--disable-pip-version-check', '--no-input', '--progress-bar', 'off')
 	Write-Host ('Running: python ' + ($pipArgs -join ' '))
 	& $VenvPython @pipArgs | Out-Host
 	$pipExit = $LASTEXITCODE

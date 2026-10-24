@@ -98,10 +98,21 @@ class DerivedTest(unittest.TestCase):
         self.assertEqual(m["signal"]["level"], "alert")
         self.assertIn("SAHMREALTIME", m["formula"])
 
-    def test_sahm_fallback(self):
+    def test_sahm_without_official_series_is_unavailable(self):
+        # no own reconstruction as a stand-in (user decision 2026-10-02)
         out = derived.compute({"UNRATE": monthly([3.7] * 36 + [4.3] * 12)}, [], None)
-        m = derived.to_macro("SAHM_RULE", out["SAHM_RULE"], formula=out.formulas.get("SAHM_RULE"))["macro"]
-        self.assertIn("own calculation", m["formula"])
+        self.assertNotIn("SAHM_RULE", out)
+        self.assertEqual(out.unavailable["SAHM_RULE"], "unavailable: official Sahm indicator (SAHMREALTIME) missing")
+
+    def test_real_policy_rate_without_core_pce_is_unavailable(self):
+        out = derived.compute({"FEDFUNDS": monthly([4.33] * 48), "CPIAUCSL": monthly([3.0] * 48)}, [])
+        self.assertNotIn("REAL_POLICY_RATE", out)                    # no CPI substitute
+        self.assertEqual(out.unavailable["REAL_POLICY_RATE"], "unavailable: core PCE (PCEPILFE) missing")
+        self.assertIsNone(derived.regime({"CPIAUCSL": monthly([3.0] * 48)},
+                                         {"PAYEMS": monthly([1.0] * 48), "INDPRO": monthly([1.0] * 48)}))
+        self.assertEqual(derived.regime_unavailable_reason({"CPIAUCSL": monthly([3.0] * 48)},
+                                                           {"PAYEMS": monthly([1.0] * 48), "INDPRO": monthly([1.0] * 48)}),
+                         "unavailable: core PCE (PCEPILFE) missing")
 
     def test_real_policy_rate_uses_core_pce(self):
         full = {"FEDFUNDS": monthly([4.33] * 48), "PCEPILFE": monthly([2.8] * 47), "CPIAUCSL": monthly([3.0] * 48)}
@@ -114,11 +125,11 @@ class DerivedTest(unittest.TestCase):
         # Regression (Copilot review 2026-09-25): the formula text used to live in a
         # module-level dict, so whichever compute() call ran last decided it.
         official = derived.compute({"UNRATE": monthly([4.0] * 48)}, [], monthly([0.1] * 30 + [0.2]))
-        fallback = derived.compute({"UNRATE": monthly([3.7] * 36 + [4.3] * 12)}, [], None)
+        missing = derived.compute({"UNRATE": monthly([3.7] * 36 + [4.3] * 12)}, [], None)
         m = derived.to_macro("SAHM_RULE", official["SAHM_RULE"], formula=official.formulas.get("SAHM_RULE"))["macro"]
         self.assertIn("SAHMREALTIME", m["formula"])
         self.assertNotIn("own calculation", m["formula"])
-        self.assertIn("own calculation", fallback.formulas["SAHM_RULE"])
+        self.assertNotIn("SAHM_RULE", missing.formulas)
 
     def test_curve_uninversion(self):
         curve = monthly([-0.8] * 14 + [-0.3] * 8 + [0.1, 0.3] * 7)
@@ -176,7 +187,7 @@ class ExpandedRegimeTest(unittest.TestCase):
         self.assertAlmostEqual(cs["growth_momentum"][-1]["value"], last["x"], places=2)
         self.assertAlmostEqual(cs["inflation_momentum"][-1]["value"], last["y"], places=2)
         cpi_only = derived.regime_extended({"PAYEMS": self.pay, "INDPRO": self.ind, "CPIAUCSL": self.pce})
-        self.assertEqual(cpi_only["component_series"]["inflation_name"], "CPI")
+        self.assertEqual(cpi_only["trail_long"], [])                  # no CPI substitute for core PCE
 
     def test_asset_tendencies_table(self):
         t = self.ext["asset_tendencies"]
@@ -185,7 +196,7 @@ class ExpandedRegimeTest(unittest.TestCase):
             self.assertEqual([c["asset"] for c in r["cells"]], t["columns"])
             self.assertTrue(all(c["direction"] in ("up", "down", "mixed") for c in r["cells"]))
         self.assertIn("not a forecast", t["disclaimer"])
-        self.assertIn("not investment advice", t["disclaimer"])
+        self.assertIn("information, not a recommendation", t["disclaimer"])      # S10-H context wording
 
     def test_missing_inputs_give_empty_fields(self):
         ext = derived.regime_extended({})

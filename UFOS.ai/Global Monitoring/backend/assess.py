@@ -11,25 +11,20 @@ source, category) — still clearly a short, best-effort read, not investment
 advice, which the prompt says explicitly so the model doesn't overstate its
 own certainty.
 
-2026-09-22: is_configured()/assess_marker() re-read .env on every call
-instead of trusting config.py's OPENROUTER_* constants, which are captured
-once at process start. The natural way to hit "the button still doesn't
-work despite a key being set" is to add the key to .env *after* the backend
-is already running (e.g. right after first seeing the "no key configured"
-message) — with the old import-time snapshot, that needs a full backend
-restart to take effect; with a fresh env read per call, the very next click
-after saving .env just works.
+2026-09-22: the key is read on every call, so entering it while the backend runs works on the next click.
+Stage 10, S10-E (2026-10-24): no .env any more — the key comes from the Windows Credential Manager
+(credstore "openrouter-api-key", shared by all modules, ⚙ Keys & data), base URL and model from data/settings.json
+(config.ai_settings(), also re-read per call).
 """
-import os
 from datetime import datetime, timezone
 
-from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-from config import OPENROUTER_API_KEY as _DEFAULT_API_KEY
-from config import OPENROUTER_BASE_URL as _DEFAULT_BASE_URL
-from config import OPENROUTER_MODEL as _DEFAULT_MODEL
+import config
 import cost_ledger
+import credstore
+
+KEY_NAME = "openrouter-api-key"
 
 # 2026-09-24: the old prompt ("you have no information beyond what is given
 # ... if the input is too thin, say so") plus a one-line teaser as the only
@@ -109,17 +104,19 @@ def usage_info(response) -> dict:
 
 
 def _current_settings() -> tuple[str, str, str]:
-    load_dotenv(override=True)
-    return (
-        os.getenv("OPENROUTER_API_KEY", _DEFAULT_API_KEY),
-        os.getenv("OPENROUTER_BASE_URL", _DEFAULT_BASE_URL),
-        os.getenv("OPENROUTER_MODEL", _DEFAULT_MODEL),
-    )
+    """(key, base URL, model) — raises credstore.SecretMissing / SecretStoreUnavailable / settings_file.SettingsError
+    with a user-facing message."""
+    base_url, model = config.ai_settings()
+    return credstore.require_secret(KEY_NAME), base_url, model
+
+
+def key_problem():
+    """None when the OpenRouter key can be read, else (code, message) for a 503 answer."""
+    return credstore.problem(KEY_NAME)
 
 
 def is_configured() -> bool:
-    api_key, _, _ = _current_settings()
-    return bool(api_key)
+    return key_problem() is None
 
 
 async def assess_marker(category_label: str, title: str, summary: str, source: str,
@@ -127,8 +124,6 @@ async def assess_marker(category_label: str, title: str, summary: str, source: s
     """Returns (assessment text, model id OpenRouter actually used, usage_info()).
     Records the call in the shared AI cost ledger (cost_ledger.py)."""
     api_key, base_url, model = _current_settings()
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not set")
 
     user_content = (
         f"Category: {category_label}\n"
@@ -236,8 +231,6 @@ async def summarize_local_news(city: str, country: str, articles: list) -> tuple
     """Returns (summary text, model id actually used, usage_info()).
     Records the call in the shared AI cost ledger (cost_ledger.py)."""
     api_key, base_url, model = _current_settings()
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not set")
     lines = []
     for i, a in enumerate(articles, 1):
         line = f"{i}. {a.get('title', '')} — {a.get('domain', '')}"

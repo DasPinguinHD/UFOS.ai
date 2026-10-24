@@ -8,11 +8,12 @@ import json
 import unittest
 from datetime import date, timedelta
 
-from fund import llm as llm_mod
-from fund import params as P
-from fund.agents import macro, risk, sentiment, technical
-from fund.llm import Budget, LlmUnavailable
-from fund.types import AccountView, Bar, MarketContext, PositionView
+from strategy_platform.core import llm as llm_mod
+from strategy_platform.core import params as P
+from fund.agents import risk, sentiment, technical
+from strategy_platform.strategy.features import macro_agent as macro
+from strategy_platform.core.llm import Budget, LlmUnavailable
+from strategy_platform.core.types import AccountView, Bar, MarketContext, PositionView
 
 NOW = "2026-09-28T15:00:00+00:00"   # Monday, NY session open
 
@@ -281,14 +282,26 @@ class SentimentTest(unittest.TestCase):
         self.assertIn("budget", out["SPY"].summary)
 
     def test_no_key_and_garbage(self):
+        key_msg = "OpenRouter API key is not set — enter it in Hedge Fund → Settings → Keys."
         out = run(sentiment.evaluate_batch(self.c, ["SPY"], {}, Budget(1.0),
-                                           llm=FakeLlm(raise_exc=LlmUnavailable("no_key", "OPENROUTER_API_KEY is not set"))))
-        self.assertEqual(out["SPY"].source, "unavailable")
-        self.assertIn("not configured", out["SPY"].summary)
+                                           llm=FakeLlm(raise_exc=LlmUnavailable("no_key", key_msg))))
+        self.assertEqual((out["SPY"].source, out["SPY"].confidence), ("unavailable", 0.0))
+        self.assertEqual(out["SPY"].summary, key_msg)          # the key's own message, no stand-in
         b = Budget(1.0)
         out = run(sentiment.evaluate_batch(self.c, ["SPY"], {}, b, llm=FakeLlm(answer="total garbage")))
         self.assertEqual(out["SPY"].source, "unavailable")
         self.assertAlmostEqual(b.run_spent, 0.004)             # the failed call still cost money
+
+    def test_budget_reached_message(self):
+        """D9 (2026-10-02): budget reached -> unavailable with exactly this message, no call."""
+        from strategy_platform.core import llm as llm_mod
+        fake, b = FakeLlm(), Budget(0.05)
+        b.add(0.05)
+        out = run(sentiment.evaluate_batch(self.c, ["SPY"], {}, b, llm=fake))
+        self.assertEqual(fake.calls, [])
+        self.assertEqual((out["SPY"].source, out["SPY"].score, out["SPY"].confidence), ("unavailable", 0.0, 0.0))
+        self.assertEqual(out["SPY"].summary, "AI budget reached — raise the limit in Settings to continue.")
+        self.assertEqual(llm_mod.BUDGET_REACHED_MESSAGE, out["SPY"].summary)
 
     def test_answer_validation(self):
         fake = FakeLlm(answer=[{"symbol": "SPY", "score": 7, "confidence": 0.5, "summary": "x"},
@@ -488,7 +501,7 @@ class BudgetFailClosedTest(unittest.TestCase):
 
 class SafeBaseUrlTest(unittest.TestCase):
     """The OpenRouter base URL re-read from .env must stay https (the API key
-    travels with every request): newsroom.ai._current_settings() and fund.llm."""
+    travels with every request): newsroom.ai._current_settings() and core.llm."""
 
     def test_fund_llm_safe_base_url(self):
         default = "https://openrouter.ai/api/v1"
@@ -510,23 +523,41 @@ class SafeBaseUrlTest(unittest.TestCase):
         saved = {n: sys.modules.get(n) for n in names}
         import newsroom
         had_attr, old_attr = hasattr(newsroom, "ai"), getattr(newsroom, "ai", None)
-        old_env = {k: os.environ.get(k) for k in ("OPENROUTER_BASE_URL", "OPENROUTER_API_KEY")}
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp(prefix="s10e-settings-")
         try:
             sys.modules["dotenv"], sys.modules["openai"] = dotenv, openai
             sys.modules.pop("config", None)
             sys.modules.pop("newsroom.ai", None)
             ai = importlib.import_module("newsroom.ai")
-            os.environ["OPENROUTER_API_KEY"] = "test-key"
-            os.environ["OPENROUTER_BASE_URL"] = "http://plain.example/api"
-            self.assertEqual(ai._current_settings()[1], "https://openrouter.ai/api/v1")
-            os.environ["OPENROUTER_BASE_URL"] = "https://proxy.example/v1"
-            self.assertEqual(ai._current_settings()[1], "https://proxy.example/v1")
+            # the key comes only from the Credential Manager (2026-10-02): fake store
+            from strategy_platform import secrets as sp_secrets
+            sp_secrets.set_store(sp_secrets.MemoryStore({sp_secrets.target("openrouter-api-key"): "test-key"}))
+            # S10-E: base URL + models come from data/settings.json (here a temp file), re-read per call
+            import config as real_config
+            import settings_file
+            orig_path = real_config.SETTINGS_PATH
+            real_config.SETTINGS_PATH = os.path.join(tmp, "settings.json")
+            try:
+                self.assertEqual(ai._current_settings()[1], "https://openrouter.ai/api/v1")       # no file: default
+                with open(real_config.SETTINGS_PATH, "w", encoding="utf-8") as fh:
+                    fh.write('{"openrouter_base_url": "https://openrouter.ai/api/v2", "openrouter_model": "x/y"}')
+                key, base, model = ai._current_settings()
+                self.assertEqual((key, base, model), ("test-key", "https://openrouter.ai/api/v2", "x/y"))
+                self.assertEqual(ai.analysis_models()["standard"], "x/y")
+                with open(real_config.SETTINGS_PATH, "w", encoding="utf-8") as fh:
+                    fh.write('{"openrouter_base_url": "http://plain.example/api"}')                 # never http
+                with self.assertRaises(settings_file.SettingsError):
+                    ai._current_settings()
+                with self.assertRaises(settings_file.SettingsError):
+                    ai.analysis_models()                       # P (ENV_API §9): raises, core/llm reports it
+            finally:
+                real_config.SETTINGS_PATH = orig_path
         finally:
-            for k, v in old_env.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
+            from strategy_platform import secrets as sp_secrets
+            sp_secrets.set_store(None)
+            shutil.rmtree(tmp, True)
             for n, m in saved.items():
                 if m is None:
                     sys.modules.pop(n, None)

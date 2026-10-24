@@ -264,12 +264,17 @@ def utc_now_iso() -> str:
 
 
 def default_path() -> str:
-    """HedgeFund/backend/data/newsroom.db (env UFOS_HEDGEFUND_DB overrides)."""
+    """HedgeFund/backend/data/newsroom.db (env UFOS_HEDGEFUND_DB overrides) — in sandbox mode ALWAYS
+    data/sandbox/newsroom.db (sandbox_profile.py; the env override is ignored there, it could name the real file)."""
+    import sandbox_profile
     override = os.environ.get(ENV_PATH)
+    if sandbox_profile.is_sandbox():
+        if override:
+            logger.warning("%s is set but ignored in sandbox mode — the sandbox copy is used", ENV_PATH)
+        return sandbox_profile.db_file(DB_FILENAME)
     if override:
         return override
-    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(backend_dir, "data", DB_FILENAME)
+    return sandbox_profile.db_file(DB_FILENAME)
 
 
 def legacy_path():

@@ -2,9 +2,12 @@
 
 Free, public domain (US government work product), no API key. The only real
 requirement is SEC's Fair Access policy: every automated requester must send
-a descriptive User-Agent (name + contact email) — set SEC_EDGAR_USER_AGENT in
-.env or this collector refuses to run rather than risk being throttled/blocked
-under a generic identity.
+a descriptive User-Agent (name + contact email). Since 2026-10-02 it comes
+ONLY from the Windows Credential Manager (Hedge Fund → Settings → Keys, secret
+"sec-edgar-user-agent"), read at every poll; SEC_EDGAR_USER_AGENT in .env is
+ignored. Without it this collector refuses to run (status says so, re-checked
+every minute) rather than risk being throttled/blocked under a generic
+identity.
 
 "Real-time" caveat: insiders must file Form 4 within 2 business days of a
 trade. That's a legal ceiling, not a data-source limitation — polling more
@@ -41,12 +44,16 @@ import xml.etree.ElementTree as ET
 
 import aiohttp
 
-from config import SEC_EDGAR_USER_AGENT, SEC_EDGAR_POLL_SECONDS, SEC_EDGAR_MIN_REQUEST_INTERVAL_SECONDS
+from config import SEC_EDGAR_POLL_SECONDS, SEC_EDGAR_MIN_REQUEST_INTERVAL_SECONDS
+from strategy_platform import secrets as _secrets
+from strategy_platform.core.errors import UserFacingError
 from .store import make_event
+from . import keys as _keys
 
 logger = logging.getLogger(__name__)
 
 FEED_URL = "https://www.sec.gov/cgi-bin/browse-edgar"
+SEC_SECRET = "sec-edgar-user-agent"
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 
 # Plain-English meaning of Form 4 transaction codes (SEC Form 4 General
@@ -342,8 +349,8 @@ async def _fetch_feed_entries(session: aiohttp.ClientSession, headers: dict) -> 
         except Exception:
             if page == 0:
                 raise  # nothing at all — the poll really failed
-            # Later page failed: keep what the earlier pages gave us rather
-            # than throwing the whole poll away.
+            # FALLBACK (accepted by the user 2026-10-02): a later feed page failed —
+            # the entries of the earlier pages are kept and shown (partial feed).
             logger.warning("SEC EDGAR: continuing with %d entries from %d page(s)", len(entries), page)
             break
         if not page_entries:
@@ -360,7 +367,11 @@ async def _fetch_feed_entries(session: aiohttp.ClientSession, headers: dict) -> 
 
 
 async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> None:
-    headers = {"User-Agent": SEC_EDGAR_USER_AGENT}
+    try:
+        headers = {"User-Agent": _secrets.require_secret(SEC_SECRET)}   # read at use time
+    except UserFacingError as ex:
+        await report_status(False, ex.user_message)
+        return False
     try:
         entries = await _fetch_feed_entries(session, headers)
     except Exception as ex:
@@ -409,6 +420,8 @@ async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> Non
                 title, summary = _describe(details)
                 detailed += 1
             else:
+                # FALLBACK (accepted by the user 2026-10-02): unparsable Form 4 details —
+                # the card shows the feed's one-line title instead (and says so in the summary).
                 title = feed_title or "Form 4 filing"
                 summary = f"Form 4 (insider transaction) filed at {filed_at}; details could not be parsed."
 
@@ -434,13 +447,13 @@ async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> Non
 
 
 async def run(emit, report_status) -> None:
-    if not SEC_EDGAR_USER_AGENT:
-        msg = "SEC_EDGAR_USER_AGENT is not set in .env — SEC requires a descriptive User-Agent (name + contact email). Collector disabled."
-        logger.error(msg)
-        await report_status(False, msg)
-        return
-    async with aiohttp.ClientSession() as session:
+    from strategy_platform.core import tls          # system roots + certifi, verification on (2026-10-22)
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=tls.client_context())) as session:
         while True:
+            # Credential Manager only (2026-10-02); waits + reports while it is missing
+            await _keys.wait_for_secret(
+                SEC_SECRET, report_status,
+                suffix=" SEC requires a descriptive User-Agent (name + contact email) — collector paused.")
             ok = await _poll_once(session, emit, report_status)
             # A failed poll (e.g. a slow EDGAR response) retries after 30s
             # instead of leaving the Insider Trades list empty for a full

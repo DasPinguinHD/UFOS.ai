@@ -14,6 +14,7 @@ its own small copy of this writer; the format is identical everywhere:
 Rule: whoever makes the OpenRouter call records it — here the Python backend
 (newsroom/ai.py). The WPF side never writes the ledger.
 The env var UFOS_AI_COST_LOG overrides the path (used by the tests).
+Sandbox profile (2026-10-23): in sandbox mode a line also has "mode": "sandbox" and the label "SANDBOX · …".
 record() never raises — a failed write is only logged as a warning.
 """
 import json
@@ -66,6 +67,12 @@ def record(feature: str, feature_label: str, model: str, usage: dict) -> None:
             "completion_tokens": _int_or_none(usage.get("completion_tokens")),
             "status": "ok",
         }
+        import sandbox_profile
+        if sandbox_profile.is_sandbox():
+            # Sandbox profile (strategy_platform/SPEC.md "Sandbox profile"): the click-test's AI costs are tagged
+            # (additive key; the label makes them visible in every ledger view). Normal lines are unchanged.
+            entry["mode"] = sandbox_profile.MODE_SANDBOX
+            entry["feature_label"] = f"SANDBOX · {feature_label}"
         line = json.dumps(entry, ensure_ascii=False) + "\n"
         path = ledger_path()
         folder = os.path.dirname(path)

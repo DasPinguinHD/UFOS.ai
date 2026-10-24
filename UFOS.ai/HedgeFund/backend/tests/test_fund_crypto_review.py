@@ -4,7 +4,7 @@ the entry quote (a fresh short never starts below maintenance), funding
 booked before any fill that changes a short (atomic, deduplicated per
 window), per-class trade counters in the backtest, effective_from only
 counting a risk watch that will run, the risk watch filling the user's
-queued crypto orders and expiring stale autopilot ones, stale fallback
+queued crypto orders and expiring stale autopilot ones, stale-flagged
 quotes never liquidating, and strict qty validation. Paper trading only.
 
 Run from HedgeFund/backend:  python -m unittest tests.test_fund_crypto_review -v
@@ -21,13 +21,12 @@ except ImportError:  # pragma: no cover - run as package
     from tests.crypto_testkit import BTC, ETH, CryptoCase
     from tests.fund_testkit import FRI, SAT
 
-from fund import market
-from fund import params as P
+from strategy_platform.data import market_feed as market
+from strategy_platform.core import params as P
 from fund import store
 from fund.backtest import run_backtest
 from fund.engine import EngineError
-from fund.market import YFinanceFeed
-from fund.types import Bar, Quote
+from strategy_platform.core.types import Bar, Quote
 
 
 class PerpMarginFixTest(CryptoCase):
@@ -123,15 +122,10 @@ class RiskWatchFixTest(CryptoCase):
 
 
 class StaleQuoteTest(CryptoCase):
-    def test_yfinance_fallback_quote_is_marked_stale(self):
-        feed = YFinanceFeed(cache_store=None, clock=lambda: SAT)
-        feed._mem_bars[BTC] = (SAT, 400, [Bar("2026-10-02", 1, 1, 1, 49000.0), Bar("2026-10-03", 1, 1, 1, 50000.0)])
-
-        def boom(_sym):
-            raise RuntimeError("offline")
-        feed._ticker = boom
-        q = feed.quote(BTC)
-        self.assertEqual((q.price, q.stale, q.ts), (50000.0, True, "2026-10-03T00:00:00+00:00"))
+    def test_stale_flag_is_still_honoured(self):
+        # AlpacaFeed never returns a stand-in quote (it raises, fund/SPEC.md §5, 2026-10-02);
+        # quotes that carry the stale flag (fakes) are still treated as stale.
+        q = Quote(BTC, 50000.0, ts="2026-10-03T00:00:00+00:00", stale=True)
         self.assertTrue(market.quote_is_stale(q, SAT))
         self.assertFalse(market.quote_is_stale(Quote(BTC, 1.0), SAT))
         self.assertTrue(market.quote_is_stale(None, SAT))

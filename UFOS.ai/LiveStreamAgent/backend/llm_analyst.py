@@ -1,5 +1,11 @@
 """Builds a prompt from live transcript + market snapshot and asks DeepSeek (via OpenRouter)
-for a structured long/short stance per asset category."""
+for a structured long/short stance per asset category.
+
+2026-10-17 (task B, contract UFOS.ai/docs/ai-budgets-spec.md §3): every call is checked against its
+daily AI cap BEFORE it is sent (``caps``: ai_caps.DailyCaps, keys "verdicts" / "analysis"). A blocked
+call is not made and returns {"error": "budget", "budget_key", "reason", "detail": <message>} —
+nothing that looks like analysis (no unrequested fallback); main.py tells the window ("ai_budget").
+"""
 import glob
 import json
 import logging
@@ -9,16 +15,19 @@ from datetime import datetime, timezone
 
 from openai import AsyncOpenAI
 
+import ai_caps
 import cost_ledger
+import credstore
 
 from config import (
     MarketSnapshot,
-    OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL,
     OPENROUTER_MODEL,
     SCENARIOS_DIR,
     iter_ticker_groups,
 )
+
+KEY_NAME = "openrouter-api-key"          # shared by all modules (Credential Manager, ⚙ Keys & data)
 
 logger = logging.getLogger(__name__)
 
@@ -95,13 +104,20 @@ def _snapshot_dict(snapshot: MarketSnapshot) -> dict:
     }
 
 
+def _budget_blocked(ex: "ai_caps.BudgetBlocked") -> dict:
+    return {"error": "budget", "budget_key": ex.key, "reason": ex.reason, "detail": ex.message}
+
+
 class LLMAnalyst:
-    def __init__(self, store=None) -> None:
-        self._client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+    def __init__(self, store=None, caps=None) -> None:
+        self._client = None                    # built on first use with the key from the Credential Manager
+        self._client_key = None
         self._scenarios = _load_scenarios()
         self._recent_transcript: deque[str] = deque(maxlen=TRANSCRIPT_CONTEXT_LINES)
         # Optional storage.Storage: every successful AI output is saved (2026-09-25).
         self.store = store
+        # Optional ai_caps.DailyCaps (task B): checked BEFORE every call; None = no caps (tests/tools only).
+        self.caps = caps
 
     def _save_output(self, feature: str, model, output: dict, input_data: dict, prov: dict, usage) -> None:
         """Persist one AI output next to its cost-ledger entry. Never raises."""
@@ -112,6 +128,19 @@ class LLMAnalyst:
                                       input_data=input_data, provenance=prov, usage=usage)
         except Exception as ex:
             logger.warning("Could not store AI %s: %s", feature, ex)
+
+    def _key_error(self):
+        """None when the OpenRouter key can be read (the client is (re)built when the key changed), else the error
+        dict {"error": "key_missing" | "key_store_unavailable", "key", "detail"} — checked BEFORE the budget."""
+        try:
+            key = credstore.require_secret(KEY_NAME)
+        except (credstore.SecretMissing, credstore.SecretStoreUnavailable) as ex:
+            code = "key_missing" if isinstance(ex, credstore.SecretMissing) else "key_store_unavailable"
+            return {"error": code, "key": KEY_NAME, "detail": ex.user_message}
+        if self._client is None or key != self._client_key:
+            self._client = AsyncOpenAI(api_key=key, base_url=OPENROUTER_BASE_URL)
+            self._client_key = key
+        return None
 
     def note(self, transcript_segment: str) -> None:
         """Record a segment in the rolling context without triggering an LLM call."""
@@ -131,6 +160,16 @@ class LLMAnalyst:
             f"Respond with JSON only. Limit 'reason' to {max_reason_chars} characters."
         )
 
+        missing = self._key_error()
+        if missing:
+            return missing
+        reservation = None
+        if self.caps is not None:
+            try:
+                reservation = self.caps.reserve("verdicts")    # daily AI cap, BEFORE the call (fail closed)
+            except ai_caps.BudgetBlocked as ex:
+                return _budget_blocked(ex)
+
         try:
             response = await self._client.chat.completions.create(
                 model=OPENROUTER_MODEL,
@@ -146,6 +185,8 @@ class LLMAnalyst:
             used_model = getattr(response, "model", None) or OPENROUTER_MODEL
             usage = cost_ledger.usage_info(response)
             cost_ledger.record("verdict", used_model, usage)
+            if self.caps is not None:
+                self.caps.settle(reservation, usage.get("cost_usd"))
             raw = response.choices[0].message.content
             # parse and validate
             parsed = json.loads(raw)
@@ -182,6 +223,8 @@ class LLMAnalyst:
                 result["provenance"], usage)
             return result
         except Exception as ex:
+            if self.caps is not None:
+                self.caps.charge_for_exception(reservation, ex)   # no-op once settled
             logger.exception("LLM generate_verdict failed: %s", ex)
             return {"error": "llm_failed", "detail": str(ex)}
 
@@ -196,18 +239,34 @@ class LLMAnalyst:
             f"snapshot, and produce the JSON response."
         )
 
-        response = await self._client.chat.completions.create(
-            model=OPENROUTER_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,
-            max_tokens=1024,
-            response_format={"type": "json_object"},
-        )
+        missing = self._key_error()
+        if missing:
+            return {"categories": {}, "summary": "", **missing}
+        reservation = None
+        if self.caps is not None:
+            try:
+                reservation = self.caps.reserve("analysis")    # daily AI cap, BEFORE the call (fail closed)
+            except ai_caps.BudgetBlocked as ex:
+                return {"categories": {}, "summary": "", **_budget_blocked(ex)}
+        try:
+            response = await self._client.chat.completions.create(
+                model=OPENROUTER_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.2,
+                max_tokens=1024,
+                response_format={"type": "json_object"},
+            )
+        except BaseException as ex:
+            if self.caps is not None:
+                self.caps.charge_for_exception(reservation, ex)
+            raise
         usage = cost_ledger.usage_info(response)
         cost_ledger.record("analysis", getattr(response, "model", None) or OPENROUTER_MODEL, usage)
+        if self.caps is not None:
+            self.caps.settle(reservation, usage.get("cost_usd"))
         raw = response.choices[0].message.content
         try:
             result = json.loads(raw)

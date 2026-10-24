@@ -24,8 +24,11 @@ fees_bps/2 plus a fee of fees_bps/2 of notional (as the paper broker); whole
 shares; shorts pay borrow |short MV| × rate/360 per calendar day
 (``params.borrow_rate_for``: ETF default / stock default / override); no
 dividends, no margin calls, no Rule 201. Sizing = ``sizing.plan_trade`` with
-the rule judge (``judge.rule_decision``) and a simplified risk agent (ATR% only
-+ short permissions; no calendar, no drawdown proximity, no concentration).
+the backtest's own rule strategy (``rule_decision`` below: the judge's rule
+score with hysteresis — the backtest is rule-only BY DESIGN, SPEC §12, and
+labelled so; it is not a stand-in for the live AI judge, which has no rule
+fallback since 2026-10-02) and a simplified risk agent (ATR% only + short
+permissions; no calendar, no drawdown proximity, no concentration).
 
 Crypto symbols (``params.is_crypto``, e.g. BTC-USD) are allowed: their bars
 run 7 days a week (the day calendar is the union of all symbols' bar dates;
@@ -37,6 +40,13 @@ per calendar day at ``crypto_funding_rate_pct_8h``; positive = received by
 the short), no liquidation model. Sharpe uses 365 periods per year when
 crypto is in the test (the equity series then has a point every calendar
 day), else 252. min_hold_days counts the symbol's own bars.
+
+Data source (user decision 2026-10-02): the engine passes Alpaca daily bars
+(IEX, adjusted "all", via fund.market.AlpacaFeed / the data layer). The
+configured source has equity history only since 2016 (``HISTORY_START``): a
+``start`` before that returns ``{"error": HISTORY_ERROR}`` — never a shorter
+test presented as the requested one. Warm-up bars before 2016 do not exist
+either; the result then notes the shorter warm-up.
 
 ``build_macro_history(macro_latest, publication_lag_months=1) -> list`` turns
 main.py's ``macro_latest`` (the "macro-regime" event's extended view
@@ -64,14 +74,14 @@ from types import SimpleNamespace
 from typing import Dict, List, Optional
 
 from . import indicators as ind
-from . import params as P
-from .agents import macro as macro_agent
+from strategy_platform.core import params as P
+from strategy_platform.strategy.features import macro_agent
 from .agents import technical
 from .agents.risk import atr_thresholds
-from .broker import round_qty
-from .judge import rule_decision
+from strategy_platform.execution.paper_broker import round_qty
+from .judge import apply_veto, rule_action, rule_confidence, rule_score
 from .sizing import plan_trade
-from .types import Bar, RiskAssessment
+from strategy_platform.core.types import Bar, JudgeDecision, RiskAssessment
 
 READING_KEYS = {  # ctx.macro readings key -> macro_latest event id
     "DGS10": "macro-DGS10", "T10Y3M": "macro-T10Y3M", "T10Y2Y": "macro-T10Y2Y", "VIXCLS": "macro-VIXCLS",
@@ -79,6 +89,31 @@ READING_KEYS = {  # ctx.macro readings key -> macro_latest event id
     "SAHM_RULE": "macro-derived-SAHM_RULE", "REAL_POLICY_RATE": "macro-derived-REAL_POLICY_RATE",
 }
 DEFAULT_YEARS = 5
+
+
+def rule_decision(symbol: str, signals, risk: Optional[RiskAssessment], previous_action: Optional[str],
+                  params: dict) -> JudgeDecision:
+    """The backtest's rule strategy (rule-only by design, SPEC §12): weighted
+    agent score with hysteresis, vetoed directions -> FLAT. Used ONLY by the
+    backtest — the live engine never turns rules into a recommendation."""
+    s, agr = rule_score(signals, (params or {}).get("agent_weights"))
+    act = rule_action(s, previous_action)
+    final, note = apply_veto(act, risk)
+    text = (f"Backtest rule strategy: weighted agent score {s:+.2f} with {agr * 100:.0f}% agreement → {act}"
+            + (f"; {note} → FLAT" if note else "") + ".")
+    return JudgeDecision(symbol=symbol, action=final, confidence=round(rule_confidence(s, agr), 4), rationale=text,
+                         source="backtest-rules", rule_score=round(s, 4), rule_action=act)
+HISTORY_START = date(2016, 1, 1)   # Alpaca free plan: equity history since 2016
+HISTORY_ERROR = "history before 2016 is not available from the configured source"
+
+
+def check_history_start(start) -> Optional[str]:
+    """HISTORY_ERROR when ``start`` (date / 'YYYY-MM-DD') lies before
+    HISTORY_START, else None — for request validation (400)."""
+    if start in (None, ""):
+        return None
+    d = start if isinstance(start, date) else date.fromisoformat(str(start)[:10])
+    return HISTORY_ERROR if d < HISTORY_START else None
 
 
 # --- macro history ------------------------------------------------------------------
@@ -178,7 +213,7 @@ def _bar(b) -> Bar:
     if isinstance(b, Bar):
         return b
     return Bar(date=str(b["date"])[:10], open=float(b["open"]), high=float(b["high"]), low=float(b["low"]),
-               close=float(b["close"]), volume=float(b.get("volume") or 0.0))
+               close=float(b["close"]), volume=None if b.get("volume") is None else float(b["volume"]))
 
 
 def _years_before(d: date, years: int) -> date:
@@ -247,6 +282,8 @@ def run_backtest(bars_by_symbol: Dict[str, list], macro_history: Optional[List[d
     last_date = max(b[-1].date for b in bars.values())
     end_s = str(end)[:10] if end else last_date
     start_s = str(start)[:10] if start else _years_before(date.fromisoformat(end_s), DEFAULT_YEARS).isoformat()
+    if check_history_start(start_s):
+        return {"error": HISTORY_ERROR, "symbols": sorted(bars), "start": start_s, "end": end_s, "notes": notes}
     cal = sorted({b.date for lst in bars.values() for b in lst if start_s <= b.date <= end_s})
     if len(cal) < 2:
         return {"error": "not enough bars in the requested period", "symbols": sorted(bars), "start": start_s,
@@ -449,7 +486,7 @@ def run_backtest(bars_by_symbol: Dict[str, list], macro_history: Optional[List[d
             weekly.append({"date": day, "equity": round(equity_series[k], 2),
                            "benchmark": round(bench_series[k], 2)})
     notes += [
-        "Rule-only simulation: technical + macro agents and the rule judge; no sentiment and no LLM "
+        "Rule-only simulation: technical + macro agents and a rule strategy (no AI judge); no sentiment and no LLM "
         "(not reproducible and could know the outcome).",
         "Signals at the close, fills at the next open; fees_bps per fill (half slippage, half fee); "
         "short borrow at the default rates; no dividends, no margin calls, no Rule 201.",

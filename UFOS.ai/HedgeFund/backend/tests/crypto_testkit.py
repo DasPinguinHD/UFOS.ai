@@ -9,9 +9,9 @@ try:
 except ImportError:  # pragma: no cover - run as package
     from tests.fund_testkit import EngineCase, FakeLLM, make_bars
 
-from fund import llm as llm_mod
+from strategy_platform.core import llm as llm_mod
 from fund import store
-from fund.types import OrderRequest
+from strategy_platform.core.types import OrderRequest
 
 BTC = "BTC-USD"
 ETH = "ETH-USD"

@@ -20,14 +20,29 @@ that was thin. This module gathers what a human analyst would look at next:
 
 build_context() returns (context_text, used_labels); used_labels is shown to
 the user as "Based on: ..." so it's visible what the assessment rests on.
+
+Stage 10 security audit L3 (2026-10-24): the article URL comes from a news
+feed, so the fetch is restricted to PUBLIC internet addresses — a host that
+resolves to a private / loopback / link-local / reserved address (the PC
+itself, the router, the LAN, cloud metadata 169.254.169.254) is refused. The
+check runs on the resolved addresses at connect time (a resolver that drops
+non-public results, so a DNS answer can't change between check and connect),
+on IP-literal hosts, and on every redirect hop (redirects are followed by hand,
+at most ARTICLE_MAX_REDIRECTS). The article cache is an LRU of at most
+ARTICLE_CACHE_MAX_ENTRIES entries.
 """
+import ipaddress
 import logging
 import re
+import socket
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from urllib.parse import urljoin, urlsplit
 
 import aiohttp
+from aiohttp.abc import AbstractResolver
 
 import news_feeds
 from geo import detect_mentioned_country, haversine_km, nearest_country
@@ -36,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 ARTICLE_MAX_CHARS = 6000
 ARTICLE_CACHE_SECONDS = 3600
+ARTICLE_CACHE_MAX_ENTRIES = 200      # LRU bound (each entry ≤ ARTICLE_MAX_CHARS characters)
+ARTICLE_MAX_REDIRECTS = 3
 RELATED_MAX = 5
 
 # Which other events count as "related", per category of the assessed event:
@@ -49,7 +66,92 @@ _RELATED_RULES = {
     "geopolitics": {"disaster": 500, "flight": 500, "geopolitics_same_country": True},
 }
 
-_article_cache: dict[str, tuple[float, str]] = {}
+_article_cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
+
+
+class BlockedAddress(Exception):
+    """The article URL points at a non-public address (or is not http/https)."""
+
+
+def ip_is_public(value) -> bool:
+    """True only for a global unicast address (not private, loopback, link-local, multicast, reserved,
+    unspecified, shared/CGNAT, site-local; IPv4-mapped IPv6 judged by its IPv4 part)."""
+    try:
+        ip = ipaddress.ip_address(str(value).split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return bool(ip.is_global) and not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
+                                       or ip.is_reserved or ip.is_unspecified)
+
+
+def check_url(url: str) -> str:
+    """The URL if it is http(s) with a host that is a name or a PUBLIC IP literal; else BlockedAddress. A name is
+    checked again after resolution (PublicOnlyResolver)."""
+    try:
+        parts = urlsplit(str(url or ""))
+        host = parts.hostname or ""
+    except ValueError as ex:
+        raise BlockedAddress("unparsable URL") from ex
+    if parts.scheme not in ("http", "https") or not host:
+        raise BlockedAddress("not an http(s) URL with a host")
+    if parts.username is not None or parts.password is not None:
+        raise BlockedAddress("credentials in the URL")
+    try:
+        ipaddress.ip_address(host.split("%", 1)[0])
+        literal = True
+    except ValueError:
+        literal = False
+    if literal and not ip_is_public(host):
+        raise BlockedAddress(f"non-public address {host}")
+    if not literal and (host.lower() == "localhost" or host.lower().endswith((".localhost", ".local"))):
+        raise BlockedAddress(f"local host name {host}")
+    return url
+
+
+class PublicOnlyResolver(AbstractResolver):
+    """Resolves like aiohttp's default resolver, then keeps PUBLIC addresses only; none left → OSError (the
+    connection is never opened). Used for every connection of the article fetch, redirect hops included."""
+
+    def __init__(self, inner=None):
+        self._inner = inner or aiohttp.DefaultResolver()
+
+    async def resolve(self, host, port=0, family=socket.AF_INET):
+        infos = await self._inner.resolve(host, port, family=family)
+        public = [i for i in infos if ip_is_public(i.get("host"))]
+        if not public:
+            raise OSError(f"{host} resolves to non-public addresses only — refused (stage 10 L3)")
+        return public
+
+    async def close(self):
+        await self._inner.close()
+
+
+def _cache_get(url: str):
+    hit = _article_cache.get(url)
+    if hit is None:
+        return None
+    if time.time() - hit[0] >= ARTICLE_CACHE_SECONDS:
+        _article_cache.pop(url, None)
+        return None
+    _article_cache.move_to_end(url)
+    return hit[1]
+
+
+def _cache_put(url: str, text: str) -> None:
+    _article_cache[url] = (time.time(), text)
+    _article_cache.move_to_end(url)
+    while len(_article_cache) > ARTICLE_CACHE_MAX_ENTRIES:
+        _article_cache.popitem(last=False)
+
+
+def _session_factory():
+    """The article fetch's own session: the public-only resolver on every connection (not the shared session)."""
+    return aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=PublicOnlyResolver()))
+
+
+SESSION_FACTORY = _session_factory      # tests: a fake session
 
 
 class _ParagraphExtractor(HTMLParser):
@@ -113,26 +215,46 @@ def extract_article_text(html_text: str) -> str:
     return text
 
 
+async def _get_following_redirects(session, url: str, headers: dict) -> str:
+    """GET with redirects followed by hand (each hop checked, at most ARTICLE_MAX_REDIRECTS); the HTML text."""
+    current = check_url(url)
+    for _hop in range(ARTICLE_MAX_REDIRECTS + 1):
+        async with session.get(current, headers=headers, allow_redirects=False,
+                               timeout=aiohttp.ClientTimeout(total=12)) as resp:
+            if resp.status in (301, 302, 303, 307, 308):
+                location = resp.headers.get("Location")
+                if not location:
+                    raise BlockedAddress("redirect without a Location")
+                current = check_url(urljoin(current, location))
+                continue
+            resp.raise_for_status()
+            raw = await resp.content.read(3_000_000)  # cap: nobody needs more than 3 MB of HTML
+            return raw.decode(resp.charset or "utf-8", errors="replace")
+    raise BlockedAddress(f"more than {ARTICLE_MAX_REDIRECTS} redirects")
+
+
 async def fetch_article_text(session: aiohttp.ClientSession, url: str) -> str:
+    """The article's paragraph text ("" when unavailable or refused). ``session`` (the shared one) is not used for
+    the fetch itself: it runs on its own session with the public-only resolver (stage 10 L3)."""
     if not url or not url.startswith(("http://", "https://")):
         return ""
-    cached = _article_cache.get(url)
-    if cached and time.time() - cached[0] < ARTICLE_CACHE_SECONDS:
-        return cached[1]
+    cached = _cache_get(url)
+    if cached is not None:
+        return cached
     text = ""
     try:
         headers = dict(news_feeds.HEADERS, Accept="text/html,application/xhtml+xml")
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=12)) as resp:
-            resp.raise_for_status()
-            raw = await resp.content.read(3_000_000)  # cap: nobody needs more than 3 MB of HTML
-            html_text = raw.decode(resp.charset or "utf-8", errors="replace")
+        async with SESSION_FACTORY() as own:
+            html_text = await _get_following_redirects(own, url, headers)
         text = extract_article_text(html_text)
         if not text:
             logger.info("Article text empty for %s (HTML %d chars, %d <p> tags) — page may render via JavaScript",
                         url, len(html_text), html_text.lower().count("<p"))
+    except BlockedAddress as ex:
+        logger.warning("Article fetch refused for %s: %s", url, ex)
     except Exception as ex:
         logger.info("Article text unavailable for %s: %s", url, str(ex) or type(ex).__name__)
-    _article_cache[url] = (time.time(), text)
+    _cache_put(url, text)
     return text
 
 

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<!--
+  UFOS.ai — Market Research chart page (stage MR3a). Proof-of-concept, research only,
+  paper trading only, not investment advice.
+  Loaded by MarketResearch/Chart/ChartHost.cs in WebView2 (https://chart.ufos.local/chart.html).
+  Contract: HedgeFund/backend/market_research/SPEC.md §9 + "MR3 bridge contract v1".
+  No network, no inline script, no eval; all data arrives through the bridge (chart.js).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>UFOS Research Chart</title>
+  <link rel="stylesheet" href="chart.css">
+</head>
+<body>
+  <div id="root">
+    <div id="chart" aria-label="Price chart"></div>
+    <div id="legend" aria-live="off">
+      <div class="row" id="legend-main"></div>
+      <div class="row" id="legend-ind"></div>
+      <div class="row" id="legend-marks"></div>
+      <div class="row muted" id="legend-sub"></div>
+    </div>
+    <div id="fatal" hidden></div>
+  </div>
+  <script src="vendor/klinecharts.min.js"></script>
+  <script src="chart.js"></script>
+</body>
+</html>

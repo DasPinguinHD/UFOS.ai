@@ -1,0 +1,6 @@
+# Optional broker packages of the HedgeFund backend (Strategy Platform stage 8, SPEC §18.3/§18.13).
+# Installed by run_hedgefund_backend.ps1 in a SEPARATE pip run after requirements.txt; a failure only makes the
+# Binance Spot demo broker unavailable ("ccxt could not be installed (<reason>)"), everything else starts.
+# (Stage 8b, SPEC §18.14: ccxt binance with enable_demo_trading; the Kraken demo is retired, §18.13.)
+# ccxt 4.5.84: released 2026-09-24, classifiers Python 3.10-3.14 (needs aiohttp, yarl, cryptography, aiodns wheels).
+ccxt==4.5.84

@@ -179,8 +179,8 @@ namespace UFOS.ai.HedgeFund.Newsroom
         private static string EmptyMessage(bool pending, bool failed, string message)
         {
             if (failed && !string.IsNullOrWhiteSpace(message))
-                return "Economic calendar collector: " + message + "\n\nIf the key is missing, set FRED_API_KEY in " +
-                       "HedgeFund/backend/.env and restart the Hedge Fund window.";
+                return "Economic calendar collector: " + message + "\n\nIf the key is missing, set the FRED API key in " +
+                       "⚙ Keys & data — the backend reads it on its next fetch.";
             if (pending)
                 return "Loading the release calendar from FRED — this takes a few seconds after the backend starts. " +
                        "This view refreshes automatically.";

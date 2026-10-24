@@ -44,8 +44,8 @@ call, whether a request even reached the server at all).
 python main.py
 ```
 
-1. Starts a WebSocket server (`ws://0.0.0.0:8767` by default) and a small
-   HTTP API (`http://0.0.0.0:8768`).
+1. Starts a WebSocket server (`ws://127.0.0.1:8767`) and a small
+   HTTP API (`http://127.0.0.1:8768`) — loopback only, session token required.
 2. Starts one background poller per collector (see `collectors/`), each on
    its own schedule. A collector crashing, or being disabled because a
    required API key is missing, never stops the others.
@@ -232,11 +232,14 @@ simplification/caveat of each one. Short version:
 ## Setup
 
 1. `pip install -r requirements.txt`
-2. Copy `.env.example` to `.env`. No key is required for the data layers.
-   If you want the ✦ AI buttons ("Assess"/"Sentiment", "Sum up local news")
-   to return a real AI read instead of "no key configured", set
-   `OPENROUTER_API_KEY` (same key as the root app's "Summarize with AI"
-   button — see https://openrouter.ai/keys).
+2. No `.env` any more (stage 10, 2026-10-24): keys live in the Windows
+   Credential Manager — enter them in the app under ⚙ Keys & data. No key is
+   required for the data layers. The ✦ AI buttons ("Assess"/"Sentiment", "Sum
+   up local news") need the OpenRouter key (`openrouter-api-key`, ONE key shared
+   by all modules — see https://openrouter.ai/keys); the optional OpenSky pair is
+   `opensky-client-id` / `opensky-client-secret`. Tunables (poll intervals,
+   retention, model, base URL) go into the optional `data/settings.json`
+   (keys and defaults: `config.SCHEMA`; an invalid file refuses the start).
 
 > **Note:** this is a personal portfolio / proof-of-concept project, not a
 > published product. (`SEC_EDGAR_USER_AGENT` and `FRED_API_KEY` are no longer
@@ -767,3 +770,17 @@ Tests: `python -m unittest discover -s tests -t .` (from `backend/`, stdlib
 only, temp DB files; `tests/test_storage.py`). This replaces the earlier
 `db.py` store (`%LOCALAPPDATA%\UFOS.ai\data\globalmonitoring.sqlite`); that
 file is no longer read and can be deleted if it exists.
+
+## Daily AI caps + `GET/PUT /ai/budgets` (2026-10-17, task B)
+
+Contract: `UFOS.ai/docs/ai-budgets-spec.md`. `ai_caps.py` (identical copy in every backend) keeps a
+daily cap per AI feature in `data/gms.db` (meta keys `ai_cap_limit:<key>`, spend
+`ai_cap_spend:<key>:<UTC day>`): `assess` (✦ Assess/Sentiment, default $1.00/day) and
+`localnews_summary` (✦ AI Sum up local news, default $1.00/day), 0..50, 0 = off. Both POST routes
+check the cap BEFORE the OpenRouter call (after the 30-min reuse cache, which costs nothing) and
+answer **402** `{error, code: "budget", budget_key, reason}` — the globe shows the `error` text.
+Fail closed: an unreadable spend, a failed spend write (paused until restart) or the in-memory
+stand-in database refuse the call. `GET /ai/budgets` returns the standard schema-1 payload,
+`PUT /ai/budgets {key, limit_usd}` changes one cap (token required; refused with 403 when the
+request carries an `Origin` header, i.e. from a web page; changes are logged). The MainWindow
+"AI budgets" window is the UI. Tests: `tests/test_ai_caps.py`.

@@ -13,7 +13,7 @@ and the WPF window. Change it together with the code.
 - Python code runs on **Python 3.14 (Windows venv)**; the offline tests are
   also run with **Python 3.10** without third-party packages → no 3.11+
   syntax/stdlib (`typing.Self`, `datetime.UTC`, `tomllib`, `ExceptionGroup`),
-  and **import `yfinance`, `pandas`, `openai`, `aiohttp` lazily** inside the
+  and **import `alpaca` (alpaca-py), `pandas`, `openai`, `aiohttp` lazily** inside the
   functions that need them, never at module top level of `fund/*` (except
   `fund/api.py`, which may import aiohttp). Tests use fakes.
 - Stdlib `unittest` tests in `HedgeFund/backend/tests/test_fund_*.py`, run
@@ -29,8 +29,9 @@ and the WPF window. Change it together with the code.
   investment advice" tone.
 - AI labelling (EU AI Act Art. 50, CLAUDE.md): every LLM-produced text carries
   a `provenance` dict (`newsroom.ai.provenance(feature, model)`, feature ids
-  `fund-judge`, `fund-sentiment`); rule output is marked `source: "rules"` and
-  never dressed as AI. Every OpenRouter call records its cost via
+  `fund-judge`, `fund-sentiment`); rule-agent output (technical, macro, risk)
+  is marked `source: "rules"` and never dressed as AI. The judge has no rule
+  output since 2026-10-02 (§8). Every OpenRouter call records its cost via
   `newsroom.cost_ledger` (module "HedgeFund", features `fund-judge` /
   `fund-sentiment`, labels "Hedge Fund · Judge", "Hedge Fund · Sentiment").
 - Security (CLAUDE.md "Security by default"): all `/fund/*` routes sit behind
@@ -49,7 +50,7 @@ and the WPF window. Change it together with the code.
 | `llm.py` | B | `chat_json(...)` OpenRouter call (reuses `newsroom.ai` settings/provenance/usage/cost ledger) + `Budget` |
 | `broker.py` | A | `PaperBroker` (fills, fees, pending orders, realistic shorts, margin, accruals, dividends) |
 | `agents/technical.py`, `agents/macro.py`, `agents/sentiment.py`, `agents/risk.py` | B | the four agents |
-| `judge.py` | B | change detection, rule judge, LLM judge (batch, JSON), model selection, budget |
+| `judge.py` | B | rule score (input only), change detection, LLM judge (batch, JSON), model selection, budget; `JudgeUnavailable` instead of a rule stand-in |
 | `sizing.py` | B | target weight from confidence, volatility, risk multiplier; trade decision |
 | `backtest.py` | B | rule-only backtest over daily bars |
 | `engine.py` | lead (D) | the loop, cycle orchestration, halt/kill/drawdown, events |
@@ -223,46 +224,96 @@ See the file. Key ones: `Bar`, `Quote`, `AgentSignal`, `RiskAssessment`,
 
 ## 5. Market data (`market.py`)
 
+Source: **Alpaca** through the Strategy Platform data layer
+(`strategy_platform/data`, contract `strategy_platform/SPEC.md` §3). User
+decision 2026-10-02: the old engine is switched to Alpaca now; yfinance is
+removed from the HedgeFund module (`YFinanceFeed`, `parse_news_item`,
+`bar_timestamp` deleted; nothing imports yfinance).
+
 - `class PriceFeed(Protocol)`: `daily_bars(symbol, days=400) -> list[Bar]`
-  (oldest first, adjusted), `quote(symbol) -> Quote|None`,
+  (oldest first, adjusted), `quote(symbol) -> Quote`,
   `dividends(symbol, since: date) -> list[(date, amount_per_share)] | None`
   (`[]` = none, `None` = the fetch failed → unknown, retried later; results
   cached 2 h, failures not cached),
   `news(symbol, limit=8) -> list[dict(title, publisher, published_at, url)]`.
-- `YFinanceFeed(cache_store)`: yfinance (lazy import), blocking calls are
-  wrapped by the engine in `asyncio.to_thread`. Daily bars cached in the
-  `prices` table (source "yfinance"), refetched at most every 30 min during
-  the session / once after the close. Quote = `fast_info.last_price` with
-  `delayed=True`, fallback last daily close. Failures return `None`/`[]` and
-  log once per symbol per hour — never raise into the engine.
-- Swappable later (Alpaca): nothing outside `market.py` imports yfinance.
-- Market calendar (NYSE): `session_state(now) -> dict(open: bool,
-  session: "regular"|"closed", next_open: iso, next_close: iso|None,
-  trading_day: "YYYY-MM-DD")`. Regular session 09:30–16:00 America/New_York,
-  Mon–Fri, minus NYSE holidays 2026–2027 (hardcoded list; update yearly) and
-  early closes 13:00 (day after Thanksgiving, Christmas Eve when a weekday,
-  Jul 3 when a weekday). `trading_days_between(a, b)`.
+  Blocking — the engine wraps calls in `asyncio.to_thread`.
+- `AlpacaFeed(cache=None, fetch=None, clock=None)` (defaults:
+  `data.cache.default_cache()`, `data.registry.fetch`):
+  - `daily_bars`: completed daily bars only (IEX, `adjustment="all"`) from
+    the bar cache in hedgefund.db with freshness required — equities through
+    `last_close_before(now)`, crypto through `now` (newest completed bar).
+    `Bar.date` = New York date (equities) / UTC date (crypto). Today's
+    unfinished bar is not included (the quote carries the live price).
+    Equity history starts 2016: a longer look-back returns the bars since
+    2016-01-01.
+  - `quote`: the latest Alpaca trade (IEX for equities, real time →
+    `delayed=False`, `stale=False`) with the trade's own timestamp;
+    `prev_close` = close of the daily bar of the session before the trade's
+    NY session — that session's own bar, also after an early close; missing
+    → `DataSourceUnavailable` (equities) / of the newest completed daily bar
+    (crypto). Refused
+    (`DataSourceUnavailable`) when it is not a current price: crypto trade
+    older than `STALE_QUOTE_MINUTES` (30); equity trade older than
+    `EQUITY_MAX_TRADE_AGE_MINUTES` (30) while the session is open, or
+    older than the last session's open while it is closed. The trade may
+    be an IEX extended-hours print (pre-/after-market).
+  - `dividends`: Alpaca cash dividends (corporate actions) with ex_date >
+    since; crypto → `[]` without a request; failure → `None` (reason logged
+    once per hour).
+  - `news`: Alpaca news (Benzinga), newest first, mapped to
+    `{title, publisher, published_at, url}`.
+  - **Strict bars** (review 2026-10-02): a bar with missing / non-finite /
+    non-positive open, high, low or close, an invalid volume, or an error
+    finding of `strategy_platform/data/validation.py` (duplicate, high below
+    low) makes the read fail for that symbol: `DataSourceUnavailable`
+    "Alpaca returned a malformed bar for X on D (…)" — no repaired values.
+    A missing volume stays `None`. Findings of the last read:
+    `AlpacaFeed.findings[symbol]`.
+  - **No stand-in values**: every failure RAISES a `UserFacingError`
+    (`DataSourceUnavailable`, `SecretMissing`, `SourceAuthRejected`,
+    `StorageUnavailable`, …) with a user-facing reason; the engine records it
+    per symbol and the run becomes `partial`. The former quote fallback
+    (last cached daily close stamped `stale=True`) was never accepted by
+    the user and is removed (2026-10-02). `Quote.stale` and
+    `quote_is_stale(q, now)` stay for fakes and the broker/engine guards
+    (no quote → stale).
+  - News failures: the engine puts `[{"error": user_message}]` (or
+    "news fetch failed" without one) into `ctx.news[symbol]`; the sentiment
+    agent then reports "News could not be loaded: …" (source
+    `unavailable`, confidence 0, no LLM call) instead of "no headlines" (§7).
+  - A symbol without daily bars **or** without a quote is not analysed in
+    that cycle (no agents, no judgement, no autopilot order); the reason is
+    recorded per symbol (`summary.data_unavailable`, `/fund/state`
+    `symbols[].data_unavailable`) and the run becomes `partial` (`skipped`
+    when no symbol is usable).
+- `FakeFeed`: in-memory feed for tests (unchanged).
+- Market calendar (NYSE): re-exported from
+  `strategy_platform/core/calendars.py` (single source of truth, covers
+  2016–2027; other years raise `CalendarUnavailable` — no guessing):
+  `session_state(now) -> dict(open: bool, session: "regular"|"closed",
+  next_open: iso, next_close: iso|None, trading_day: "YYYY-MM-DD")`,
+  `is_trading_day`, `session_bounds`, `next_trading_day`,
+  `previous_trading_day`, `trading_days_between(a, b)`, `trading_days`,
+  `last_close_before`, `ny_date`. Regular session 09:30–16:00
+  America/New_York, Mon–Fri, minus NYSE holidays, early closes 13:00.
 - Indicator helpers live in `indicators.py` (owner B), pure functions:
   `sma(values, n)`, `ema`, `rsi(values, 14)`, `atr(bars, 14)`, `atr_pct`,
   `returns`, `max_drawdown(values)`.
 
-### Crypto (2026-09-27)
+### Crypto (2026-09-27, data source updated 2026-10-02)
 
 - `is_tradable(symbol, now)`: crypto always (24/7); equities/ETFs while the
   NYSE regular session is open (the broker adds the 5-min opening grace).
   `session_state` stays the US session only.
 - `utc_days_between(a, b)` (crypto min-hold), `last_funding_window(now)`,
   `funding_windows_between(a, b)` — perp funding at 00:00/08:00/16:00 UTC.
-- `YFinanceFeed`: crypto daily bars run 7 days a week (UTC dates) and are
-  refreshed every 30 min around the clock; crypto quotes are near real-time
-  (`Quote.delayed = False`, Yahoo/CoinMarketCap, not exchange-grade).
-- **Stale quotes (review 2026-09-27):** when the Yahoo quote fails, the
-  fallback (last cached daily close) carries `Quote.stale = True` and the
-  bar's own timestamp (its date 00:00 UTC), never "now".
-  `quote_is_stale(q, now)` = no quote, or a stale quote older than
-  `STALE_QUOTE_MINUTES` (30). Crypto orders never fill on such a quote
-  (they queue), and the engine never liquidates or drawdown-stops on it
-  (§6, §10).
+- Crypto bars/quotes come from Alpaca's crypto data (US feed, "BTC-USD" ↔
+  "BTC/USD"); daily bars run 7 days a week (UTC dates).
+- **Stale quotes:** a crypto trade older than `STALE_QUOTE_MINUTES` is not
+  returned as a quote (the feed raises). `quote_is_stale(q, now)` = no
+  quote, or a quote flagged `stale` older than 30 min. Crypto orders never
+  fill on such a quote (they queue), and the engine never liquidates or
+  drawdown-stops on it (§6, §10).
 
 ## 6. Paper broker (`broker.py`) — realistic long/short
 
@@ -309,8 +360,8 @@ Account model (cash account for longs, Reg T margin for shorts):
   reduced or rejected). Quantity: whole shares (`floor`), min 1 share, else
   reject "size below one share".
 - **Opening grace**: no fills during the first 5 minutes of the session
-  (09:30–09:35 NY, `PENDING_FILL_DELAY_MINUTES`) — the delayed yfinance quote
-  can still be yesterday's close; new orders are queued and pending ones
+  (09:30–09:35 NY, `PENDING_FILL_DELAY_MINUTES`) — the latest trade can
+  still be yesterday's (or a pre-market print); new orders are queued and pending ones
   wait. A quote whose timestamp is before today's open counts as stale.
 - **Transitions**: long→short = `sell` all + `short` rest (two orders);
   short→long = `cover` + `buy`. The second leg is sent only after the first
@@ -423,15 +474,29 @@ numbers used (UI shows them as key/value lines).
   up +0.5, down −0.5, mixed 0) adjusted by stress signals (e.g. 10Y ≥ 5 %
   −0.2 on equities/bonds; Sahm ≥ 0.5 −0.3 on cyclicals, +0.2 on govt bonds;
   inverted 10Y-3M −0.1 equities). Confidence lower when the regime is
-  "borderline" or data is stale (> 45 days). No data → confidence 0.
+  "borderline" or data is stale (> 45 days). No data → confidence 0. The
+  summary ends with "(data as of YYYY-MM-DD)" and `details.as_of` carries
+  that date. **FRED failing or its key missing** (the engine's
+  `macro_status_fn` = the newsroom's FRED status, not ok) → `source
+  "unavailable"`, confidence 0, summary "Macro data unavailable: <reason>"
+  — the stored FRED data is not used as a trading input (user decision
+  2026-10-02).
 - **sentiment** (LLM, batch): per symbol the last ≤ 8 headlines of ≤ 72 h
-  (`feed.news`) plus the newsroom's insider cluster flags for that ticker.
+  (`feed.news`, Alpaca news since 2026-10-02) plus the newsroom's insider
+  cluster flags for that ticker. A failed news fetch (engine error item
+  `[{"error": msg}]` in `ctx.news[symbol]`, see §5) → `source="unavailable"`
+  "News could not be loaded: …", confidence 0, no LLM call.
   One OpenRouter call for all symbols whose input hash changed since the last
   call (else reuse the cached signal, `source="cached"`). Strict JSON output
   `[{symbol, score, confidence, summary}]`. Headlines are untrusted data:
   the prompt puts them in a delimited block and says to ignore instructions
   inside. No key / budget exhausted / error → `source="unavailable"`,
-  score 0, confidence 0, summary says why. Result carries provenance.
+  score 0, confidence 0, summary says why — no stand-in reading (D9,
+  2026-10-02): budget reached → exactly "AI budget reached — raise the limit
+  in Settings to continue.", budget 0 → "AI is switched off (daily AI budget
+  is 0) — raise the limit in Settings to continue.", no key → the key's own
+  message ("… enter it in Hedge Fund → Settings → Keys."). Result carries
+  provenance.
   Model: always the standard model. Cost recorded (`fund-sentiment`).
 - **risk** (rules) → `RiskAssessment` per symbol (not directional):
   `veto` (bool), `size_multiplier` (0..1), `reasons` (list of short strings).
@@ -444,7 +509,18 @@ numbers used (UI shows them as key/value lines).
   `block_short_increase=True`: existing shorts may be held or reduced, no
   new or larger short (the cap never closes open shorts; it is no veto).
   Represented as an `AgentSignal` too (agent "risk", score 0, confidence 1,
-  details incl. multiplier) for the UI card.
+  details incl. multiplier) for the UI card. **Calendar unavailable** (the
+  newsroom calendar accessor failed, `ctx.calendar_error`, or the events
+  could not be read; user decision 2026-10-02 — never "no events"):
+  `RiskAssessment.unavailable` = "unavailable: calendar data could not be
+  loaded (…)", the card has `source` "unavailable" and that text; the
+  engine places no autopilot order for the symbol (recommendation
+  `skipped` "risk card unavailable: …") and manual accept answers 409.
+  **Insider data unavailable** (accessor failed, `ctx.insider_error`, or the
+  cluster detection raised `InsiderDataUnavailable`): the sentiment prompt
+  gets "INSIDER DATA UNAVAILABLE: … — do not assume there was no insider
+  activity", the result's summary ends "(insider data unavailable)",
+  `details.insider_unavailable` carries the reason.
 
 ### Crypto (2026-09-27)
 
@@ -458,20 +534,40 @@ numbers used (UI shows them as key/value lines).
   confidence starts at 4 % ATR instead of 2 %.
 - **risk:** ATR thresholds for crypto ×0.5 above 6 %, ×0.25 above 9 %
   (equities 3 % / 5 %); concentration uses `crypto_max_position_pct`.
-- **sentiment:** unchanged (yfinance news works for BTC-USD).
+- **sentiment:** unchanged; news from Alpaca (crypto tagged "BTCUSD", since 2026-10-02).
 - **judge:** the prompt explains that crypto trades 24/7 (spot longs, perp
   shorts with funding/liquidation risk); each symbol carries `asset_class`
   and `trading_hours` ("24/7" | "US session").
 
 ## 8. Judge (`judge.py`)
 
-1. **Rule score** per symbol: `s = Σ(w_a · score_a · conf_a) / Σ(w_a · conf_a)`
-   over enabled directional agents (weight > 0, confidence > 0); `agreement`
-   = share of weighted confidence agreeing with the sign of `s`.
-2. **Rule judge** (always computed, used as fallback): hysteresis relative to
-   the previous action — enter LONG when `s ≥ 0.20`, enter SHORT when
-   `s ≤ −0.20`, go FLAT when `|s| < 0.08`, otherwise keep the previous action.
-   Confidence `= clamp(|s| · (0.5 + 0.5 · agreement) · 1.6, 0, 1)`.
+**No rule-based stand-in (user decision D9, 2026-10-02; CLAUDE.md "No
+unrequested fallbacks").** When the LLM judge is unavailable for a symbol (no
+OpenRouter key, request error / timeout, invalid answer, AI budget 0 /
+reached / spend unreadable) that symbol gets **no new recommendation this
+run**: `judge.judge()` returns `JudgeUnavailable(symbol, message, reason,
+rule_score, rule_action, model, usage)` (`fund/types.py`) instead of a
+`JudgeDecision`; the engine writes no recommendation row, places no
+autopilot order for it, records the reason per symbol and keeps the
+previous recommendation with its original time, marked "not updated" (§10,
+§11). Budget reached → message exactly "AI budget reached — raise the limit
+in Settings to continue." (`llm.BUDGET_REACHED_MESSAGE`); budget 0 → "AI is
+switched off (daily AI budget is 0) — raise the limit in Settings to
+continue."; unreadable spend → "Today's AI spend could not be read — AI
+calls are paused …"; no key → the key's own message ("OpenRouter API key …
+enter it in Hedge Fund → Settings → Keys."). Until 2026-10-02 a rule judge
+decided instead (`source="rules"`, "Rule-based (…)") — removed; old rows
+with source `rules` stay readable but are never carried.
+
+1. **Rule score** per symbol (an INPUT only — prompt + change detection,
+   never a decision): `s = Σ(w_a · score_a · conf_a) / Σ(w_a · conf_a)` over
+   enabled directional agents (weight > 0, confidence > 0); `agreement` =
+   share of weighted confidence agreeing with the sign of `s`.
+2. **Rule suggestion** (`judge.rule_suggestion`, input to the prompt and to
+   change detection): hysteresis relative to the previous action — LONG when
+   `s ≥ 0.20`, SHORT when `s ≤ −0.20`, FLAT when `|s| < 0.08`, otherwise the
+   previous action; confidence `= clamp(|s| · (0.5 + 0.5 · agreement) · 1.6,
+   0, 1)`. It never becomes a recommendation.
 3. **Change detection** — the LLM judge is called for a symbol only when:
    no previous recommendation, any agent score moved ≥ `change_threshold`
    since the last *judged* recommendation, the rule action differs from the
@@ -481,23 +577,33 @@ numbers used (UI shows them as key/value lines).
    LLM that disagrees with the rules is not re-called every cycle), the
    position changed outside the loop, the last judgement is
    older than `judge_stale_hours`, or the params version changed in a way
-   that affects decisions (weights, min_confidence, allow_shorts). Otherwise
-   the previous recommendation is **carried** (`source="carried"`).
+   that affects decisions (weights, min_confidence, allow_shorts); also
+   always when the last judgement attempt for the symbol failed
+   (`judge_retry`, engine memory, restored from the newest full run's
+   `summary.judge_unavailable` after a restart) and when the last judgement
+   was a legacy rule-based one. Otherwise the previous AI recommendation is
+   **carried** (`source="carried"`).
 4. **LLM judge**: one batch call for all symbols that need it. Input per
    symbol: agent signals (score, confidence, summary, key details), risk
    assessment, current position, the rule suggestion, horizon "swing, days to
    weeks". Output strict JSON `[{symbol, action: LONG|SHORT|FLAT, confidence
-   0..1, rationale ≤ 60 words}]`. Validation: unknown symbol/action → rule
-   result for that symbol; confidence 0..1 as is, 1 < c ≤ 100 read as a
-   percentage (c/100, so "3" = 3 %), negative / > 100 / non-finite / bool →
-   invalid → rule result for that symbol. Vetoed directions are not
-   allowed (LLM SHORT on a short-veto → FLAT). Temperature 0.2, max_tokens
-   sized to the batch.
+   0..1, rationale ≤ 60 words}]`. Validation: unknown symbol/action →
+   that symbol is unavailable ("AI judge answer had no valid result for this
+   symbol …", its share of the call cost kept); confidence 0..1 as is,
+   1 < c ≤ 100 read as a percentage (c/100, so "3" = 3 %), negative / > 100 /
+   non-finite / bool → invalid → unavailable for that symbol. Vetoed
+   directions are not allowed (LLM SHORT on a short-veto → FLAT).
+   Temperature 0.2, max_tokens sized to the batch. Garbage JSON / request
+   error / no key → every symbol of the batch is unavailable.
 5. **Model mode**: `standard` → `OPENROUTER_MODEL`; `premium` →
    `OPENROUTER_ANALYSIS_PREMIUM_MODEL`; `premium_on_flip` → standard call
    first, then a second premium call only for symbols whose action flips
    against the previous action (LONG↔SHORT or entering/leaving FLAT from a
-   position); the premium answer wins.
+   position); the premium answer wins. When that premium call fails, is
+   over budget or has no valid item for a flipped symbol, that symbol gets
+   NO recommendation this run (`JudgeUnavailable` "Premium AI judge
+   unavailable for this flip: …" / the budget message) — the standard answer
+   is not used as a stand-in (user decision 2026-10-02).
 6. **Budget**: `fund.ai_spend` (UTC day) + estimated cost must stay ≤
    `ai_daily_budget_usd`; before each call check the spend; after each call add
    `usage.cost`. **Fails closed**: spend = max(stored spend, what this run
@@ -505,9 +611,12 @@ numbers used (UI shows them as key/value lines).
    as exhausted. A call that was sent but failed without usage (timeout,
    network error — OpenRouter may bill it) books the pre-call estimate; a
    call that never left (no key) books nothing. Exhausted / no key / error →
-   rule judge for those symbols,
-   `source="rules"`, rationale starts with "Rule-based (AI budget reached)"
-   or the matching reason. Same budget for sentiment + judge.
+   `JudgeUnavailable` for those symbols with the user message above (no
+   recommendation, no order). Same budget for sentiment + judge.
+7. **Run row**: `judge.summarize()` → `judge_mode` `llm` (every symbol that
+   needed a judgement got one) | `unavailable` (none did) | `mixed` (some
+   did, some are unavailable) | `none` (all carried); legacy runs may show
+   `rules`. `cost_usd` includes failed calls that still cost money.
 
 ## 9. Sizing (`sizing.py`)
 
@@ -522,6 +631,11 @@ numbers used (UI shows them as key/value lines).
   `block_short_increase` → an existing short is held or reduced
   (min of current and computed), no new short, a long is closed (0).
 - Trade only if `|target − current_weight| ≥ 0.01` or the sign changes.
+- No ATR (fewer than 15 daily bars) → no unscaled size (user decision
+  2026-10-02): the autopilot skips the symbol ("not enough daily bars to
+  volatility-scale the size"); manual accept answers 409 "No daily bars for
+  X — the position size can't be volatility-scaled; try again when market
+  data is available".
 - `min_hold_days`: a position opened fewer NY trading days ago is not
   reduced/closed/reversed by the autopilot (kill switch, drawdown stop and
   margin calls ignore it).
@@ -584,13 +698,35 @@ numbers used (UI shows them as key/value lines).
   `broker.process_pending` (per symbol: crypto always, equities in the
   session after the grace) →
   mark to market, margin check → drawdown check (≥ stop → halt:
-  autopilot off, `liquidate_all("drawdown-stop")`, event `halt`) → agents →
-  judge → store recommendations → if autopilot and not halted: sizing →
+  autopilot off, `liquidate_all("drawdown-stop")`, event `halt`) → agents
+  (symbols with bars AND a quote only, §5) → judge → store recommendations
+  (only `JudgeDecision`s — a `JudgeUnavailable` symbol gets no row, no
+  order, its reason in `summary.judge_unavailable` {symbol: message} and in
+  the run error, run `partial`; §8) → if autopilot and not halted: sizing →
   `broker.target(...)` per symbol → equity snapshot (+ SPY as benchmark) →
   events (`flip` when a symbol's action changes; `order` for autopilot fills) →
   finish run row (status, cost, judge mode, summary).
 - Errors per symbol don't stop the cycle (`status="partial"`); a crash in the
   cycle marks the run `error` and the loop continues with the next schedule.
+  A judge crash makes every symbol unavailable ("AI judge failed — no new
+  recommendation this run.") — never a rule-based decision.
+- Run summary (full cycles, 2026-10-02): `judge_unavailable` {symbol:
+  message} and `data_unavailable` {symbol: message}; the engine keeps the
+  newest full cycle's per-symbol outcome in memory for `/fund/state`
+  (restored from the newest full run's summary after a restart).
+- **Valuation paused** (user decision 2026-10-02 — no valuation at the
+  stored price): a held position without a current quote makes the broker
+  raise `ValuationPaused` ("valuation paused: no current quote for X").
+  For that run the valuation, drawdown check, margin actions, equity
+  snapshot and all equity-dependent orders (autopilot; buys/shorts) pause;
+  recommendations are still made but `skipped` with that reason; the run
+  is `partial`, `summary.valuation_paused` carries the message; closing
+  orders still queue (kill switch). Borrow fees / perp funding wait for the
+  next quote (catch-up). `/fund/state` keeps only the last cycle's quotes
+  (a failed quote drops the symbol's old one). Manual accept fetches a
+  current quote for every held position, else 503 with the message; a
+  failing quote source (`UserFacingError`) → 503 with its message; no stored
+  risk card / size multiplier → 409.
 - Kill switch: `kill(reason)` → halt + liquidate all (`origin="kill-switch"`),
   pending when the market is closed. `resume()` clears the halt (autopilot stays off).
 - Autopilot: `set_autopilot(enabled)`; refused while halted. Switching it
@@ -681,7 +817,9 @@ disclaimer) on every row.
                "recommendation": {"id": 88, "action": "LONG", "confidence": 0.78, "target_weight": 0.039, "rule_score": 0.41,
                                   "rationale": "...", "source": "llm", "model": "deepseek/...", "provenance": {...},
                                   "usage": {"cost_usd": 0.0012, "prompt_tokens": 900, "completion_tokens": 120},
-                                  "status": "open", "skip_reason": null, "ts": "...", "run_id": 12, "current_weight": 0.367}}]
+                                  "status": "open", "skip_reason": null, "ts": "...", "run_id": 12, "current_weight": 0.367,
+                                  "not_updated": null, "judged_at": "..."},
+               "judge_unavailable": null, "data_unavailable": null, "status_run_id": 12}]
 }
 ```
 
@@ -693,10 +831,32 @@ disclaimer) on every row.
   while the autopilot is off).
 - `account.unreadable = true`: every account field is null and
   `account.error` carries the reason (§10 unreadable state).
+  `account.valuation_paused` (string | null, 2026-10-02): "valuation paused:
+  no current quote for X" — then also `unreadable = true` and `error`
+  "Valuation paused: …"; `positions[]` of unvalued symbols have
+  `last_price`, `market_value`, `unrealized_pnl`, `weight` = null, and
+  `recommendation.current_weight` may be null.
+- `recommendation.judged_at`: the time of the AI judgement behind the
+  recommendation — for `source` "carried" the ORIGINAL judgement time
+  (its provenance), while `ts` is when it was carried.
 - `ai_budget.spend_unreadable = true`: today's spend could not be read, the
   budget counts as exhausted (§8.6).
-- Status codes: 503 `{error}` for "audit log unavailable" (§10) and an
-  unreadable paper account (`StateUnavailable`); 409 for a recommendation
+- Per symbol (D9, 2026-10-02 — the WPF shows these): `symbols[].judge_unavailable`
+  (string | null) — why the newest full cycle produced no AI judgement for
+  the symbol (e.g. "AI budget reached — raise the limit in Settings to
+  continue.", the missing-key message, "AI judge request failed: …");
+  `symbols[].data_unavailable` (string | null) — why the symbol was not
+  analysed ("Market data unavailable (quote missing): … — not analysed this
+  run."); `symbols[].status_run_id` (that cycle's run id | null);
+  `symbols[].recommendation.not_updated` (string | null) — "not updated:
+  <reason>" when one of the two is set: the shown recommendation is the
+  older one with its ORIGINAL `ts`, never presented as fresh. A sentiment
+  card with `source` "unavailable" carries its reason in `summary` (e.g.
+  "News could not be loaded: …"). `engine.last_run.judge_mode` may be
+  `unavailable` / `mixed` (§8.7).
+- Status codes: 503 `{error}` for "audit log unavailable" (§10), an
+  unreadable paper account (`StateUnavailable`) and a failing data source
+  when executing a recommendation (the source's user message); 409 for a recommendation
   that is not the symbol's latest ("superseded by a newer recommendation")
   and for a second concurrent backtest ("a backtest is already running").
 
@@ -737,7 +897,10 @@ disclaimer) on every row.
 
 ## 12. Backtest (`backtest.py`)
 
-Rule-only: technical agent (on historical bars) + macro agent (monthly regime
+Rule-only BY DESIGN (the backtest's own rule strategy `backtest.rule_decision`
+— the judge's rule score with hysteresis; labelled "Backtest rule strategy",
+source `backtest-rules`; not a stand-in for the live AI judge, which has no
+rule fallback since 2026-10-02): technical agent (on historical bars) + macro agent (monthly regime
 history from `macro_derived` / stored observations — as of each date, no
 look-ahead: a month's regime becomes known one month later) + risk sizing
 (ATR). No sentiment, no LLM (non-deterministic and could know the outcome).
@@ -745,6 +908,13 @@ Daily steps at the close, fills next day's open, same fees and short
 borrow cost as the paper broker (simplified: fees_bps and borrow at the
 default rate, no dividends). Output:
 `{symbols, start, end, portfolio: {cagr_pct, total_return_pct, max_drawdown_pct, sharpe, trades, hit_rate_pct, exposure_pct}, benchmark: {buy_and_hold per symbol + equal-weight}, per_symbol: [...], equity: [{date, equity, benchmark}] (weekly points), notes: [...]}`.
+Data (2026-10-02): Alpaca daily bars (IEX, adjusted "all") via
+`AlpacaFeed` and the hedgefund.db bar cache; equity history exists only since
+2016 — a start before 2016-01-01 is refused with "history before 2016 is not
+available from the configured source" (`backtest.HISTORY_ERROR`,
+`check_history_start(start)` for the 400 request validation; `run_backtest`
+itself returns `{"error": HISTORY_ERROR}`). Warm-up bars before 2016 do not
+exist; the result notes a shorter warm-up.
 Default: watchlist, 5 years. Limits: at most 10 symbols and 20 years per
 backtest (400 field errors); a default watchlist with more than 10 symbols
 is cut to the first 10 (note in the result — with the 11-symbol default
@@ -773,8 +943,12 @@ equity), as live. Bars fetched: calendar days + 30 for crypto.
   with real score bar, confidence, summary, details tooltip; Sentiment card
   AI-labelled when `source` is llm/cached.
 - Verdict: action + confidence ring + target size; AI badge
-  `✦ AI-GENERATED · model · time` (or "Rule-based · no AI" for rules/fallback),
-  rationale, caveat line, cost line; in manual mode "Execute" button
+  `✦ AI-GENERATED · model · time` ("Rule-based · no AI" only for legacy
+  rows with source `rules`), rationale, caveat line, cost line. Since
+  2026-10-02: when `symbols[].judge_unavailable` / `data_unavailable` is
+  set, show that message prominently (no verdict for this run); a shown
+  older recommendation carries `recommendation.not_updated` ("not updated:
+  …") next to its original time. In manual mode "Execute" button
   (confirmation dialog) → `POST /fund/recommendations/{id}/execute`.
 - Portfolio: equity, cash, day/total P&L, positions list (long/short, P&L,
   borrow rate), drawdown bar vs limit, margin excess, short exposure;
@@ -867,8 +1041,8 @@ Decisions taken while wiring `engine.py` / `api.py` / `export.py`:
   after the reset` (null before it). Points also carry `benchmark` (SPY).
 - Extra routes: `GET /fund/backtests/{id}` (full stored result).
   `POST /fund/backtest` returns the result plus its `id`; no price data →
-  409. Backtests use a yfinance feed without the SQLite cache (the prices
-  table is pruned to 2 years).
+  409. Backtests use the Alpaca feed (bars cached in hedgefund.db; history
+  since 2016) — until 2026-10-02 a yfinance feed without the SQLite cache.
 - Errors: 400 `{error, errors: {field: msg}}`, 404/409/503 `{error}`, 500
   generic message (details only in backend.log). All JSON responses are
   sanitised (NaN/Infinity → null, `allow_nan=False`).
@@ -894,5 +1068,30 @@ Decisions taken while wiring `engine.py` / `api.py` / `export.py`:
 - Residual simplifications: funding and borrow catch-up are booked at the
   current mark (the path of missed windows is unknown); perps are booked
   like short sales (same P&L, no separate collateral account); crypto
-  quotes are Yahoo's near real-time data, not exchange-grade; the backtest
+  quotes are Alpaca's latest crypto trades (since 2026-10-02; before: Yahoo); the backtest
   has no perp liquidation.
+
+## 16. Strategy Platform stage 7 hooks (2026-10-17; contract: strategy_platform/SPEC.md §17.1, §17.9, §17.12)
+
+- **Coexistence (hard switch):** the old engine owns this account until the user migrates it to the Strategy
+  Platform (`POST /v2/portfolio/migration`). The migration copies it 1:1 into the platform account `paper-council`
+  and sets newsroom.db meta `fund.migrated_to_platform` = `{status: "migrating"|"migrated", migration_id, at}`
+  (`store.get_migration_state()` / `set_migration_state(state|None)` — None writes status "active"; meta keys are
+  never deleted). `FundEngine.migration_state()` reads it (and, as a second source, `platform_migrated_fn`, set by
+  main.py) and remembers "migrated" for the process lifetime.
+- **After the migration the engine is advisory only:** cycles still run agents + judge and store recommendations;
+  accruals, pending fills, margin check, drawdown stop and equity snapshot are skipped (run summary
+  `account_migrated`); the risk watch is "not_needed"; `set_autopilot(True)`, `manual_order`,
+  `execute_recommendation` and `reset` answer 409 `MIGRATED_MESSAGE`; the kill switch only HALTS this account
+  (no liquidation — the platform half closes the real positions). `/fund/state` adds `legacy_account {status,
+  owner, migrated_at, migration_id}`.
+- **Kill switch covers both:** `kill(reason, actor, *, propagate=True)` also calls `platform_kill_fn(reason,
+  actor)` (the platform kill: every platform account halted, cancel all, close all, auto trading off); the response
+  adds `platform {ok, error, accounts}`; each half reports its own failure. The platform's `POST /v2/oms/kill` calls
+  `kill(…, propagate=False)`. If the stage-7 wiring in main.py fails at startup, `platform_kill_fn` is a stub that
+  raises with the wiring error, so `/fund/kill` answers `platform {ok: false, error: "RuntimeError: Strategy
+  Platform stage 7 wiring failed at startup (…)"}` instead of silently leaving the key out (audit 2026-10-18).
+- **One heartbeat:** the platform's GETs call `touch_client`; the platform's auto-trading switch uses the same
+  `autopilot_heartbeat_minutes` and the newer of both client timestamps.
+- Tests: `tests/test_fund_migrated.py`, `tests/test_sp_risk_controls.py` (BothEnginesTest),
+  `tests/test_sp_trading_parity.py` (MigrationTest).

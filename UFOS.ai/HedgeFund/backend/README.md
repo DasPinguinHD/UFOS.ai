@@ -11,11 +11,18 @@ a multi-agent simulation of a hedge fund decision process (paper trading, no rea
 - **Paper-trading engine (2026-09-26):** package `fund/` — a loop every 5 min
   (1–60) during the US session: Technical/Macro (rules), Sentiment
   (LLM, batch), Risk Manager (rules) → Judge (LLM only when inputs changed,
-  rule fallback, daily AI budget) → recommendation → internal paper broker
+  daily AI budget; no rule-based stand-in since 2026-10-02 — when the AI
+  judge is unavailable or the budget is reached the symbol gets no new
+  recommendation and no autopilot order, and the UI says why) →
+  recommendation → internal paper broker
   (long/short/cash, Reg T margin, borrow fees, dividends, SEC Rule 201,
   5 bps fees/slippage, orders only in the session). Parameters are versioned
   and apply from the next run. Routes `/fund/*` (token-protected), rule-only
-  backtest, CSV exports, Windows toasts. **Contract: `fund/SPEC.md`.** The
+  backtest, CSV exports, Windows toasts. Market data (daily bars, quotes,
+  dividends, news) comes from the Alpaca data layer
+  (`strategy_platform/data`, bars cached in `data/hedgefund.db`; history
+  since 2016) — a failing source pauses the affected symbol with a clear
+  reason, no other source is used. **Contract: `fund/SPEC.md`.** The
   notes below about an illustrative dashboard predate this.
 - **24/7 crypto (2026-09-27):** `BTC-USD`, `ETH-USD`, `SOL-USD` join the
   default watchlist (existing installs: one-time params migration at start,
@@ -29,8 +36,8 @@ a multi-agent simulation of a hedge fund decision process (paper trading, no rea
   (no agents/AI/new orders) checks open crypto positions every
   `closed_interval_minutes`. Still paper trading only, not investment advice.
 - **Dashboard (agents, verdict, portfolio, execution):** illustrative only —
-  hardcoded sample data, no agents or broker connected yet. The WebSocket on
-  `WS_PORT` (8865) is a placeholder for the agent pipeline.
+  hardcoded sample data, no agents or broker connected yet. (The former
+  WebSocket placeholder on 8865 was removed in stage 10 — nothing used it.)
 - **Financial Newsroom: live.** Insider trades (SEC EDGAR) and macro
   indicators (FRED), moved here from the Global Monitoring module on
   2026-09-24. See below.
@@ -67,7 +74,8 @@ with 48 observations and T10Y2Y once more as monthly averages
 (`frequency=m`, 36 months); the cards still show the last 24 points.
 
 **More series (2026-09-25, step 2):** T10Y3M (10Y−3M spread), PCEPILFE (core
-PCE YoY — the Real Policy Rate now uses it, CPI as fallback), ICSA (initial
+PCE YoY — the Real Policy Rate uses it; without core PCE the card says
+"unavailable: core PCE (PCEPILFE) missing", no CPI substitute since 2026-10-02), ICSA (initial
 jobless claims, shown in thousands), BAMLH0A0HYM2 (ICE BofA high-yield OAS —
 FRED only keeps a few years of history for ICE series, enough for the cards)
 and VIXCLS. 11 raw series + 4 derived; one FRED poll = 12 requests every 6 h.
@@ -75,8 +83,9 @@ and VIXCLS. 11 raw series + 4 derived; one FRED poll = 12 requests every 6 h.
 Macro section. `macro_derived.regime()` places the economy in a 2×2 of
 growth momentum (x = 6-month change of the average YoY growth of nonfarm
 payrolls `PAYEMS` and industrial production `INDPRO` — fetched for this only,
-no cards) × inflation momentum (y = 6-month change of core PCE YoY, CPI as
-fallback): Goldilocks (green), Reflation / Slowdown (orange), Stagflation
+no cards) × inflation momentum (y = 6-month change of core PCE YoY; without
+core PCE the regime is "unavailable: core PCE (PCEPILFE) missing" — no CPI
+substitute since 2026-10-02): Goldilocks (green), Reflation / Slowdown (orange), Stagflation
 (red). Shows the latest month plus a 12-month trail with hover tooltips,
 months spent in the current regime and a "borderline" flag when either axis
 is within ±0.1 pp of zero. Delivered as the event `macro-regime`
@@ -120,7 +129,7 @@ yearly**); the decision day is the 2nd meeting day, meetings with the Summary of
 Economic Projections get a "SEP / dot plot" chip. Times ("08:30 ET", "14:00 ET",
 …) are a static map of *typical* times, not guaranteed. No consensus forecasts
 (not freely available). Poll every `CALENDAR_POLL_SECONDS` (default 6 h), ≤ 4
-requests in parallel, 15 s timeout each; without `FRED_API_KEY` only the FOMC
+requests in parallel, 15 s timeout each; without the FRED key only the FOMC
 dates are shown, with a warning. `GET /newsroom/calendar` →
 `{events, updated, window_days, status}`; the view re-reads every 5 min (every
 3 s while the first poll is pending or the backend is unreachable). Tests:
@@ -133,8 +142,11 @@ dates are shown, with a warning. `GET /newsroom/calendar` →
   drift apart. Derived indicators use the same table (curve un-inversion keeps
   its custom 24-month rule, described in `CUSTOM_RULE_TEXT`).
 - **Official Sahm rule:** `SAHMREALTIME` from FRED (Claudia Sahm's real-time
-  indicator) replaces our reconstruction, which stays only as a fallback (the
-  card's formula then says "own calculation").
+  indicator) replaces our reconstruction. Since 2026-10-02 there is no
+  reconstruction stand-in: without SAHMREALTIME the card says "unavailable:
+  official Sahm indicator (SAHMREALTIME) missing". A derived indicator whose
+  input is missing is sent as an event with `macro.unavailable` (no value);
+  the regime likewise (`macro.regime = null`, `macro.unavailable`).
 - **Smoother regime map:** growth and inflation inputs get a 3-month moving
   average before the 6-month momentum is taken (industrial production made
   the dot jump between quadrants almost monthly).
@@ -192,7 +204,8 @@ other sections already hold into tiles:
   tokens, 120 s timeout.
 - Tiers: "Standard" = `OPENROUTER_MODEL`; "Premium" =
   `OPENROUTER_ANALYSIS_PREMIUM_MODEL` (default `anthropic/claude-opus-5.5`,
-  costs more per call; any OpenRouter model id). Both re-read from `.env` on
+  costs more per call; any OpenRouter model id). Both re-read from
+  `data/settings.json` (`openrouter_model`, `openrouter_analysis_premium_model`) on
   every request. Tests: `python -m unittest tests.test_overview`.
 
 **Cost per analysis (2026-09-25):** OpenRouter reports what each request
@@ -245,7 +258,7 @@ the backend: it is logged and the backend continues in-memory only.
   `last_seen` updated). The view only gets filings filed within the last
   `INSIDER_DISPLAY_DAYS` (at most `INSIDER_DISPLAY_MAX`, default 300); the
   database keeps them `INSIDER_RETENTION_DAYS` (default 5 — no long-term
-  archive any more, set it higher in `.env` to keep one). Clusters and
+  archive any more, set `insider_retention_days` higher in `data/settings.json` to keep one). Clusters and
   the AI summary work on the displayed set.
 - **FRED incremental:** each series is fetched once as published since 2000,
   then each poll asks only for observations from (latest stored date − 400
@@ -273,7 +286,7 @@ histories with exactly the card's method (3-month smoothing, 6-month momentum):
 
 ```
 "extended": {
-  "trail_long": [{"date", "x", "y", "quadrant"}, ...],   // monthly since 2000 (PAYEMS/INDPRO YoY × core PCE YoY, CPI fallback)
+  "trail_long": [{"date", "x", "y", "quadrant"}, ...],   // monthly since 2000 (PAYEMS/INDPRO YoY × core PCE YoY; [] without core PCE)
   "recessions": [{"start": "YYYY-MM", "end": "YYYY-MM"}], // FRED USREC (monthly 0/1) since 2000; a running one ends at the last month
   "components": [{"name", "axis", "latest", "six_months_ago", "change", "unit": "%", "date"}, ...],
       // "Nonfarm payrolls (YoY)" / "Industrial production (YoY)" (axis "growth"),
@@ -281,6 +294,7 @@ histories with exactly the card's method (3-month smoothing, 6-month momentum):
   "euro": {"x", "y", "quadrant", "label", "date", "trail": [last 12 {date, x, y, quadrant}],
            "inputs": "Eurostat industrial production (euro area, YoY) × HICP inflation (YoY)",
            "source_url": "https://ec.europa.eu/eurostat/databrowser/view/STS_INPR_M/default/table"} | null,
+  "euro_error": "unavailable: euro-area point could not be computed (<Type>)" | null,
   "phase_behaviour": {"goldilocks"|"reflation"|"stagflation"|"slowdown":
                         {"summary", "assets": [{"asset", "tendency"} × Equities, Government bonds,
                                                 Credit, US dollar, Commodities, Sectors]},
@@ -327,7 +341,7 @@ built on `newsroom/db.py` (the store above; no second storage module).
 - **First poll skipped when fresh:** FRED and the calendar don't poll at start
   while their last successful poll is younger than `FRED_POLL_SECONDS` /
   `CALENDAR_POLL_SECONDS` (status: "from cache (updated HH:MM) — next refresh
-  HH:MM"; logged). Without `FRED_API_KEY` they start at once (and report the
+  HH:MM"; logged). Without the FRED key they start at once (and report the
   missing key). SEC EDGAR always polls at start.
 - **AI outputs:** every successful insider summary and analysis is stored in
   `ai_results` (text, model, tier, `input_summary` incl. `tiles_used`, usage,
@@ -378,11 +392,17 @@ Also: `GET /newsroom/status` (per-source status), `GET /health`,
 `GET /version` + loopback-only `POST /shutdown` (stale-backend check, same
 mechanism as Global Monitoring).
 
-**Keys** (`.env`, see `.env.example`): `SEC_EDGAR_USER_AGENT` (required by
-SEC — name + contact email), `FRED_API_KEY` (free registration),
-`OPENROUTER_API_KEY` (optional, only for the AI summary). A collector
-without its key reports itself as failed and the view shows why; nothing
-crashes.
+**Keys** (since 2026-10-02: Windows Credential Manager only — enter or import
+them in Hedge Fund → Settings → Keys; see `strategy_platform/SPEC.md` §2):
+SEC EDGAR user agent (required by SEC — name + contact email), FRED API key
+(free registration), OpenRouter API key (only for the AI features), Alpaca
+paper keys. No `.env` any more (stage 10, 2026-10-24): nothing is read from
+.env or the environment; old .env files are imported once in the app (⚙ Keys &
+data); non-secret settings go into the optional `data/settings.json` (keys and
+defaults: `config.SCHEMA`; an invalid file refuses the start). The backend reads the keys at use time, so a new key applies
+without a restart. A collector without its key reports "… is not set — enter
+it in Hedge Fund → Settings → Keys" as its status and re-checks every
+minute; the AI routes answer 503 with that message; nothing crashes.
 
 **Backend lifecycle:** the Hedge Fund window starts this backend when it
 opens (`Newsroom/NewsroomBackend.cs` → `run_hedgefund_backend.ps1`) and stops
@@ -393,7 +413,7 @@ current (`/version` vs. the `.py` files on disk), otherwise replaced. Output
 goes to the app-wide "Backend Log" window (module "HedgeFund") and to
 `data/logs/process.log`; Python logging goes to `data/logs/backend.log`.
 The first start creates the venv and installs `requirements.txt` (incl.
-pandas/yfinance) — that can take a few minutes; the status line says so
+pandas and the Alpaca SDK) — that can take a few minutes; the status line says so
 ("installing Python packages"). Later starts only install when
 `requirements.txt` changed (see "Python environment" below).
 

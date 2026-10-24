@@ -1,11 +1,12 @@
 """HedgeFund backend.
 
-Two parts:
-- WebSocket (WS_HOST:WS_PORT): placeholder for the multi-agent pipeline
-  (unchanged; agents will publish signals/verdicts here later).
-- HTTP API on 127.0.0.1:HEALTH_PORT, used by the WPF window:
-    GET  /health                    -> "ok"
-    GET  /version                   -> {"code_mtime", "started_at", "pid"} (stale-backend check)
+- HTTP API on 127.0.0.1:HEALTH_PORT, used by the WPF window. Always loopback (stage 10 security audit M6; the
+  host switches went with Docker); every request needs Host: 127.0.0.1:<port>
+  or localhost:<port> (api_auth, L2). The former WebSocket placeholder on 8865 is gone (L9 — nothing used it).
+    GET  /health                    -> {"status": "ok", "mode": "normal" | "sandbox"} (public, nothing else; the
+                                       app only checks the 200)
+    GET  /version                   -> {"code_mtime", "started_at", "mode"} (public; stale-backend check — no
+                                       pid, no paths since stage 10 L2)
     POST /shutdown                  -> exit (loopback only; used to replace a stale process)
     GET  /newsroom/status           -> {"sources": [per-source status], "storage": {path, size_bytes, rows}}
     GET  /newsroom/insider          -> recent SEC Form 4 filings (newest first)
@@ -15,6 +16,11 @@ Two parts:
     GET  /newsroom/overview         -> "Analysis & Reasoning" tiles + templates + model ids per tier
     POST /newsroom/analysis         -> AI analysis of the selected tiles (+ provenance)
     GET  /newsroom/ai-history       -> stored AI outputs, newest first (?feature=&limit=, default 20)
+  AI budgets (2026-10-17, task B, contract UFOS.ai/docs/ai-budgets-spec.md §4; ai_budgets.py):
+    GET  /ai/budgets                -> every AI budget of the module (fund, explain, ideation, loop,
+                                       newsroom caps) in the standard schema-1 payload
+    PUT  /ai/budgets                -> {key, limit_usd}: one budget (audited; refused with an Origin header)
+  The Newsroom AI routes check their daily caps (ai_caps.py) BEFORE the call: 402 {error, code: "budget"}.
   HedgeFund autonomous loop (2026-09-26, package fund/, contract fund/SPEC.md §11;
   PAPER TRADING ONLY — simulated orders, not investment advice):
     GET  /fund/state                -> market, engine, autopilot, halt, AI budget, account, positions,
@@ -29,11 +35,32 @@ Two parts:
     POST /fund/orders               -> manual paper order; POST /fund/recommendations/{id}/execute
     POST /fund/backtest, GET /fund/backtests[/{id}] -> rule-only backtest
     GET  /fund/export/orders.csv, /fund/export/decisions.csv
+  Strategy Platform (2026-10-02, strategy_platform/SPEC.md §4):
+    GET  /v2/settings/keys          -> key status from the Windows Credential Manager (never values)
+    POST /v2/settings/keys/changed  -> {name, action} audit row (no value accepted)
+    GET  /v2/data/sources           -> configured source + last status per data type
+    POST /v2/data/test              -> {source: "alpaca"} connectivity check
+    GET  /v2/dsl/operators, /v2/universes, /v2/strategies[/{id}[/versions/{v}[/export]]],
+    POST /v2/strategies[/validate|/{id}/duplicate|/{id}/transition|/{id}/preview], PUT /v2/strategies/{id}
+                                    -> strategy library + lifecycle (stage 2, SPEC §7.11)
+    POST /v2/backtests (202 {run_id}), GET /v2/backtests[?strategy_id=&limit=], GET /v2/backtests/{id},
+    POST /v2/backtests/{id}/cancel  (stage 3, SPEC §8.5 / §8.11 — one backtest at a time)
+  Market Research (2026-10-16, package market_research/, contract market_research/SPEC.md; research only):
+    GET  /research/feeds/status     -> Research state, store, supervised tasks, live feeds (SPEC §1.2)
+  Research runs as separately supervised asyncio tasks with their own error boundary: a failure marks
+  Research "unavailable" with the reason and never stops the paper engine or anything else here. If the
+  package cannot even be installed, /research/* answers 503 {error, kind: "ResearchUnavailable"}.
+
+Keys (2026-10-02): OpenRouter, FRED, SEC EDGAR user agent and Alpaca keys come
+ONLY from the Windows Credential Manager (strategy_platform/secrets.py), read
+at use time. No .env at all since stage 10 (S10-E): settings in data/settings.json.
 
 The fund engine (fund/engine.py) runs as one asyncio task, first cycle 20 s
 after the start (after the newsroom cache is loaded); it reads the newsroom's
-macro / calendar / insider caches. Without yfinance/network its runs end as
-"skipped"/"partial" — the backend keeps working.
+macro / calendar / insider caches. Market data: Alpaca via the Strategy
+Platform data layer (fund_market.AlpacaFeed, 2026-10-02). Without the Alpaca
+keys/network its runs end as "skipped"/"partial" with the reason — the
+backend keeps working.
 
 Local SQLite store (2026-09-25, newsroom/db.py): insider filings, FRED/Eurostat
 observations, the last calendar snapshot and every AI output are kept in
@@ -52,32 +79,41 @@ import os
 from datetime import date, datetime, timedelta, timezone
 
 from aiohttp import web
-import websockets
 
 from logging_setup import configure_logging
 
 configure_logging()
 
-from config import WS_HOST, WS_PORT, HEALTH_PORT, HTTP_HOST, DEFAULT_ALLOWED_ORIGINS
+from config import HEALTH_PORT, DEFAULT_ALLOWED_ORIGINS
 import api_auth
+import sandbox_profile
 
 API_ORIGINS = api_auth.allowed_origins(DEFAULT_ALLOWED_ORIGINS)
 from config import (INSIDER_DISPLAY_DAYS, INSIDER_DISPLAY_MAX, INSIDER_RETENTION_DAYS,
                     AI_RESULTS_RETENTION_DAYS, DB_PRUNE_INTERVAL_SECONDS)
-from config import FRED_API_KEY, FRED_POLL_SECONDS, CALENDAR_POLL_SECONDS
+from config import FRED_POLL_SECONDS, CALENDAR_POLL_SECONDS
 from newsroom import db as newsroom_db
 from newsroom import store as newsroom_store
 from newsroom import ai as newsroom_ai
 from newsroom import insider_summary
 from newsroom import fred_collector, sec_edgar_collector, macro_derived
 from newsroom import calendar_collector
+from newsroom import keys as newsroom_keys
 from newsroom import overview as newsroom_overview
 from newsroom.store import EventStore, now_iso
 from fund import store as fund_store
-from fund import market as fund_market
-from fund import broker as fund_broker
+from strategy_platform.data import market_feed as fund_market
+from strategy_platform.execution import paper_broker as fund_broker
 from fund import engine as fund_engine
 from fund import api as fund_api
+import ai_budgets
+import ai_caps
+from strategy_platform.api import routes as v2_routes
+from strategy_platform.core.errors import UserFacingError
+from strategy_platform.storage import db as sp_storage
+from strategy_platform.lifecycle import registry as sp_lifecycle
+from strategy_platform.backtest import jobs as sp_jobs
+from strategy_platform.data import registry as sp_registry
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +157,7 @@ def is_outside_display_window(event: dict, now: datetime = None) -> bool:
 
 
 # Sources whose first live poll is skipped while the cached data is younger
-# than their poll interval (meta "last_ok:<source>"); both need FRED_API_KEY.
+# than their poll interval (meta "last_ok:<source>"); both need the FRED key.
 SKIP_FIRST_POLL_IF_FRESH = {"fred": FRED_POLL_SECONDS, "calendar": CALENDAR_POLL_SECONDS}
 
 
@@ -199,11 +235,6 @@ async def _prune_forever() -> None:
             logger.exception("SQLite prune failed")
 
 
-async def _ws_handler(websocket):
-    async for _ in websocket:
-        pass
-
-
 async def _run_collector_forever(name, module, emit, report_status, initial_delay: float = 0.0) -> None:
     """One crashing collector must not take the process down: log, report,
     retry after 60s. initial_delay: skip the first poll (fresh cache)."""
@@ -222,9 +253,84 @@ async def _run_collector_forever(name, module, emit, report_status, initial_dela
         await asyncio.sleep(60)
 
 
+RESEARCH_LOAD_ERROR = "Market Research failed to load — see backend.log. Trading is not affected."
+
+
+def _install_research(app):
+    """Market Research (market_research/SPEC.md §1.3/§1.4) under its own error boundary: any failure while
+    importing/installing it is logged and leaves the rest of the backend running; /research/* then
+    answers 503 with RESEARCH_LOAD_ERROR. Returns the ResearchService or None."""
+    try:
+        import market_research
+        return market_research.install(app)
+    except Exception:  # noqa: BLE001 — Research must never stop the backend start
+        logger.exception("Market Research could not be installed — the backend runs without it "
+                         "(trading is not affected)")
+
+    async def _research_unavailable(request):
+        return web.json_response({"error": RESEARCH_LOAD_ERROR, "kind": "ResearchUnavailable"}, status=503)
+
+    try:
+        app.router.add_route("*", "/research/{tail:.*}", _research_unavailable)
+    except Exception:  # noqa: BLE001 — logged; the routes are then simply missing (404)
+        logger.exception("Could not add the Research 503 route")
+    return None
+
+
+def health_payload() -> dict:
+    """GET /health (public): {"status": "ok", "mode": "normal" | "sandbox"} — strategy_platform/SPEC.md "Sandbox
+    profile"; the app's health checks only look at the status code. Stage 10 L2: the public routes carry no sandbox
+    details (data_dir …) — those are in the token-protected state payloads."""
+    return {"status": "ok", "mode": sandbox_profile.mode_fields()["mode"]}
+
+
+def version_payload(code_mtime, started_at) -> dict:
+    """GET /version (public): the stale-backend check of the app (code_mtime) — no pid, no paths (stage 10 L2)."""
+    return {"code_mtime": code_mtime, "started_at": started_at, "mode": sandbox_profile.mode_fields()["mode"]}
+
+
 async def main() -> None:
+    # Sandbox profile (strategy_platform/SPEC.md "Sandbox profile"): decided BEFORE any database is opened. A broken
+    # marker or a missing sandbox copy stops the start — the backend never falls back to the real databases.
+    try:
+        sandbox_profile.startup(logger)
+    except sandbox_profile.SandboxError as ex:
+        logger.critical("%s", ex)
+        raise SystemExit(2)
     # Fresh session token for this start (published to data/api-token after binding).
     api_auth.init_token()
+    research = None   # Market Research service (installed below; read by _shutdown)
+    # Strategy Platform store (hedgefund.db). A failure is logged; the /v2 routes then answer 503
+    # with the reason and the store retries opening on later use — no in-memory stand-in.
+    try:
+        await asyncio.to_thread(sp_storage.init)
+        # Seed every data type's configured source (+ licence) so GET /v2/data/sources lists all of them.
+        await asyncio.to_thread(sp_registry.ensure_configured)
+        # Backtest run cards left queued/running by a stopped backend cannot continue (SPEC §8.11).
+        await asyncio.to_thread(sp_jobs.recover_interrupted)
+    except UserFacingError as ex:
+        logger.error("%s", ex)
+    # Strategy Studio drafts left "waiting for the backtest slot" start now, not only after the next job
+    # (SPEC §13.5, review L2). A failure is logged; the queue is dispatched again on every Studio request.
+    try:
+        from strategy_platform.research import studio as sp_studio
+        await asyncio.to_thread(sp_studio.dispatch_queue)
+    except Exception as ex:   # noqa: BLE001 — never blocks the start
+        logger.error("Strategy Studio queue dispatch at startup failed: %s", ex)
+    # Discovery loops left running by a stopped backend -> "interrupted"; the newest one with auto_resume
+    # continues (SPEC §16.1). A failure is logged; such a loop can be resumed by hand (POST /v2/loops/{id}/resume).
+    try:
+        from strategy_platform.discovery import loop as sp_loop
+        await asyncio.to_thread(sp_loop.recover)
+    except Exception as ex:   # noqa: BLE001 — never blocks the start
+        logger.error("Discovery loop recovery at startup failed: %s", ex)
+    # Alpha library (stage 2): seed/update the library strategies (idempotent by library_key + content
+    # hash). A failure is logged and kept in sp_lifecycle.seed_status(), which GET /v2/strategies returns
+    # as "library_status" — the app still starts, nothing is hidden.
+    try:
+        await asyncio.to_thread(sp_lifecycle.seed_library)
+    except Exception as ex:   # noqa: BLE001 — recorded in seed_status() by seed_library itself
+        logger.error("Alpha library seeding failed: %s", ex)
     # Insider Trades shows the last INSIDER_DISPLAY_DAYS (config) — up to INSIDER_DISPLAY_MAX filings.
     newsroom_store.CATEGORY_LIMITS["insider"] = INSIDER_DISPLAY_MAX
     insider_store = EventStore()
@@ -268,16 +374,31 @@ async def main() -> None:
 
     # --- HTTP API ---
     async def _health(request):
-        return web.Response(text="ok")
+        return web.json_response(health_payload())
 
     async def _version(request):
-        return web.json_response({"code_mtime": CODE_MTIME, "started_at": STARTED_AT, "pid": os.getpid()})
+        return web.json_response(version_payload(CODE_MTIME, STARTED_AT))
+
+    def _exit_now():
+        # SPEC §10.2 review fix 2026-10-10: stop the validation worker processes first — os._exit would
+        # leave them running (they also watch this process and end on their own within ~1 s)
+        try:
+            from strategy_platform.validation import parallel as sp_parallel
+            n = sp_parallel.terminate_all()
+            if n:
+                logger.warning("Shutdown: terminated %d validation worker process(es).", n)
+        except Exception:  # noqa: BLE001 — the exit must happen anyway; logged
+            logger.exception("Shutdown: could not terminate the validation workers")
+        os._exit(0)
 
     async def _shutdown(request):
         if request.remote not in ("127.0.0.1", "::1"):
             return web.json_response({"error": "forbidden"}, status=403)
         logger.warning("Shutdown requested by the app (backend code on disk is newer than this process).")
-        asyncio.get_running_loop().call_later(0.3, lambda: os._exit(0))
+        if research is not None:
+            # Market Research: cancels its own tasks, waits ≤ 2 s, never raises (market_research/SPEC.md §1.4)
+            await research.shutdown()
+        asyncio.get_running_loop().call_later(0.3, _exit_now)
         return web.json_response({"ok": True})
 
     async def _newsroom_status(request):
@@ -305,9 +426,10 @@ async def main() -> None:
                                   "status": status["calendar"]})
 
     async def _newsroom_insider_summary(request):
-        if not newsroom_ai.is_configured():
-            return web.json_response(
-                {"error": "OPENROUTER_API_KEY is not set in HedgeFund/backend/.env — see .env.example."}, status=503)
+        key_error = newsroom_ai.key_error()   # Credential Manager only (2026-10-02)
+        if key_error is not None:
+            return web.json_response({"error": key_error.user_message, "kind": type(key_error).__name__},
+                                     status=503)
         insider_events = _insider_events()
         table, used = insider_summary.build_table(insider_events)
         if not used:
@@ -316,13 +438,18 @@ async def main() -> None:
                 status=409)
         logger.info("Insider summary request: %d filings, %d chars", used, len(table))
         try:
-            text, model, usage = await newsroom_ai.summarize_insider_trades(table)
+            text, model, usage = await ai_budgets.guarded_newsroom_call(   # daily cap, checked BEFORE the call
+                "newsroom_insider_summary", None, lambda: newsroom_ai.summarize_insider_trades(table))
             if not text:
                 return web.json_response({"error": "The model returned an empty response."}, status=502)
             prov = newsroom_ai.provenance("insider-summary", model)
             newsroom_db.insert_ai_result("insider-summary", model, None, {"filings": used, "table": table},
                                          text, prov, usage)
             return web.json_response({"summary": text, "filings": used, "usage": usage, "provenance": prov})
+        except ai_caps.BudgetBlocked as ex:   # daily cap: off / reached / unreadable (fail closed)
+            return web.json_response(ex.payload(), status=402)
+        except UserFacingError as ex:   # e.g. the key was removed meanwhile
+            return web.json_response({"error": ex.user_message, "kind": type(ex).__name__}, status=503)
         except Exception as ex:
             # details only in the log: provider errors can echo request data / internals
             logger.warning("Insider summary failed: %s", ex)
@@ -358,13 +485,16 @@ async def main() -> None:
         selected = selected[:25]
         if len(selected) < 2:
             return web.json_response({"error": "Select at least two items."}, status=400)
-        if not newsroom_ai.is_configured():
-            return web.json_response(
-                {"error": "OPENROUTER_API_KEY is not set in HedgeFund/backend/.env — see .env.example."}, status=503)
+        key_error = newsroom_ai.key_error()   # Credential Manager only (2026-10-02)
+        if key_error is not None:
+            return web.json_response({"error": key_error.user_message, "kind": type(key_error).__name__},
+                                     status=503)
         context = newsroom_overview.build_analysis_context(tiles_by_id, selected, calendar_latest.get("events") or [])
         logger.info("Analysis request: %d tiles, tier %s, %d chars", len(selected), tier, len(context))
         try:
-            text, model, usage = await newsroom_ai.analyse_selection(context, tier)
+            text, model, usage = await ai_budgets.guarded_newsroom_call(   # daily cap, checked BEFORE the call
+                "newsroom_analysis", ai_budgets.analysis_estimate(tier),
+                lambda: newsroom_ai.analyse_selection(context, tier))
             if not text:
                 return web.json_response({"error": "The model returned an empty response."}, status=502)
             prov = newsroom_ai.provenance("analysis", model)
@@ -379,6 +509,10 @@ async def main() -> None:
                 # What OpenRouter charged for this one request (credits = USD); None if not reported.
                 "usage": usage,
             })
+        except ai_caps.BudgetBlocked as ex:   # daily cap: off / reached / unreadable (fail closed)
+            return web.json_response(ex.payload(), status=402)
+        except UserFacingError as ex:   # e.g. the key was removed meanwhile
+            return web.json_response({"error": ex.user_message, "kind": type(ex).__name__}, status=503)
         except Exception as ex:
             # details only in the log: provider errors can echo request data / internals
             logger.warning("Analysis failed: %s", ex)
@@ -407,7 +541,7 @@ async def main() -> None:
             continue
         last_ok = newsroom_db.meta_get(newsroom_db.last_ok_key(name))
         delay = 0.0
-        if name in SKIP_FIRST_POLL_IF_FRESH and FRED_API_KEY:
+        if name in SKIP_FIRST_POLL_IF_FRESH and newsroom_keys.secret_error("fred-api-key") is None:
             delay = first_poll_delay(last_ok, SKIP_FIRST_POLL_IF_FRESH[name])
             if delay > 0:
                 delays[name] = delay
@@ -417,7 +551,9 @@ async def main() -> None:
                         "message": cached_status_message(last_ok, delay), "timestamp": last_ok, "cached": True}
 
     # Token + origin check on every route except /health and /version (api_auth).
-    app = web.Application(middlewares=[api_auth.http_middleware(API_ORIGINS)])
+    # client_max_size: /v2 strategy texts (≤ MAX_TEXT_BYTES) arrive JSON-escaped (SPEC §7.11).
+    app = web.Application(middlewares=[api_auth.http_middleware(API_ORIGINS)],
+                          client_max_size=max(1024 ** 2, v2_routes.max_body_bytes()))
     app.router.add_get("/health", _health)
     app.router.add_get("/version", _version)
     app.router.add_post("/shutdown", _shutdown)
@@ -430,9 +566,9 @@ async def main() -> None:
     app.router.add_post("/newsroom/analysis", _newsroom_analysis)
     app.router.add_get("/newsroom/ai-history", _newsroom_ai_history)
 
-    # HedgeFund autonomous loop (paper trading only). Market data via yfinance
-    # (cached in the prices table); the engine never raises into the app.
-    fund_feed = fund_market.YFinanceFeed(cache_store=fund_store)
+    # HedgeFund autonomous loop (paper trading only). Market data from Alpaca via the
+    # Strategy Platform data layer (bars cached in hedgefund.db); the engine never raises into the app.
+    fund_feed = fund_market.AlpacaFeed()
     fund_paper_broker = fund_broker.PaperBroker(fund_store, fund_feed.quote, dividends_fn=fund_feed.dividends,
                                                 bars_fn=fund_feed.daily_bars)
     engine = fund_engine.FundEngine(
@@ -440,23 +576,96 @@ async def main() -> None:
         macro_fn=lambda: macro_latest,
         calendar_fn=lambda: list(calendar_latest.get("events") or []),
         insider_fn=_insider_events,
-        backtest_feed=fund_market.YFinanceFeed(cache_store=None))   # years of bars, not kept in SQLite
+        # FRED source status: not ok (failing / key missing) -> macro agent unavailable (2026-10-02)
+        macro_status_fn=lambda: status.get("fred"),
+        backtest_feed=fund_feed)   # same feed: history since 2016 from the hedgefund.db bar cache
+    if sandbox_profile.is_sandbox():
+        engine.sandbox_off_reason = sandbox_profile.ENGINE_OFF     # autopilot + scheduled AI cycles off
     fund_api.register(app, engine)
+    # S10-C R1 (strategy_platform/SPEC.md §22.1): the Council service on the same feed + newsroom accessors as the
+    # old engine — built and registered for /v2/council/*, NOT started before the switch-over build (R2). A failure
+    # is logged; the Council routes then answer "not running" and nothing else is blocked.
+    try:
+        from strategy_platform.council import service as council_service
+        council_service.set_default(council_service.CouncilService(
+            fund_feed, macro_fn=lambda: macro_latest,
+            calendar_fn=lambda: list(calendar_latest.get("events") or []), insider_fn=_insider_events,
+            macro_status_fn=lambda: status.get("fred"), sandbox_fn=sandbox_profile.is_sandbox))
+    except Exception as ex:   # noqa: BLE001 — never blocks the start
+        logger.error("Council service could not be built: %s", ex)
+    # Strategy Platform stage 7 (strategy_platform/SPEC.md §17): platform paper accounts on the same Alpaca feed,
+    # the kill switch + dead-man switch covering both engines, the migration hard switch. A failure is logged and
+    # the /v2/portfolio|oms|incubation routes answer with the reason — the old engine is never blocked by it.
+    try:
+        from strategy_platform.execution import accounts as sp_accounts
+        from strategy_platform.execution import control as sp_control
+        from strategy_platform.execution import migration as sp_migration
+        sp_accounts.configure(quote_fn=fund_feed.quote, dividends_fn=fund_feed.dividends, bars_fn=fund_feed.daily_bars)
+        sp_control.set_legacy_engine(engine)
+        engine.platform_kill_fn = sp_control.kill_platform
+        engine.platform_migrated_fn = sp_migration.platform_migrated
+        outcome = await asyncio.to_thread(sp_migration.recover)
+        if outcome:
+            logger.warning("Interrupted paper-account migration found at startup: %s", outcome)
+        await asyncio.to_thread(sp_control.force_off_at_start)
+    except Exception as ex:   # noqa: BLE001 — never blocks the start
+        logger.error("Strategy Platform stage 7 wiring failed: %s", ex)
+        if getattr(engine, "platform_kill_fn", None) is None:
+            # the pinned kill switch must SAY that its platform half could not run (audit 2026-10-18) — the
+            # old-engine half still runs; /fund/kill answers platform {ok: false, error: <this reason>}
+            _wiring_error = f"Strategy Platform stage 7 wiring failed at startup ({type(ex).__name__}: {ex})"[:200]
+
+            def _platform_kill_unavailable(reason=None, actor="user", _msg=_wiring_error):
+                raise RuntimeError(_msg)
+            engine.platform_kill_fn = _platform_kill_unavailable
+    ai_budgets.register(app, engine)   # GET/PUT /ai/budgets (task B), same api_auth middleware
+    v2_routes.register(app)   # /v2/* (Strategy Platform), behind the same api_auth middleware
+    research = _install_research(app)   # /research/* (Market Research), same middleware; never raises
     # No per-request access log: the newsroom window polls every 10s, which
     # would bury everything else in backend.log.
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
-    site = web.TCPSite(runner, api_auth.bind_host(HTTP_HOST, "HTTP API"), HEALTH_PORT)
+    site = web.TCPSite(runner, api_auth.bind_host("HTTP API"), HEALTH_PORT)
     await site.start()
     api_auth.publish_token()  # only now: the port is ours (see api_auth.init_token)
     logger.info("HTTP API listening on %s (/health, /newsroom/insider, /newsroom/macro, "
                 "/newsroom/calendar, /newsroom/insider-summary, /newsroom/overview, /newsroom/analysis, "
-                "/newsroom/ai-history, /newsroom/status, /fund/*; token required except /health, /version)",
+                "/newsroom/ai-history, /newsroom/status, /fund/*, /v2/*, /research/*, /ai/budgets; token required except "
+                "/health, /version)",
                 site.name)
 
     # After the newsroom cache is loaded (load_from_store above): forces the
     # autopilot off, first cycle after fund_engine.STARTUP_DELAY_SECONDS.
     engine.start()
+    # Strategy Platform runtime (stage 7, SPEC §17.3): ticks every 60 s in its own task; never raises into the app.
+    try:
+        from strategy_platform.execution import control as sp_control
+        from strategy_platform.live import runtime as sp_runtime
+        sp_control.set_loop(asyncio.get_running_loop())
+        sp_runtime_task = asyncio.get_running_loop().create_task(sp_runtime.default().run_forever(),
+                                                                 name="sp-runtime")
+    except Exception as ex:   # noqa: BLE001
+        logger.error("Strategy Platform runtime could not start: %s", ex)
+        sp_runtime_task = None
+    # Strategy Platform stage 8 (SPEC §18.6): broker poller — start-up reconciliation of the connected paper/demo
+    # broker accounts, then every 15 s fills of working broker orders, fresh reconciliations and pending kills.
+    # Every runtime cycle reconciles before it executes, so nothing trades on an unreconciled broker account.
+    try:
+        from strategy_platform.execution.brokers import service as sp_brokers
+        sp_broker_task = asyncio.get_running_loop().create_task(sp_brokers.run_forever(), name="sp-brokers")
+    except Exception as ex:   # noqa: BLE001
+        logger.error("Strategy Platform broker poller could not start: %s", ex)
+        sp_broker_task = None
+    # Strategy Platform stage 9 (SPEC §19.3): monitor task — alerts (audit scanner, broker link watcher), decay checks
+    # (pause + the user's decision), report scheduler. Stores monitoring rows only; never places an order.
+    try:
+        from strategy_platform.monitoring import service as sp_monitor
+        sp_monitor_task = asyncio.get_running_loop().create_task(sp_monitor.run_forever(), name="sp-monitor")
+    except Exception as ex:   # noqa: BLE001
+        logger.error("Strategy Platform monitor could not start: %s", ex)
+        sp_monitor_task = None
+    if research is not None:
+        research.start()   # creates the supervised Research tasks only (no I/O); never raises
 
     tasks = [asyncio.create_task(_run_collector_forever(name, module, emitters[name], make_report_status(name),
                                                         delays.get(name, 0.0)))
@@ -464,10 +673,7 @@ async def main() -> None:
     tasks.append(asyncio.create_task(_prune_forever()))
     logger.info("Started Financial Newsroom collectors: %s", ", ".join(NEWSROOM_SOURCES))
 
-    async with websockets.serve(_ws_handler, api_auth.bind_host(WS_HOST, "WebSocket server"), WS_PORT,
-                                process_request=api_auth.ws_process_request(API_ORIGINS)):
-        logger.info("WebSocket listening on port %s (token required)", WS_PORT)
-        await asyncio.gather(*tasks)
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

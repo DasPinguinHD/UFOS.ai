@@ -18,9 +18,12 @@ namespace UFOS.ai.Shared
     /// - The root UFOS.ai app calls <see cref="StartAppPreparation"/> once at start
     ///   (MainWindow.Window_Loaded): in the background, one module after the other,
     ///   it creates a missing .venv and runs
-    ///   "pip install -r requirements.txt --upgrade" ONLY when it is required
-    ///   (no/broken .venv, requirements.txt changed since the last successful
-    ///   install, or the last install did not complete). MainWindow shows the
+    ///   "pip install --require-hashes -r requirements.lock" ONLY when it is required
+    ///   (no/broken .venv, the lock changed since the last successful install, or the
+    ///   last install did not complete). Stage 10 (pinned dependencies, user 2026-10-24,
+    ///   contract LOCK_API): installs come ONLY from a current requirements.lock (every
+    ///   package "==" pinned with its sha256, made by make_lockfile.py); a missing or stale
+    ///   lock refuses the install with the exact command to run — never an unpinned install. MainWindow shows the
     ///   progress (<see cref="StatusText"/>, <see cref="IsBusy"/>, <see cref="StateChanged"/>).
     /// - Every module launcher awaits <see cref="WaitForModuleAsync"/> before it
     ///   starts its run_*.ps1 (with -SkipInstall). That waits while anybody else
@@ -31,9 +34,11 @@ namespace UFOS.ai.Shared
     ///
     /// Same on-disk protocol as the run_*.ps1 scripts and Services/PythonEnvManager.cs
     /// (all three must stay compatible):
-    /// - stamp .venv\ufos-requirements.sha256 = SHA-256 of requirements.txt (upper-case
-    ///   hex like PowerShell's Get-FileHash, "none" without requirements.txt), written
-    ///   only after a successful install;
+    /// - stamp .venv\ufos-requirements.sha256 = SHA-256 of requirements.lock when it exists,
+    ///   before the first lock of requirements.txt (upper-case hex like PowerShell's
+    ///   Get-FileHash, "none" without either), written only after a successful install;
+    /// - a lock is current when its "# source: requirements.txt sha256=&lt;lower-case hex&gt;" line
+    ///   matches requirements.txt (<see cref="LockProblem"/>, = Get-LockProblem in the scripts);
     /// - .venv\ufos-install-pending exists while an install runs (a crash leaves it,
     ///   which forces a reinstall);
     /// - backend\.venv.lock is the cross-process lock: created with CreateNew and held
@@ -298,6 +303,7 @@ namespace UFOS.ai.Shared
             var hashFile = Path.Combine(venvDir, HashFileName);
             var pendingFile = Path.Combine(venvDir, PendingFileName);
             var requirements = Path.Combine(backendDir, "requirements.txt");
+            var lockPath = Path.Combine(backendDir, LockFileName);
             // Hash BEFORE installing: an edit during the install then triggers another one next time.
             var hash = RequirementsHash(backendDir);
 
@@ -308,9 +314,19 @@ namespace UFOS.ai.Shared
                 return true;
             }
 
+            // Pinned installs only (LOCK_API): no current lock → stop with the exact command, never an unpinned install.
+            var lockProblem = LockProblem(backendDir);
+            if (lockProblem != null)
+            {
+                SafeLog(moduleName, "Python environment: " + lockProblem + " (in " + backendDir + ").", null, error: true);
+                AppendEnvLog(backendDir, moduleName, "Not installed: " + lockProblem);
+                progress?.Report(lockProblem);
+                return false;
+            }
+
             progress?.Report("installing packages (" + reason + ") — can take a few minutes…");
             File.WriteAllText(pendingFile, "install started\r\n", Encoding.ASCII);
-            var args = $"-m pip install -r \"{requirements}\" --upgrade --disable-pip-version-check --no-input --progress-bar off";
+            var args = $"-m pip install --require-hashes -r \"{lockPath}\" --disable-pip-version-check --no-input --progress-bar off";
             AppendEnvLog(backendDir, moduleName, "Running: .venv\\Scripts\\python.exe " + args);
             int exit;
             try
@@ -350,16 +366,54 @@ namespace UFOS.ai.Shared
             catch { recorded = ""; }
             return string.Equals(recorded, RequirementsHash(backendDir), StringComparison.OrdinalIgnoreCase)
                 ? null
-                : "requirements.txt changed";
+                : "requirements changed";
         }
 
-        /// <summary>SHA-256 hex (upper case, like PowerShell's Get-FileHash) or "none".</summary>
-        private static string RequirementsHash(string backendDir)
+        internal const string LockFileName = "requirements.lock";
+
+        /// <summary>
+        /// The stamp value: SHA-256 hex (upper case, like PowerShell's Get-FileHash) of requirements.lock when it exists,
+        /// else of requirements.txt (so an installed venv keeps starting until the first lock is made), else "none".
+        /// Same as Get-RequirementsHash in the run_*.ps1 scripts. Also used by Services/PythonEnvManager.cs.
+        /// </summary>
+        internal static string RequirementsHash(string backendDir)
         {
-            var requirements = Path.Combine(backendDir, "requirements.txt");
-            if (!File.Exists(requirements)) return "none";
-            using var fs = new FileStream(requirements, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var lockPath = Path.Combine(backendDir, LockFileName);
+            var file = File.Exists(lockPath) ? lockPath : Path.Combine(backendDir, "requirements.txt");
+            if (!File.Exists(file)) return "none";
+            using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             return Convert.ToHexString(SHA256.HashData(fs));
+        }
+
+        /// <summary>The lock tool as the user runs it from the backend folder (HedgeFund: tools\make_lockfile.py).</summary>
+        internal static string LockToolHint(string backendDir)
+            => File.Exists(Path.Combine(backendDir, "tools", "make_lockfile.py")) ? "tools\\make_lockfile.py" : "make_lockfile.py";
+
+        private static readonly System.Text.RegularExpressions.Regex LockSourceLine =
+            new(@"^# source: \S+ sha256=([0-9a-f]{64})$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// Null when requirements.lock exists and was made from the current requirements.txt (its "# source: … sha256=" line);
+        /// else the message with the exact command — same texts as Get-LockProblem in the run_*.ps1 scripts.
+        /// </summary>
+        internal static string? LockProblem(string backendDir)
+        {
+            var tool = ".venv\\Scripts\\python.exe " + LockToolHint(backendDir);
+            var lockPath = Path.Combine(backendDir, LockFileName);
+            if (!File.Exists(lockPath)) return LockFileName + " missing - run once (needs internet): " + tool;
+            string want;
+            using (var fs = new FileStream(Path.Combine(backendDir, "requirements.txt"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                want = Convert.ToHexString(SHA256.HashData(fs)).ToLowerInvariant();
+            string? source = null;
+            foreach (var line in File.ReadLines(lockPath))
+            {
+                var m = LockSourceLine.Match(line.TrimEnd('\r'));
+                if (m.Success) { source = m.Groups[1].Value; break; }
+            }
+            if (source == null) return LockFileName + " has no source line - regenerate it: " + tool;
+            if (!string.Equals(source, want, StringComparison.Ordinal))
+                return LockFileName + " is out of date (requirements changed) - run: " + tool + " --update";
+            return null;
         }
 
         private static string VenvPython(string backendDir) => Path.Combine(backendDir, ".venv", "Scripts", "python.exe");

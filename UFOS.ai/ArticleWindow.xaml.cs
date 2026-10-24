@@ -29,6 +29,11 @@ namespace UFOS.ai
         public ArticleWindow(NewsHeadline headline, Window owner)
         {
             InitializeComponent();
+            // user request 2026-10-23: start maximized on the owner's monitor, within its work area (taskbar visible);
+            // WPF raises no StateChanged for the initial state, so the maximized look is applied once here
+            WindowMaximize.ConstrainToWorkArea(this);
+            WindowMaximize.StartMaximized(this);
+            Window_StateChanged(this, EventArgs.Empty);
             Owner = owner;
             _headline = headline;
 
@@ -69,7 +74,37 @@ namespace UFOS.ai
                 Directory.CreateDirectory(userDataFolder);
 
                 var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
-                await ArticleWebView.EnsureCoreWebView2Async(environment);
+                // Third-party article pages (S10-A2 M5): InPrivate profile — cookies, cache and storage of the sites
+                // live only as long as this window (CoreWebView2ControllerOptions, WebView2 SDK 1.0.1661+; the app
+                // references 1.0.4191.47). Side effect: a site's bot challenge (MarketWatch's DataDome) may run again
+                // on every article instead of once per profile.
+                var controllerOptions = environment.CreateCoreWebView2ControllerOptions();
+                controllerOptions.IsInPrivateModeEnabled = true;
+                await ArticleWebView.EnsureCoreWebView2Async(environment, controllerOptions);
+
+                // No DevTools, no alert/confirm/prompt boxes from the page, no host objects, no web messages
+                // (this window reads the page only through ExecuteScriptAsync), no autofill / password saving.
+                var settings = ArticleWebView.CoreWebView2.Settings;
+                settings.AreDevToolsEnabled = false;
+                settings.AreDefaultScriptDialogsEnabled = false;
+                settings.AreHostObjectsAllowed = false;
+                settings.IsWebMessageEnabled = false;
+                settings.IsPasswordAutosaveEnabled = false;
+                settings.IsGeneralAutofillEnabled = false;
+                settings.IsStatusBarEnabled = false;
+
+                // A news page never downloads files or gets camera / microphone / location / notifications /
+                // clipboard / … — every download is cancelled silently, every permission request denied.
+                ArticleWebView.CoreWebView2.DownloadStarting += (_, args) =>
+                {
+                    args.Cancel = true;
+                    args.Handled = true;
+                    AppLog.Warn("ArticleWindow", "Cancelled a download started by the article page.");
+                };
+                ArticleWebView.CoreWebView2.PermissionRequested += (_, args) =>
+                {
+                    args.State = CoreWebView2PermissionState.Deny;
+                };
 
                 ArticleWebView.CoreWebView2.NavigationCompleted += (_, e) =>
                 {
@@ -278,8 +313,8 @@ namespace UFOS.ai
         {
             if (!_openRouterClient.IsConfigured)
             {
-                ShowAiError("AI summary unavailable: no OpenRouter API key configured. " +
-                            "Copy UFOS.ai/.env.example to UFOS.ai/.env and set OPENROUTER_API_KEY.");
+                ShowAiError("AI summary unavailable: the OpenRouter API key is not set. " +
+                            "Enter it in ⚙ Keys & data (Hedge Fund window) — one key serves all modules.");
                 return;
             }
 
@@ -301,6 +336,13 @@ namespace UFOS.ai
                 {
                     ShowAiSummary(summary);
                 }
+            }
+            catch (AiBudgetBlockedException ex)
+            {
+                // App-side daily AI cap (Shared/AiBudgetAppCaps.cs): refused BEFORE the call, nothing was
+                // sent or charged. The message says why and where to raise the cap.
+                try { AppLog.Info("ArticleSummary", "Summarize with AI blocked by the AI budget: " + ex.Reason); } catch { }
+                ShowAiError(ex.Message);
             }
             catch (Exception ex)
             {

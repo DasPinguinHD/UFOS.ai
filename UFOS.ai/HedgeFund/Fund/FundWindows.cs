@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -58,8 +59,145 @@ namespace UFOS.ai.HedgeFund.Fund
     }
 
     /// <summary>Small factories for UI built in code (popups, list rows).</summary>
+    /// <summary>
+    /// dlgguard (click-test 2026-10-23): re-entrancy guard for actions that load data and then open a dialog or window. While the
+    /// action with a key runs, further calls with the same key return at once (queued clicks, a shortcut pressed twice); the
+    /// trigger (a button) is disabled synchronously and shows <c>busyText</c>, and is restored in finally on every path.
+    /// The open-once rule for the dialog itself is <see cref="FundPopupWindow.ShowDialog"/>.
+    /// </summary>
+    internal static class DialogGuard
+    {
+        private static readonly HashSet<string> Running = new(StringComparer.Ordinal);
+
+        public static bool IsRunning(string key) => Running.Contains(key);
+
+        /// <summary>As <see cref="RunAsync(string, Func{Task}, object?, string)"/> for actions with a result; <paramref name="whenBusy"/> while one runs.</summary>
+        public static async Task<T> RunForResultAsync<T>(string key, Func<Task<T>> action, T whenBusy)
+        {
+            if (!Running.Add(key)) return whenBusy;
+            try { return await action(); }
+            finally { Running.Remove(key); }
+        }
+
+        public static async Task RunAsync(string key, Func<Task> action, object? trigger = null, string busyText = "Opening…")
+        {
+            if (!Running.Add(key)) return;
+            var button = trigger as ContentControl;
+            var element = trigger as UIElement;
+            var wasEnabled = element?.IsEnabled == true;
+            var content = button?.Content;
+            if (element != null) element.IsEnabled = false;
+            if (button != null && content is string) button.Content = busyText;
+            try { await action(); }
+            finally
+            {
+                Running.Remove(key);
+                if (button != null && content is string) button.Content = content;
+                if (element != null && wasEnabled) element.IsEnabled = true;
+            }
+        }
+    }
+
     internal static class FundUi
     {
+        /// <summary>The one Hedge Fund scroll bar design (user request 2026-10-19) — same pack URI hosted in UFOS.ai and standalone.</summary>
+        private static readonly Uri ScrollBarsUri = new("pack://application:,,,/HedgeFundApp;component/Styles/ScrollBars.xaml", UriKind.Absolute);
+        private static bool _scrollBarsFailed;
+
+        /// <summary>
+        /// Merges Styles/ScrollBars.xaml into <paramref name="scope"/>: every ScrollBar below it (incl. the internal bars of ListBox,
+        /// DataGrid, TextBox) gets the grayscale design with the press effect. Called by FundPopupWindow for every code-built window
+        /// and dialog. A load failure is a build error: it is logged as an error once and the default bars stay (no crash of the dialog).
+        /// </summary>
+        // ---------------------------------------------------------------------------------------------------------------
+        // Mouse wheel (retests 2026-10-22/23: "3–15 px per notch" in Portfolio & Trading, Keys & data, the reports)
+        // ---------------------------------------------------------------------------------------------------------------
+        private static bool _wheelRegistered;
+
+        /// <summary>
+        /// One class handler for every ScrollViewer in a Hedge Fund window (windows of other modules are not touched): a wheel event
+        /// scrolls the innermost ScrollViewer under the mouse that can still move in that direction (an inner list at its end hands
+        /// over to the page), by at least one notch = Windows wheel lines × 16 px (48 px by default) per event. Root cause of the slow
+        /// scrolling: the wheel's small per-event deltas (a high-resolution / smooth wheel sends less than 120 per detent) were turned
+        /// into proportionally small offsets. A chart that has the keyboard focus (arrow-key reading) keeps the default routing.
+        /// </summary>
+        public static void EnsureWheelScrolling()
+        {
+            if (_wheelRegistered) return;
+            _wheelRegistered = true;
+            EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.PreviewMouseWheelEvent, new MouseWheelEventHandler(OnScrollViewerPreviewWheel));
+        }
+
+        private static void OnScrollViewerPreviewWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (e.Handled || e.Delta == 0 || sender is not ScrollViewer sv) return;
+            var window = Window.GetWindow(sv);
+            if (window == null || window.GetType().Namespace?.StartsWith("UFOS.ai.HedgeFund", StringComparison.Ordinal) != true) return;
+            if (!CanScrollVertically(sv, e.Delta)) return;   // nothing to move here — another ScrollViewer on the route may take it
+            // a deeper ScrollViewer on the route that can still move gets it in its own (later) tunnelling call; a focused chart opts out
+            for (var d = e.OriginalSource as DependencyObject; d != null && !ReferenceEquals(d, sv); d = ParentOf(d))
+            {
+                if (d is ScrollViewer inner && CanScrollVertically(inner, e.Delta)) return;
+                if (d is UIElement u && u.Focusable && u.IsKeyboardFocused && u is FrameworkElement fe && fe.GetType().Name.EndsWith("Chart", StringComparison.Ordinal)) return;
+            }
+            WheelScroll(sv, e.Delta);
+            e.Handled = true;
+        }
+
+        private static DependencyObject? ParentOf(DependencyObject d)
+            => d is Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) ?? LogicalTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+
+        private static bool CanScrollVertically(ScrollViewer sv, int delta)
+            => sv.VerticalScrollBarVisibility != ScrollBarVisibility.Disabled && sv.ScrollableHeight > 0.5
+               && (delta < 0 ? sv.VerticalOffset < sv.ScrollableHeight - 0.5 : sv.VerticalOffset > 0.5);
+
+        /// <summary>Scrolls by max(1, |delta| / 120) notches of (wheel lines × 16 px) through the ScrollViewer's queued LineUp / LineDown.</summary>
+        public static void WheelScroll(ScrollViewer sv, int delta)
+        {
+            if (delta == 0) return;
+            var lines = SystemParameters.WheelScrollLines;
+            if (lines <= 0)   // "one screen at a time" in the Windows settings
+            {
+                if (delta < 0) sv.PageDown(); else sv.PageUp();
+                return;
+            }
+            var notches = Math.Max(1, (int)Math.Round(Math.Abs(delta) / 120.0));
+            for (var i = 0; i < notches * lines; i++)
+            {
+                if (delta < 0) sv.LineDown(); else sv.LineUp();
+            }
+        }
+
+        /// <summary>Activates the window's owner (if it is still open) — call while the closing window still exists.</summary>
+        public static void ActivateOwnerOnClose(Window closing)
+        {
+            try
+            {
+                var owner = closing.Owner;
+                if (owner == null || !owner.IsLoaded || !owner.IsVisible) return;
+                if (owner.WindowState == WindowState.Minimized) return;
+                owner.Activate();
+            }
+            catch (Exception ex)
+            {
+                try { AppLog.Warn("HedgeFund", "Could not return the focus to the owner window.", ex); } catch { }
+            }
+        }
+
+        public static void ApplyScrollBars(FrameworkElement scope)
+        {
+            if (_scrollBarsFailed) return;
+            try
+            {
+                scope.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = ScrollBarsUri });
+            }
+            catch (Exception ex)
+            {
+                _scrollBarsFailed = true;
+                AppLog.Error("HedgeFund", "Scroll bar design (Styles/ScrollBars.xaml) could not be loaded — default scroll bars are shown.", ex);
+            }
+        }
+
         public static readonly FontFamily Mono = new("Consolas");
 
         public static TextBlock Text(string? text, double size = 11.5, Brush? brush = null, bool bold = false, bool mono = false, bool wrap = true)
@@ -74,6 +212,25 @@ namespace UFOS.ai.HedgeFund.Fund
             if (bold) tb.FontWeight = FontWeights.SemiBold;
             if (mono) tb.FontFamily = Mono;
             if (!wrap) tb.TextTrimming = TextTrimming.CharacterEllipsis;
+            return tb;
+        }
+
+        /// <summary>
+        /// Sandbox fixture label (strategy_platform/SPEC.md "Sandbox profile" S4): the payload's <c>fixture_note</c> in red, verbatim,
+        /// when <c>fixture</c> is true; null otherwise (normal payloads carry neither key). A fixture without a note says so.
+        /// </summary>
+        public static string? FixtureText(bool? fixture, string? note)
+            => fixture == true
+                ? "SANDBOX FIXTURE — " + (string.IsNullOrWhiteSpace(note) ? "note not available (not in the payload)" : note!.Trim())
+                : null;
+
+        public static TextBlock? FixtureLine(bool? fixture, string? note, double size = 11.5, Thickness? margin = null)
+        {
+            var text = FixtureText(fixture, note);
+            if (text == null) return null;
+            var tb = Text(text, size, FundPalette.Kill, bold: true);
+            tb.Margin = margin ?? new Thickness(0, 0, 0, 6);
+            System.Windows.Automation.AutomationProperties.SetName(tb, text);
             return tb;
         }
 
@@ -167,7 +324,7 @@ namespace UFOS.ai.HedgeFund.Fund
         /// Returns a plain block when <paramref name="provenance"/> does not mark AI output.
         /// </summary>
         public static Border TextBlockMaybeAi(string heading, string? text, JsonElement? provenance, string? fallbackModel,
-                                              string? fallbackTs, bool carried = false)
+                                              string? fallbackTs, bool carried = false, string nonAiLabel = "Rule-based · no AI")
         {
             var stack = new StackPanel();
             var isAi = FundAi.TryRead(provenance, fallbackModel, fallbackTs, out var model, out var at);
@@ -179,7 +336,7 @@ namespace UFOS.ai.HedgeFund.Fund
             }
             else
             {
-                var badge = Text("Rule-based · no AI", 10, FundPalette.Faint, mono: true);
+                var badge = Text(nonAiLabel, 10, FundPalette.Faint, mono: true);
                 badge.Margin = new Thickness(0, 0, 0, 4);
                 stack.Children.Add(badge);
             }
@@ -248,6 +405,8 @@ namespace UFOS.ai.HedgeFund.Fund
 
         public FundPopupWindow(Window? owner, string title, double width, double height, bool resizable)
         {
+            FundUi.EnsureWheelScrolling();
+            UFOS.ai.Shared.WindowMaximize.ConstrainToWorkArea(this);   // a maximized popup stays within the work area (taskbar visible)
             Title = title;
             Width = width;
             Height = height;
@@ -298,14 +457,16 @@ namespace UFOS.ai.HedgeFund.Fund
             _titleBar.MouseMove += TitleBar_MouseMove;
             _titleBar.MouseLeftButtonUp += TitleBar_MouseLeftButtonUp;
 
-            _bodyHost = new Border();
+            // live click-test 2026-10-22 (Validate dialog: header content under the title bar): the body is clipped to its own row,
+            // so nothing of a dialog's content can ever draw over the 18 px title bar
+            _bodyHost = new Border { ClipToBounds = true };
             var layout = new Grid();
             layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             Grid.SetRow(_bodyHost, 1);
             layout.Children.Add(_titleBar);
             layout.Children.Add(_bodyHost);
-            ApplyCompactScrollBars(layout);
+            FundUi.ApplyScrollBars(layout);   // the shared Hedge Fund scroll bar design (Styles/ScrollBars.xaml), both orientations
 
             _root = new Border
             {
@@ -327,6 +488,60 @@ namespace UFOS.ai.HedgeFund.Fund
 
         protected void SetBody(UIElement body) => _bodyHost.Child = body;
 
+        // ---- dlgguard (click-test 2026-10-23: "Start incubation…" opened several times) ----
+        private static readonly List<FundPopupWindow> OpenModal = new();
+        private string? _instanceKey;
+
+        /// <summary>
+        /// One open instance per key: the dialog type + its title + its owner. Null = no rule (message popups: two different
+        /// results must never swallow each other).
+        /// </summary>
+        protected virtual string? SingleInstanceKey
+            => GetType().FullName + "|" + Title + "|" + (Owner != null ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Owner).ToString(System.Globalization.CultureInfo.InvariantCulture) : "-");
+
+        /// <summary>
+        /// Modal show with the open-once rule: when a dialog with the same key is already open (a click queued while the app
+        /// was busy, a second click on the same button), that dialog is activated and this one is discarded — the call returns
+        /// false (= cancelled) without showing a second dialog. Every HedgeFund dialog derives from this class.
+        /// </summary>
+        public new bool? ShowDialog()
+        {
+            var key = SingleInstanceKey;
+            if (key != null)
+            {
+                var open = OpenModal.FirstOrDefault(d => d._instanceKey == key && d.IsVisible);
+                if (open != null)
+                {
+                    try { Close(); } catch (InvalidOperationException) { /* never shown — nothing to close */ }
+                    open.Activate();
+                    return false;
+                }
+                _instanceKey = key;
+                OpenModal.Add(this);
+            }
+            try { return base.ShowDialog(); }
+            finally { OpenModal.Remove(this); }
+        }
+
+        /// <summary>User request 2026-10-23: content windows (the reports) start maximized; dialogs do not call this.</summary>
+        protected void StartMaximized()
+        {
+            UFOS.ai.Shared.WindowMaximize.StartMaximized(this);
+            Window_StateChanged(this, EventArgs.Empty);
+        }
+
+        /// <summary>
+        /// Retest 2026-10-23 (closing a report / dialog dropped the Hedge Fund window behind the MainWindow). Root cause: these windows
+        /// are borderless layered windows (AllowsTransparency) with ShowInTaskbar=false; when such an owned window is destroyed,
+        /// Windows activates the next top-level window in the Z order (often the MainWindow) instead of the owner. The owner is
+        /// activated explicitly while this window still exists, so focus returns to the window that opened it.
+        /// </summary>
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        {
+            base.OnClosing(e);
+            if (!e.Cancel) FundUi.ActivateOwnerOnClose(this);
+        }
+
         private static ControlTemplate RoundTemplate()
         {
             var bd = new FrameworkElementFactory(typeof(Border), "bd");
@@ -343,45 +558,13 @@ namespace UFOS.ai.HedgeFund.Fund
             return template;
         }
 
-        /// <summary>Same compact dark scroll bar as the dashboard (parsed once; default bars if that fails).</summary>
-        private static Style? _scrollBarStyle;
-        private static bool _scrollBarStyleTried;
-
-        private static void ApplyCompactScrollBars(FrameworkElement scope)
-        {
-            if (!_scrollBarStyleTried)
-            {
-                _scrollBarStyleTried = true;
-                try
-                {
-                    const string xaml =
-                        "<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' TargetType='ScrollBar'>" +
-                        "<Setter Property='Background' Value='Transparent'/><Setter Property='Width' Value='8'/>" +
-                        "<Setter Property='Template'><Setter.Value><ControlTemplate TargetType='ScrollBar'>" +
-                        "<Grid Background='Transparent'><Border Margin='2,0,2,0' Background='#FF242424' CornerRadius='4'/>" +
-                        "<Track x:Name='PART_Track' IsDirectionReversed='True' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>" +
-                        "<Track.DecreaseRepeatButton><RepeatButton Command='ScrollBar.PageUpCommand' Opacity='0' IsHitTestVisible='False'/></Track.DecreaseRepeatButton>" +
-                        "<Track.Thumb><Thumb><Thumb.Template><ControlTemplate TargetType='Thumb'><Border Background='#FF4A4A4A' CornerRadius='4' MinHeight='28'/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>" +
-                        "<Track.IncreaseRepeatButton><RepeatButton Command='ScrollBar.PageDownCommand' Opacity='0' IsHitTestVisible='False'/></Track.IncreaseRepeatButton>" +
-                        "</Track></Grid></ControlTemplate></Setter.Value></Setter></Style>";
-                    _scrollBarStyle = (Style)XamlReader.Parse(xaml);
-                }
-                catch
-                {
-                    _scrollBarStyle = null;
-                }
-            }
-            if (_scrollBarStyle != null) scope.Resources[typeof(ScrollBar)] = _scrollBarStyle;
-        }
-
         private void Window_StateChanged(object? sender, EventArgs e)
         {
             if (WindowState == WindowState.Maximized)
             {
-                var frame = SystemParameters.WindowResizeBorderThickness;
-                const double paddedBorder = 4; // SM_CXPADDEDBORDER, not exposed by SystemParameters
-                _root.Margin = new Thickness(frame.Left + paddedBorder, frame.Top + paddedBorder,
-                                             frame.Right + paddedBorder, frame.Bottom + paddedBorder);
+                // 2026-10-23: the WM_GETMINMAXINFO hook (Shared/WindowMaximize.cs) fits the maximized window to the work area —
+                // no frame padding (the old padding left a gap and the window covered the taskbar)
+                _root.Margin = new Thickness(0);
                 _root.CornerRadius = new CornerRadius(0);
                 _titleBar.CornerRadius = new CornerRadius(0);
             }
@@ -599,6 +782,9 @@ namespace UFOS.ai.HedgeFund.Fund
 
     internal sealed class FundInfoWindow : FundPopupWindow
     {
+        /// <summary>Message popups are not single-instance (dlgguard): two results must never swallow each other.</summary>
+        protected override string? SingleInstanceKey => null;
+
         public FundInfoWindow(Window? owner, string title, string message) : base(owner, title, 440, 220, resizable: false)
         {
             SizeToContent = SizeToContent.Height;
@@ -628,7 +814,7 @@ namespace UFOS.ai.HedgeFund.Fund
             var stack = new StackPanel { Margin = new Thickness(20, 16, 20, 20) };
             var run = details.Run;
             stack.Children.Add(FundUi.Text("Run #" + (run?.Id.ToString(CultureInfo.InvariantCulture) ?? "?"), 15, FundPalette.TextBright, bold: true));
-            var sub = FundUi.Text("Paper trading · simulated · not investment advice. Times are local.", 10.5, FundPalette.Faint);
+            var sub = FundUi.Text("Paper trading · simulated money. Times are local.", 10.5, FundPalette.Faint);
             sub.Margin = new Thickness(0, 4, 0, 12);
             stack.Children.Add(sub);
 
@@ -648,6 +834,34 @@ namespace UFOS.ai.HedgeFund.Fund
                 if (!string.IsNullOrWhiteSpace(run.Error))
                     info.Children.Add(FundUi.KeyValue("Error", run.Error!, FundPalette.Short));
                 stack.Children.Add(FundUi.Panel(info));
+
+                // D9 (2026-10-02): per-symbol reasons why there is no new verdict / no analysis in this run
+                // (AI budget, missing key, judge or premium-on-flip failure, missing market data).
+                if (run.Summary is JsonElement rs && rs.ValueKind == JsonValueKind.Object)
+                {
+                    var lines = new List<string>();
+                    foreach (var (key, title) in new[] { ("judge_unavailable", "No new verdict"), ("data_unavailable", "Not analysed") })
+                    {
+                        if (!rs.TryGetProperty(key, out var map) || map.ValueKind != JsonValueKind.Object) continue;
+                        foreach (var p in map.EnumerateObject())
+                        {
+                            if (p.Value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(p.Value.GetString()))
+                                lines.Add(title + " · " + p.Name + ": " + p.Value.GetString()!.Trim());
+                        }
+                    }
+                    if (lines.Count > 0)
+                    {
+                        stack.Children.Add(Section("Unavailable this run"));
+                        var box = new StackPanel();
+                        foreach (var l in lines)
+                        {
+                            var t = FundUi.Text(l, 11, FundPalette.Risk);
+                            t.Margin = new Thickness(0, 2, 0, 2);
+                            box.Children.Add(t);
+                        }
+                        stack.Children.Add(FundUi.Panel(box));
+                    }
+                }
             }
 
             // Recommendations
@@ -658,8 +872,12 @@ namespace UFOS.ai.HedgeFund.Fund
             {
                 var heading = $"{r.Symbol} · {r.Action} · conf {FundFormat.Fraction(r.Confidence, 0)} · target {FundFormat.Fraction(r.TargetWeight, 1, signed: true)}" +
                               $" · {r.Source} · {r.Status}" + (string.IsNullOrWhiteSpace(r.SkipReason) ? "" : " (" + r.SkipReason + ")");
+                // The rule-based judge was removed (D9, 2026-10-02): "Rule-based · no AI" only for its old rows.
                 var block = FundUi.TextBlockMaybeAi(heading, r.Rationale, r.Provenance, r.Model, r.Ts,
-                                                    carried: string.Equals(r.Source, "carried", StringComparison.OrdinalIgnoreCase));
+                                                    carried: string.Equals(r.Source, "carried", StringComparison.OrdinalIgnoreCase),
+                                                    nonAiLabel: string.Equals(r.Source, "rules", StringComparison.OrdinalIgnoreCase)
+                                                        ? "Rule-based · no AI · older engine version"
+                                                        : "Not AI-generated · source " + (string.IsNullOrWhiteSpace(r.Source) ? "unknown" : r.Source));
                 var cost = r.Usage?.EffectiveCost;
                 if (cost.HasValue && block.Child is StackPanel sp && FundAi.TryRead(r.Provenance, r.Model, r.Ts, out _, out _))
                 {
@@ -779,13 +997,13 @@ namespace UFOS.ai.HedgeFund.Fund
     internal sealed class FundBacktestResultWindow : FundPopupWindow
     {
         public FundBacktestResultWindow(Window? owner, FundBacktestResult result)
-            : base(owner, "Hedge Fund · Backtest", 760, 640, resizable: true)
+            : base(owner, "Hedge Fund · Backtest rule strategy", 760, 640, resizable: true)
         {
             var stack = new StackPanel { Margin = new Thickness(20, 16, 20, 20) };
-            stack.Children.Add(FundUi.Text("Backtest · " + (result.Start ?? "?") + " → " + (result.End ?? "?"), 15, FundPalette.TextBright, bold: true));
-            var sub = FundUi.Text("Rule-based · no AI. Technical + macro agents with risk sizing on daily bars, fills at the next open, " +
+            stack.Children.Add(FundUi.Text("Backtest rule strategy · " + (result.Start ?? "?") + " → " + (result.End ?? "?"), 15, FundPalette.TextBright, bold: true));
+            var sub = FundUi.Text("Backtest rule strategy · no AI. Technical + macro agents with risk sizing on daily bars, fills at the next open, " +
                                   "fees and borrow cost included, no dividends. Hypothetical, simulated results — past performance " +
-                                  "does not indicate future results. Not investment advice.", 10.5, FundPalette.Faint);
+                                  "does not indicate future results.", 10.5, FundPalette.Faint);
             sub.Margin = new Thickness(0, 4, 0, 12);
             stack.Children.Add(sub);
             if (result.Symbols != null && result.Symbols.Count > 0)

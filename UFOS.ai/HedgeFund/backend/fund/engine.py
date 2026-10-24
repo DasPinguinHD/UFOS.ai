@@ -76,17 +76,22 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import indicators as ind
 from . import judge as judge_mod
-from . import llm as llm_mod
-from . import market
-from . import params as fund_params
+from strategy_platform.core import llm as llm_mod
+from strategy_platform.data import market_feed as market
+from strategy_platform.core import params as fund_params
 from . import sizing
-from .agents import macro as macro_agent
+from strategy_platform.strategy.features import macro_agent
 from .agents import risk as risk_agent
 from .agents import sentiment as sentiment_agent
 from .agents import technical as technical_agent
-from .broker import PROTECTIVE_ORIGINS, fmt_qty
-from .types import (ORDER_SIDES, AccountView, AgentSignal, JudgeDecision, MarketContext, OrderRequest,
-                    OrderResult, PositionView, Quote, RiskAssessment)
+from strategy_platform.execution.paper_broker import PROTECTIVE_ORIGINS, ValuationPaused, fmt_qty
+
+VALUATION_PAUSED_LOG_SECONDS = 600.0            # repeat the "valuation paused" warning at most every 10 min
+_VP_LOCK = threading.Lock()
+from strategy_platform.core.errors import UserFacingError
+
+from strategy_platform.core.types import (ORDER_SIDES, AccountView, AgentSignal, JudgeDecision, MarketContext,
+                                         OrderRequest, OrderResult, PositionView, Quote, RiskAssessment)
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +111,10 @@ BACKTEST_MAX_YEARS = 20
 HEARTBEAT_POLL_SECONDS = 60.0        # the loop checks the dead-man switch at least this often
 AUDIT_UNAVAILABLE = "audit log unavailable — the action was not carried out"
 STALE_ORDER_REASON = "stale — re-evaluated at the next run"
+# Stage 7 (strategy_platform/SPEC.md §17.1): after the migration of the paper account to the Strategy Platform the
+# old engine is advisory only (agents + judge + recommendations) and never trades this account again.
+MIGRATED_MESSAGE = ("This paper account was migrated to the Strategy Platform on {date} — it is traded in "
+                    "Portfolio & Trading now.")
 # the risk watch fills protective orders and the user's own queued orders (crypto is tradable)
 RISK_WATCH_FILL_ORIGINS = PROTECTIVE_ORIGINS + ("manual", "manual-accept")
 ACCOUNT_FIELDS = tuple(f.name for f in dataclasses.fields(AccountView))
@@ -124,6 +133,12 @@ class EngineError(Exception):
 
 
 # --- small helpers -------------------------------------------------------------
+
+def _history_error(start) -> Optional[str]:
+    """fund/backtest.py's HISTORY_ERROR for a start before 2016, else None."""
+    from .backtest import check_history_start      # lazy, like the backtest itself
+    return check_history_start(start)
+
 
 def _utc(dt) -> datetime:
     if dt is None:
@@ -225,7 +240,7 @@ class FundEngine:
                  calendar_fn: Optional[Callable[[], list]] = None, insider_fn: Optional[Callable[[], list]] = None,
                  clock: Optional[Callable[[], datetime]] = None, llm: Optional[Callable] = None,
                  session_fn: Optional[Callable] = None, startup_delay: float = STARTUP_DELAY_SECONDS,
-                 backtest_feed=None):
+                 backtest_feed=None, macro_status_fn: Optional[Callable[[], Optional[dict]]] = None):
         self.feed = feed
         # Backtests need years of bars; the prices cache is pruned to 2 years, so
         # main.py passes a feed without the SQLite cache here (default: feed).
@@ -233,10 +248,14 @@ class FundEngine:
         self.broker = broker
         self.store = store
         self._macro_fn = macro_fn or (lambda: {})
+        # FRED source status from the newsroom ({"ok", "message", ...}); not ok -> the macro
+        # agent is unavailable (user decision 2026-10-02: no stored FRED data as a trading input
+        # while FRED fails or its key is missing)
+        self._macro_status_fn = macro_status_fn
         self._calendar_fn = calendar_fn or (lambda: [])
         self._insider_fn = insider_fn or (lambda: [])
         self.clock = clock or (lambda: datetime.now(timezone.utc))
-        self.llm = llm                      # None -> fund.llm.chat_json (tests: llm.TRANSPORT)
+        self.llm = llm                      # None -> core.llm.chat_json (tests: llm.TRANSPORT)
         self.session_fn = session_fn or market.session_state
         self.startup_delay = float(startup_delay)
 
@@ -250,6 +269,9 @@ class FundEngine:
         self._lock_obj: Optional[asyncio.Lock] = None
         self._event_obj: Optional[asyncio.Event] = None
         self._current_run: Optional[dict] = None
+        # sandbox profile (strategy_platform/SPEC.md "Sandbox profile"; set by main.py): autopilot + scheduled AI
+        # cycles off — the reason is the 409 text of "autopilot on"; "Run now" still works (inside the sandbox)
+        self.sandbox_off_reason: Optional[str] = None
 
         self._sentiment_cache: Dict[str, dict] = {}        # owned here, see agents/sentiment.py
         self._last_positions: Optional[Dict[str, float]] = None   # qty per symbol after the previous cycle
@@ -259,12 +281,24 @@ class FundEngine:
         self._run_versions: Dict[int, int] = {}
         self._params_cache: Dict[int, Optional[dict]] = {}
         self._bench_base: Optional[Tuple[Optional[str], Optional[float]]] = None
-        self._last_rule_actions: Dict[str, str] = {}      # symbol -> rule judge action of the last cycle
+        self._last_rule_actions: Dict[str, str] = {}      # symbol -> rule action (prompt input) of the last cycle
+        # Per-symbol outcome of the last FULL cycle for /fund/state (D9, 2026-10-02):
+        # symbol -> {"judge_unavailable": msg|None, "data_unavailable": msg|None, "run_id", "at"}
+        self._symbol_status: Dict[str, dict] = {}
+        self._symbol_status_loaded = False
+        self._judge_retry: set = set()                    # symbols whose last judgement attempt failed
+        self._valuation_paused: Optional[str] = None     # "valuation paused: no current quote for X" (last cycle)
         # Serialises halt + liquidation with non-protective order placement
         # (broker calls run in worker threads, so a threading lock).
         self._trade_lock = threading.Lock()
         self._last_client_seen: Optional[datetime] = None  # dead-man switch (touch_client)
         self._backtest_running = False
+        # Stage 7 (strategy_platform SPEC §17.1), set by main.py: the platform half of the kill switch
+        # (``platform_kill_fn(reason, actor) -> dict``) and the platform's view of the migration
+        # (``platform_migrated_fn() -> dict|None``; failures are logged and ignored — the newsroom.db flag rules).
+        self.platform_kill_fn: Optional[Callable[[str, str], dict]] = None
+        self.platform_migrated_fn: Optional[Callable[[], Optional[dict]]] = None
+        self._migrated_seen: Optional[dict] = None
 
     # --- asyncio primitives (bound to the running loop; tests use several loops) --
 
@@ -313,6 +347,37 @@ class FundEngine:
         if rid is None:
             raise EngineError(503, AUDIT_UNAVAILABLE)
         return rid
+
+    # --- stage 7: migrated (frozen) account ------------------------------------------------
+
+    def migration_state(self) -> Optional[dict]:
+        """{status: migrating|migrated, migration_id, at} once the paper account was (being) migrated to the
+        Strategy Platform (newsroom.db flag, or the platform's record); None before. Remembered for the
+        process lifetime once seen (fail closed: never trade a migrated account after a flaky read)."""
+        if self._migrated_seen is not None and self._migrated_seen.get("status") == "migrated":
+            return dict(self._migrated_seen)
+        state = None
+        getter = getattr(self.store, "get_migration_state", None)
+        if getter is not None:
+            try:
+                state = getter()
+            except Exception:
+                logger.exception("migration flag unreadable")
+        if state is None and self.platform_migrated_fn is not None:
+            try:
+                state = self.platform_migrated_fn()
+            except Exception:
+                logger.exception("platform migration state unreadable")
+        if state is not None:
+            self._migrated_seen = dict(state)
+        elif self._migrated_seen is not None:
+            return dict(self._migrated_seen)
+        return state
+
+    def _refuse_if_migrated(self) -> None:
+        st = self.migration_state()
+        if st is not None:
+            raise EngineError(409, MIGRATED_MESSAGE.format(date=str(st.get("at") or "")[:10] or "?"))
 
     # --- dead-man switch (client heartbeat) ---------------------------------------------
 
@@ -394,12 +459,31 @@ class FundEngine:
         is unreadable (broker raised, e.g. a StateUnavailable, or no equity)."""
         try:
             acct = self.broker.account(pm, now, params)
+        except ValuationPaused as ex:          # no current quote for a held position (no stored-price mark)
+            self._log_valuation_paused(ex)
+            return None, str(ex)[:300]
         except Exception as ex:
             logger.error("paper account state unreadable: %s: %s", type(ex).__name__, ex)
             return None, f"{type(ex).__name__}: {ex}"[:200]
         if acct is None or _finite(getattr(acct, "equity", None)) is None:
             return None, "equity unavailable"
+        with _VP_LOCK:
+            self._vp_logged = None                # valued again: a new pause is logged at once
         return acct, None
+
+    def _log_valuation_paused(self, ex) -> None:
+        """Click-test 2026-10-22: the status poll reads the account every 5 s — the pause is logged once per
+        change of the symbol set, then at most every ``VALUATION_PAUSED_LOG_SECONDS`` while it persists (the UI
+        state is unchanged)."""
+        import time as _t
+        key = tuple(getattr(ex, "symbols", None) or [str(ex)])
+        now = _t.monotonic()
+        with _VP_LOCK:
+            last = getattr(self, "_vp_logged", None)
+            if last is not None and last[0] == key and now - last[1] < VALUATION_PAUSED_LOG_SECONDS:
+                return
+            self._vp_logged = (key, now)
+        logger.warning("%s", ex)
 
     # --- lifecycle ---------------------------------------------------------------
 
@@ -532,7 +616,7 @@ class FundEngine:
                 logger.exception("heartbeat check failed")
             now = self._now()
             woken = self._wake_pending
-            run_due = self.next_run_at is None or now >= self.next_run_at
+            run_due = (self.next_run_at is None or now >= self.next_run_at) and not self.sandbox_off_reason
             watch_due = self.next_risk_watch_at is not None and now >= self.next_risk_watch_at
             if not woken and not run_due and not watch_due:
                 continue                    # heartbeat poll only; nothing is due yet
@@ -561,7 +645,7 @@ class FundEngine:
             except Exception:
                 logger.exception("fund cycle failed unexpectedly")
             now = self._now()
-            if self.next_run_at is None or self.next_run_at <= now:
+            if not self.sandbox_off_reason and (self.next_run_at is None or self.next_run_at <= now):
                 # the cycle took longer than the interval (or had no params): no catch-up
                 self.next_run_at = now + timedelta(minutes=5)
             if self.next_risk_watch_at is not None and self.next_risk_watch_at <= now:
@@ -654,39 +738,77 @@ class FundEngine:
                         list(await asyncio.to_thread(self.feed.daily_bars, sym, BARS_DAYS) or [])
                 except Exception as ex:
                     bars[sym] = []
-                    errors[sym] = f"daily bars failed: {ex}"[:200]
+                    errors[sym] = f"daily bars failed: {getattr(ex, 'user_message', None) or ex}"[:200]
                 try:
                     q = await asyncio.to_thread(self.feed.quote, sym)
                     quotes[sym] = q if q is not None and (_finite(q.price) or 0) > 0 else None
                 except Exception as ex:
                     quotes[sym] = None
-                    errors[sym] = f"quote failed: {ex}"[:200]
+                    msg = f"quote failed: {getattr(ex, 'user_message', None) or ex}"
+                    errors[sym] = (f"{errors[sym]}; {msg}" if sym in errors else msg)[:300]
                 if sym in news_symbols:
                     try:
                         news[sym] = list(await asyncio.to_thread(self.feed.news, sym, 8) or [])
-                    except Exception:
-                        news[sym] = []
+                    except Exception as ex:
+                        # not "no headlines": the sentiment agent reports "News could not be
+                        # loaded: …" for this symbol and makes no LLM call (no fallback)
+                        logger.warning("news for %s failed: %s", sym, ex)
+                        news[sym] = [{"error": getattr(ex, "user_message", None) or "news fetch failed"}]
 
         await asyncio.gather(*(one(s) for s in symbols))
         return bars, quotes, news, errors
+
+    def _remember_quotes(self, quotes: Dict[str, Optional[Quote]]) -> None:
+        """The quotes /fund/state shows: this run's; a symbol whose quote failed
+        is dropped (never shown/valued at an older quote — 2026-10-02)."""
+        for s, q in quotes.items():
+            if q is None:
+                self._last_quotes.pop(s, None)
+            else:
+                self._last_quotes[s] = q
 
     def _position_qtys(self) -> Dict[str, float]:
         return {p["symbol"]: float(p["qty"]) for p in (self.store.get_positions() or [])}
 
     def _newsroom(self):
-        def safe(fn, default):
+        """(macro ctx, calendar, insider, calendar_error, insider_error). A
+        failing accessor is reported as an error, never replaced by an empty
+        list (user decision 2026-10-02): the risk card / sentiment input says
+        that data is unavailable."""
+        def read(fn, what):
             try:
                 v = fn()
-                return v if v is not None else default
+                return (v if v is not None else []), None
             except Exception as ex:
-                logger.warning("newsroom data accessor failed: %s", ex)
-                return default
-        macro_latest = safe(self._macro_fn, {})
-        calendar = safe(self._calendar_fn, [])
+                logger.warning("newsroom %s accessor failed: %s", what, ex)
+                return [], f"{what} accessor failed ({type(ex).__name__})"
+        calendar, cal_err = read(self._calendar_fn, "calendar")
         if isinstance(calendar, dict):
             calendar = calendar.get("events") or []
-        insider = safe(self._insider_fn, [])
-        return macro_agent.build_macro_context(macro_latest), list(calendar), list(insider)
+        insider, ins_err = read(self._insider_fn, "insider")
+        return self._macro_context(), list(calendar), list(insider), cal_err, ins_err
+
+    def _macro_context(self) -> dict:
+        """ctx.macro for the agents. FRED down / key missing / accessor error ->
+        ``{"available": False, "unavailable_reason": "Macro data unavailable: …"}``
+        (the macro agent reports it; the newsroom's own display may keep its
+        stored data — that is not a trading input)."""
+        reason = None
+        if self._macro_status_fn is not None:
+            try:
+                st = self._macro_status_fn() or {}
+            except Exception as ex:
+                st = {"ok": False, "message": f"FRED status unreadable ({type(ex).__name__})"}
+            if st.get("ok") is not True:
+                msg = str(st.get("message") or ("not loaded yet" if st.get("ok") is None else "FRED failed"))
+                reason = f"Macro data unavailable: {msg[:200]}"
+        if reason is None:
+            try:
+                return macro_agent.build_macro_context(self._macro_fn() or {})
+            except Exception as ex:
+                logger.warning("macro accessor failed: %s", ex)
+                reason = f"Macro data unavailable: the newsroom macro data could not be read ({type(ex).__name__})"
+        return {"available": False, "as_of": None, "regime": None, "readings": {}, "unavailable_reason": reason}
 
     def _budget(self, params: dict) -> llm_mod.Budget:
         return llm_mod.Budget(params.get("ai_daily_budget_usd", 0.0), self.store.ai_spend_today,
@@ -771,11 +893,14 @@ class FundEngine:
         non-protective order placement (``_trade_lock``). Always works: the
         audit row is written afterwards and a failure only logs an error."""
         liquidation_error = None
+        migrated = self.migration_state()
         with self._trade_lock:
             self.store.set_halted(True, reason, now)
             self.store.set_autopilot(False)
             try:
-                results = list(self.broker.liquidate_all(origin, now, params, pm) or [])
+                # stage 7: a migrated account is never traded here — the Strategy Platform's kill closes its
+                # positions in the platform account (paper-council); this half only halts
+                results = [] if migrated is not None else list(self.broker.liquidate_all(origin, now, params, pm) or [])
             except Exception as ex:
                 # the halt stands (no new exposure); the liquidation is retried by the user / next kill
                 logger.exception("liquidation (%s) failed", origin)
@@ -818,7 +943,32 @@ class FundEngine:
                                                if row and isinstance(row.get("params"), dict) else None)
         return self._params_cache[version]
 
+    def _load_symbol_status(self) -> None:
+        """After a restart: the per-symbol outcome of the newest full cycle from
+        its run summary (``judge_unavailable`` / ``data_unavailable``), so the
+        UI keeps showing why a recommendation was not updated and a failed
+        judgement is retried (never carried)."""
+        self._symbol_status_loaded = True
+        try:
+            runs = self.store.list_runs(20) or []
+        except Exception:
+            logger.exception("runs unreadable — per-symbol status not restored")
+            return
+        for r in runs:
+            if r.get("trigger") == "risk-watch" or r.get("status") not in ("ok", "partial", "skipped"):
+                continue
+            summary = r.get("summary") if isinstance(r.get("summary"), dict) else {}
+            ju = summary.get("judge_unavailable") if isinstance(summary.get("judge_unavailable"), dict) else {}
+            du = summary.get("data_unavailable") if isinstance(summary.get("data_unavailable"), dict) else {}
+            for s in set(ju) | set(du):
+                self._symbol_status[s] = {"judge_unavailable": ju.get(s), "data_unavailable": du.get(s),
+                                          "run_id": r.get("id"), "at": r.get("started_at")}
+            self._judge_retry.update(ju)
+            return
+
     def _previous_states(self, symbols: List[str], params: dict, changed: set) -> Dict[str, dict]:
+        if not self._symbol_status_loaded:
+            self._load_symbol_status()
         latest = self.store.latest_recommendations() or {}
         out = {}
         for s in symbols:
@@ -829,13 +979,14 @@ class FundEngine:
             pchanged = judge_mod.decision_params_changed(self._params_of_run(judged["run_id"]), params) \
                 if judged else False
             out[s] = judge_mod.previous_state(judged, latest.get(s), scores, s in changed, pchanged,
-                                              last_rule_action=self._last_rule_actions.get(s))
+                                              last_rule_action=self._last_rule_actions.get(s),
+                                              judge_retry=s in self._judge_retry)
         return out
 
     def _apply_decisions(self, run_id, now, params, session, decisions: Dict[str, JudgeDecision],
                          risks: Dict[str, RiskAssessment], atr: Dict[str, Optional[float]],
                          previous: Dict[str, dict], positions: Dict[str, PositionView], equity: Optional[float],
-                         halted: bool, pm) -> dict:
+                         halted: bool, pm, unreadable_reason: str = "account state unreadable") -> dict:
         """Stores recommendations, writes flip events and — autopilot on, not
         halted, account readable (``equity`` not None) — places the orders
         (sync, worker thread). Each placement runs under ``_trade_lock`` and
@@ -860,7 +1011,8 @@ class FundEngine:
             try:
                 ra = risks.get(sym)
                 pos = positions.get(sym)
-                cur_w = pos.market_value / equity if (pos is not None and equity and equity > 0) else 0.0
+                mv = pos.market_value if pos is not None else 0.0
+                cur_w = mv / equity if (mv is not None and equity and equity > 0) else 0.0
                 tw = sizing.target_weight(d, ra, atr.get(sym), params, cur_w)
                 rec_id = self.store.save_recommendation(run_id, now, sym, d.action, d.confidence, tw, d.rule_score,
                                                         d.rationale, d.source, d.model, d.provenance, d.usage)
@@ -875,7 +1027,7 @@ class FundEngine:
                     continue
                 if unreadable:
                     if rec_id:
-                        self.store.update_recommendation_status(rec_id, "skipped", "account state unreadable")
+                        self.store.update_recommendation_status(rec_id, "skipped", unreadable_reason[:200])
                     continue
                 note = None
                 with self._trade_lock:
@@ -892,6 +1044,16 @@ class FundEngine:
                             self.store.update_recommendation_status(rec_id, "skipped", skip)
                         continue
                     cls = fund_params.asset_type(sym)
+                    if ra is not None and getattr(ra, "unavailable", None):
+                        if rec_id:
+                            self.store.update_recommendation_status(rec_id, "skipped", f"risk card {ra.unavailable}"[:200])
+                        continue
+                    if atr.get(sym) is None:
+                        # no unscaled size as a stand-in (user decision 2026-10-02)
+                        if rec_id:
+                            self.store.update_recommendation_status(
+                                rec_id, "skipped", "not enough daily bars to volatility-scale the size")
+                        continue
                     target, reason = sizing.plan_trade(d, ra, pos, atr.get(sym), params, now, trades[cls],
                                                        equity=equity)
                     if target is None:
@@ -935,7 +1097,13 @@ class FundEngine:
         acct, acct_err = await asyncio.to_thread(self._read_account, pm, now, params)
         drawdown_stop = False
         dd_limit = float(params.get("drawdown_stop_pct") or 0)
-        if acct is None:
+        if acct is None and str(acct_err or "").startswith("valuation paused"):
+            # a held position has no current quote (user decision 2026-10-02: never valued at
+            # the stored price): valuation, drawdown check, margin actions, equity snapshot and
+            # equity-dependent orders pause for this run
+            errors["valuation"] = (f"{acct_err} — valuation, drawdown check, margin actions, equity snapshot "
+                                   f"and autopilot orders paused this run")
+        elif acct is None:
             # Unreadable state (DB failure): no drawdown stop, no margin actions,
             # no autopilot orders this cycle — never liquidate on it.
             errors["account"] = (f"account state unreadable ({acct_err}) — drawdown check, margin actions and "
@@ -995,6 +1163,8 @@ class FundEngine:
             except Exception:
                 logger.exception("heartbeat check failed")
             session = self._session(start)
+            if self.migration_state() is not None:
+                return {"status": "not_needed", "reason": "paper account migrated to the Strategy Platform"}
             if not force:
                 why = None
                 if session.get("open"):
@@ -1044,12 +1214,13 @@ class FundEngine:
         fetch_syms = symbols + ([BENCHMARK] if BENCHMARK not in symbols else [])
         _bars, quotes, _news, fetch_err = await self._fetch(fetch_syms, [], quote_only=fetch_syms)
         prices = {s: q for s, q in quotes.items() if q is not None}
-        self._last_quotes.update(prices)
+        self._remember_quotes(quotes)
         pm: Dict[str, Any] = dict(prices)
         for s in start_pos:
-            pm.setdefault(s, None)          # no quote: mark at the stored price
-            if s not in prices and fund_params.is_crypto(s):
-                errors[s] = fetch_err.get(s) or "no quote (marked at the stored price)"
+            # no quote: None — the broker refuses to value it (ValuationPaused), never the stored price
+            pm.setdefault(s, None)
+            if s not in prices:
+                errors[s] = f"no current quote ({fetch_err.get(s) or 'not delivered'}) — valuation paused"[:300]
         halted = bool(self.store.get_halted().get("active"))
         house = await asyncio.to_thread(self._housekeeping, now, params, pm, session, True)
         errors.update(house["errors"])
@@ -1084,13 +1255,22 @@ class FundEngine:
         bars, quotes, news, fetch_err = await self._fetch(fetch_syms, symbols if want_news else [],
                                                           quote_only=[s for s in fetch_syms if s not in symbols])
         prices = {s: q for s, q in quotes.items() if q is not None}
-        self._last_quotes.update(prices)
+        self._remember_quotes(quotes)
         pm: Dict[str, Any] = dict(prices)
         for s in list(start_pos) + symbols:
-            pm.setdefault(s, None)          # no quote: mark at the stored price, never re-fetch in the broker
-        no_data = [s for s in symbols if not bars.get(s) and s not in prices]
+            # no quote: None — never re-fetched in the broker, never valued at the stored price
+            # (ValuationPaused: valuation / drawdown / snapshot / equity-dependent orders pause)
+            pm.setdefault(s, None)
+        # A symbol without daily bars OR without a quote is not analysed this run (no agents,
+        # no judgement, no autopilot order) — never on partial data; the reason is recorded.
+        no_data = [s for s in symbols if not bars.get(s) or s not in prices]
+        data_unavailable: Dict[str, str] = {}
         for s in no_data:
-            errors[s] = fetch_err.get(s) or "no market data (quote and daily bars unavailable)"
+            missing = " and ".join(w for w, gone in (("daily bars", not bars.get(s)), ("quote", s not in prices))
+                                   if gone)
+            why = fetch_err.get(s) or f"no {missing} available"
+            data_unavailable[s] = f"Market data unavailable ({missing} missing): {why} — not analysed this run."[:400]
+            errors[s] = data_unavailable[s]
 
         changed = set()
         if self._last_positions is not None:
@@ -1099,31 +1279,51 @@ class FundEngine:
                     changed.add(s)
 
         halted = bool(self.store.get_halted().get("active"))
-        house = await asyncio.to_thread(self._housekeeping, now, params, pm, session)
-        errors.update(house["errors"])
-        acct, halted, drawdown_stop = await self._drawdown_guard(now, params, pm, halted, errors)
+        migrated = self.migration_state()
+        if migrated is None:
+            house = await asyncio.to_thread(self._housekeeping, now, params, pm, session)
+            errors.update(house["errors"])
+            acct, halted, drawdown_stop = await self._drawdown_guard(now, params, pm, halted, errors)
+        else:
+            # stage 7: the account lives in the Strategy Platform now — advisory cycle (agents, judge,
+            # recommendations); no accruals, fills, margin actions, drawdown stop or snapshot here
+            house = {"fills": [], "accruals": None, "margin": [], "errors": {}, "expired": []}
+            acct, _why = await asyncio.to_thread(self._read_account, pm, now, params)
+            drawdown_stop = False
+        valuation_paused = None
         try:
             positions = {p.symbol: p for p in await asyncio.to_thread(self.broker.positions, pm) or []}
+        except ValuationPaused as ex:
+            # held quantities stay known for the agents; unvalued positions carry no market value
+            valuation_paused = str(ex)
+            positions = {p.symbol: p for p in await asyncio.to_thread(self.broker.positions, pm, True) or []}
+            acct = None                 # no sizing / autopilot orders without a valuation
         except Exception as ex:
             logger.exception("positions unreadable")
             errors["positions"] = f"positions unreadable: {ex}"[:200]
             positions = {}
             acct = None                 # no sizing / autopilot orders without positions
+        self._valuation_paused = valuation_paused
 
         summary: Dict[str, Any] = {"flips": [], "orders": 0, "symbols": 0, "errors": errors, "halted": halted,
                                    "drawdown_stop": drawdown_stop, "autopilot": False,
+                                   "account_migrated": migrated,
                                    "pending_filled": sum(1 for r in house["fills"] if r.status == "filled"),
                                    "margin_orders": len(house["margin"]), "accruals": house["accruals"],
-                                   "positions_changed": sorted(changed), "account_unreadable": acct is None}
+                                   "positions_changed": sorted(changed), "account_unreadable": acct is None,
+                                   "valuation_paused": valuation_paused}
         analysable = [s for s in symbols if s not in no_data]
         budget = self._budget(params)
-        decisions: Dict[str, JudgeDecision] = {}
+        decisions: Dict[str, Any] = {}                 # JudgeDecision | judge.JudgeUnavailable
+        judge_unavailable: Dict[str, str] = {}
         if analysable:
-            macro_ctx, calendar, insider = self._newsroom()
+            macro_ctx, calendar, insider, cal_err, ins_err = self._newsroom()
             ctx = MarketContext(now=_iso(now), params=params, session=session,
                                 bars={s: bars.get(s) or [] for s in symbols}, quotes=prices, macro=macro_ctx,
                                 insider=insider, calendar=calendar, news=news, account=acct, positions=positions,
-                                halted=halted)
+                                halted=halted, calendar_error=cal_err, insider_error=ins_err)
+            if cal_err:
+                errors["calendar"] = f"{cal_err} — risk cards unavailable, no autopilot orders this run"
             signals: Dict[str, Dict[str, AgentSignal]] = {}
             risks: Dict[str, RiskAssessment] = {}
             risk_sigs: Dict[str, AgentSignal] = {}
@@ -1161,23 +1361,38 @@ class FundEngine:
                 try:
                     decisions = await judge_mod.judge(ctx, signals, risks, previous, params, budget, **self._llm_kw())
                 except Exception as ex:
-                    logger.exception("judge failed — rule fallback")
-                    errors["judge"] = str(ex)[:200]
-                    decisions = {s: judge_mod.rule_decision(s, signals[s], risks.get(s),
-                                                            (previous.get(s) or {}).get("last_action"), params,
-                                                            prefix="Rule-based (judge error)") for s in signals}
+                    # no rule-based stand-in (user decision D9, 2026-10-02): no recommendation this run
+                    logger.exception("judge failed — no new recommendations this run")
+                    errors["judge"] = f"judge failed: {ex}"[:200]
+                    decisions = {s: judge_mod.unavailable(s, "AI judge failed — no new recommendation this run.",
+                                                          "judge_error") for s in signals}
+                judged = {s: d for s, d in decisions.items() if isinstance(d, JudgeDecision)}
                 for s, d in decisions.items():
+                    if s not in judged:
+                        judge_unavailable[s] = d.message
+                        self._judge_retry.add(s)       # judged again next cycle, never carried
+                        continue
+                    self._judge_retry.discard(s)
                     if d.rule_action in ("LONG", "SHORT", "FLAT"):
                         self._last_rule_actions[s] = d.rule_action
-                applied = await asyncio.to_thread(self._apply_decisions, run_id, now, params, session, decisions,
+                if judge_unavailable:
+                    by_msg: Dict[str, List[str]] = {}
+                    for s, m in judge_unavailable.items():
+                        by_msg.setdefault(m, []).append(s)
+                    note = "; ".join(f"no AI judgement for {', '.join(sorted(v))}: {m}" for m, v in by_msg.items())
+                    errors["judge"] = (f"{errors['judge']}; {note}" if "judge" in errors else note)[:800]
+                # only real (AI / carried) decisions are stored and may trade; an unavailable symbol
+                # gets no recommendation row and no autopilot order this run
+                applied = await asyncio.to_thread(self._apply_decisions, run_id, now, params, session, judged,
                                                   risks, atr, previous, positions,
-                                                  acct.equity if acct is not None else None, halted, pm)
+                                                  acct.equity if acct is not None else None, halted, pm,
+                                                  valuation_paused or "account state unreadable")
                 errors.update(applied["errors"])
                 summary.update(flips=applied["flips"], orders=applied["orders"], autopilot=applied["autopilot"],
                                symbols=len(signals))
 
         spy = prices.get(BENCHMARK)
-        if prices and acct is not None:          # no equity snapshot from an unreadable state
+        if prices and acct is not None and migrated is None:   # no snapshot from an unreadable / migrated state
             try:
                 await asyncio.to_thread(self.broker.snapshot_equity, now, spy.price if spy else None, pm, params)
             except Exception as ex:
@@ -1187,9 +1402,19 @@ class FundEngine:
 
         js = judge_mod.summarize(decisions) if decisions else {"judge_mode": "none", "models": [], "sources": []}
         summary["judge_sources"] = js.get("sources")
+        for s in analysable:
+            if s not in decisions and s in errors and s not in judge_unavailable:      # agents failed
+                judge_unavailable[s] = f"Analysis failed: {errors[s]} — no new recommendation this run."[:400]
+        summary["judge_unavailable"] = dict(judge_unavailable)
+        summary["data_unavailable"] = dict(data_unavailable)
+        self._symbol_status = {s: {"judge_unavailable": judge_unavailable.get(s),
+                                   "data_unavailable": data_unavailable.get(s), "run_id": run_id, "at": _iso(now)}
+                               for s in symbols}
+        self._symbol_status_loaded = True
         if symbols and not analysable:
             status = "skipped"
-            error = "No market data for any symbol (yfinance / network unavailable?) — nothing analysed."
+            error = ("No usable market data for any symbol from the Alpaca data layer — nothing analysed "
+                     "(per-symbol reasons below). " + "; ".join(f"{k}: {v}" for k, v in errors.items()))[:2000]
         else:
             status = "partial" if errors else "ok"
             error = "; ".join(f"{k}: {v}" for k, v in errors.items())[:2000] if errors else None
@@ -1198,15 +1423,33 @@ class FundEngine:
 
     # --- user actions ------------------------------------------------------------------
 
-    async def kill(self, reason: Optional[str] = None, actor: str = "user") -> dict:
+    async def kill(self, reason: Optional[str] = None, actor: str = "user", *, propagate: bool = True) -> dict:
         """Kill switch: halt, autopilot off, liquidate everything (origin
-        kill-switch; pending while the market is closed)."""
+        kill-switch; pending while the market is closed). Stage 7: also runs the
+        Strategy Platform's kill (all platform accounts) unless ``propagate`` is
+        False (the platform's own kill calls this with False); each half reports
+        its own failure, neither blocks the other."""
         reason = (str(reason).strip() if reason else "") or "Kill switch pressed"
         now = self._now()
-        _v, params = await asyncio.to_thread(self.store.effective_params)
-        results = await asyncio.to_thread(self._halt_and_liquidate, f"Kill switch: {reason[:200]}", "kill-switch",
-                                          now, params, None, actor, "kill")
-        return {"halted": True, "halt": self.store.get_halted(), "orders": [r.to_dict() for r in results]}
+        out: Dict[str, Any] = {}
+        try:
+            _v, params = await asyncio.to_thread(self.store.effective_params)
+            results = await asyncio.to_thread(self._halt_and_liquidate, f"Kill switch: {reason[:200]}", "kill-switch",
+                                              now, params, None, actor, "kill")
+            out.update(halted=True, halt=self.store.get_halted(), orders=[r.to_dict() for r in results])
+        except Exception as ex:
+            if not propagate or self.platform_kill_fn is None:
+                raise
+            logger.exception("kill switch (old engine half) failed")
+            out.update(halted=bool(self.store.get_halted().get("active")), halt=self.store.get_halted(), orders=[],
+                       error=f"{type(ex).__name__}: {ex}"[:200])
+        if propagate and self.platform_kill_fn is not None:
+            try:
+                out["platform"] = await asyncio.to_thread(self.platform_kill_fn, reason, actor)
+            except Exception as ex:
+                logger.exception("kill switch (Strategy Platform half) failed")
+                out["platform"] = {"ok": False, "error": f"{type(ex).__name__}: {ex}"[:200], "accounts": []}
+        return out
 
     def resume(self, actor: str = "user") -> dict:
         """Clears the halt; the autopilot stays off. The drawdown peak is
@@ -1242,8 +1485,12 @@ class FundEngine:
     def set_autopilot(self, enabled: bool, actor: str = "user") -> dict:
         if not isinstance(enabled, bool):
             raise EngineError(400, "enabled must be true or false", {"enabled": "must be true or false"})
+        if enabled and self.sandbox_off_reason:
+            raise EngineError(409, self.sandbox_off_reason)
         if enabled and self.store.get_halted().get("active"):
             raise EngineError(409, "The engine is halted — resume it before switching the autopilot on.")
+        if enabled:
+            self._refuse_if_migrated()
         now = self._now()
         before = self.store.get_autopilot()
         if enabled:
@@ -1306,6 +1553,7 @@ class FundEngine:
     async def reset(self, starting_capital=None, actor: str = "user") -> dict:
         """Fresh paper account (waits for a running cycle); autopilot off."""
         _v, params = await asyncio.to_thread(self.store.effective_params)
+        self._refuse_if_migrated()
         cap = params.get("starting_capital") if starting_capital is None else starting_capital
         capf = _finite(cap)
         lim = fund_params.LIMITS["starting_capital"]
@@ -1377,6 +1625,7 @@ class FundEngine:
         """POST /fund/orders: one manual simulated order (buy/short refused
         while halted; sell/cover allowed to reduce risk)."""
         sym, side, qty, notional = self._validate_order(body)
+        self._refuse_if_migrated()
         if side in ("buy", "short") and self.store.get_halted().get("active"):
             raise EngineError(409, "The engine is halted — only closing orders (sell/cover) are accepted.")
         now = self._now()
@@ -1387,49 +1636,92 @@ class FundEngine:
                            rationale="manual order (user)")
 
         def submit():
-            with self._trade_lock:       # ordered against a concurrent kill switch
+            # a fresh quote for the order's symbol (also shown by /fund/state right away);
+            # without one the broker decides (closing orders queue, opening orders are rejected)
+            prices = None
+            try:
+                q = self.feed.quote(sym)
+            except Exception as ex:
+                logger.info("manual order: no current quote for %s (%s)", sym, getattr(ex, "user_message", ex))
+                q = None
+            if q is not None and (_finite(getattr(q, "price", None)) or 0) > 0:
+                self._last_quotes[sym] = q
+                prices = {sym: q}
+            with self._trade_lock:       # ordered against a concurrent kill switch / the migration freeze
+                self._refuse_if_migrated()
                 if side in ("buy", "short") and self.store.get_halted().get("active"):
                     raise EngineError(409, "The engine is halted — only closing orders (sell/cover) are accepted.")
-                return self.broker.submit(req, now, params)
+                return self.broker.submit(req, now, params, prices)
 
         r = await asyncio.to_thread(submit)
         self._audit(actor, "manual_order", {"stage": "done", "request": request, "result": r.to_dict()}, now)
         return r.to_dict()
 
-    def _risk_from_scores(self, run_id, symbol) -> Optional[RiskAssessment]:
+    def _risk_from_scores(self, run_id, symbol) -> RiskAssessment:
+        """The stored risk card of the recommendation's run. Missing card or
+        size multiplier -> EngineError 409 (never sized without the risk
+        limits, no default multiplier)."""
         for row in self.store.agent_scores(run_id, symbol) if run_id is not None else []:
             if row.get("agent") == "risk":
                 d = row.get("details") or {}
                 mult = _finite(d.get("size_multiplier"))
+                if d.get("unavailable"):
+                    raise EngineError(409, f"The risk card for {symbol} is {d['unavailable']} — this recommendation "
+                                           f"cannot be executed; wait for the next run.")
+                if mult is None:
+                    raise EngineError(409, f"The stored risk assessment for {symbol} is incomplete (no size "
+                                           f"multiplier) — wait for the next run and execute its recommendation.")
                 return RiskAssessment(symbol=symbol, veto=bool(d.get("veto")), veto_short=bool(d.get("veto_short")),
-                                      size_multiplier=1.0 if mult is None else mult,
+                                      size_multiplier=mult,
                                       block_increase=bool(d.get("block_increase")),
                                       block_short_increase=bool(d.get("block_short_increase")),
                                       reasons=list(d.get("reasons") or []))
-        return None
+        raise EngineError(409, f"No stored risk assessment for {symbol} in this recommendation's run — wait for "
+                               f"the next run and execute its recommendation.")
 
     def _execute_sync(self, rec: dict, actor: str) -> List[dict]:
         now = self._now()
         _v, params = self.store.effective_params()
         sym = rec["symbol"]
-        quote = self.feed.quote(sym)
+        try:
+            quote = self.feed.quote(sym)
+        except UserFacingError as ex:        # the data source failed: say why, no stand-in price
+            raise EngineError(503, ex.user_message) from ex
         if quote is None:
             raise EngineError(409, f"No quote for {sym} available right now — try again later.")
         pm = {sym: quote}
+        missing = []
         for p in self.store.get_positions():
-            pm.setdefault(p["symbol"], self._last_quotes.get(p["symbol"]))
-        bars = []
+            # every held position is valued at a CURRENT quote (no last-seen / stored price,
+            # user decision 2026-10-02); without one the execution is refused
+            if p["symbol"] in pm:
+                continue
+            try:
+                q = self.feed.quote(p["symbol"])
+            except UserFacingError:
+                q = None
+            if q is None:
+                missing.append(p["symbol"])
+            pm[p["symbol"]] = q
+        if missing:
+            raise EngineError(503, f"{ValuationPaused(missing)} — the recommendation cannot be executed right now "
+                                   f"(the account cannot be valued); try again later.")
         try:
             bars = list(self.feed.daily_bars(sym, BARS_DAYS) or [])
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.info("manual accept: daily bars for %s failed: %s", sym, getattr(ex, "user_message", ex))
+            bars = []
         atrp = ind.atr_pct(bars[-60:], 14) if len(bars) >= 15 else None
+        if atrp is None:
+            # no unscaled sizing as a stand-in (user decision 2026-10-02)
+            raise EngineError(409, f"No daily bars for {sym} — the position size can't be volatility-scaled; "
+                                   f"try again when market data is available.")
         acct, why = self._read_account(pm, now, params)
         if acct is None:
             raise EngineError(503, f"The paper account state is unreadable ({why}) — try again later.")
         pos = next((p for p in self.broker.positions(pm) if p.symbol == sym), None)
         decision = JudgeDecision(symbol=sym, action=rec["action"], confidence=float(rec["confidence"] or 0.0),
-                                 rationale=rec.get("rationale") or "", source=rec.get("source") or "rules")
+                                 rationale=rec.get("rationale") or "", source=rec.get("source") or "unknown")
         risk = self._risk_from_scores(rec.get("run_id"), sym)
         target, reason = sizing.plan_trade(decision, risk, pos, atrp, params, now, 0, equity=acct.equity,
                                            enforce_min_hold=False, enforce_trade_limit=False)
@@ -1475,6 +1767,7 @@ class FundEngine:
                                    f"recommendation can be executed.")
         if self.store.get_halted().get("active"):
             raise EngineError(409, "The engine is halted — resume it first.")
+        self._refuse_if_migrated()
         return await asyncio.to_thread(self._execute_sync, rec, actor)
 
     # --- backtest -----------------------------------------------------------------------
@@ -1523,8 +1816,10 @@ class FundEngine:
                 errors["start"] = "must be before the end date"
             elif (end - start).days < 30:
                 errors["start"] = "the period must be at least 30 days"
-            elif start < date(1995, 1, 1):
-                errors["start"] = "must be 1995-01-01 or later"
+            elif _history_error(start):
+                # the configured source (Alpaca) has equity history only since 2016 — no
+                # shorter test is run in its place
+                errors["start"] = _history_error(start)
             elif (end - start).days > int(BACKTEST_MAX_YEARS * 365.25) + 1:
                 errors["start"] = f"the period must be at most {BACKTEST_MAX_YEARS} years"
         unknown = [k for k in body if k not in ("symbols", "start", "end")]
@@ -1584,7 +1879,8 @@ class FundEngine:
             missing = [s for s in symbols if not bars.get(s)]
             notes = list(result.get("notes") or [])
             if missing:
-                notes.append("No price data for: " + ", ".join(missing) + " (yfinance / network unavailable?)")
+                notes.append("No price data for: " + ", ".join(missing)
+                             + " (the Alpaca data layer returned no bars — see backend.log for the reason)")
             raise EngineError(409, f"Backtest not possible: {result['error']}. " + " ".join(notes)[:400])
         if capped:
             result = dict(result)
@@ -1641,8 +1937,10 @@ class FundEngine:
             return
 
     def state(self) -> dict:
-        """The GET /fund/state payload (SPEC §11). Sync (DB only, no network:
-        positions without a fresh quote are marked at their stored price)."""
+        """The GET /fund/state payload (SPEC §11). Sync (DB only, no network):
+        positions are valued at the last cycle's quotes; a position without
+        one is listed without a value and the account shows
+        ``valuation_paused`` (never valued at the stored price)."""
         now = self._now()
         version, params = self.store.effective_params()
         session = self._session(now)
@@ -1657,20 +1955,25 @@ class FundEngine:
         for r in rows:
             pm.setdefault(r["symbol"], None)
         acct, acct_err = self._read_account(pm, now, params)
+        paused = acct_err if acct is None and str(acct_err or "").startswith("valuation paused") else None
         if acct is None:
-            # unreadable state: same keys, all null, plus the reason (the UI shows it)
+            # unreadable state / valuation paused: same keys, all null, plus the reason (the UI shows it)
             account = {k: None for k in ACCOUNT_FIELDS}
-            account.update(unreadable=True, error=f"Account state unreadable: {acct_err}")
+            account.update(unreadable=True,
+                           error=(f"Valuation paused: {paused[len('valuation paused: '):]} — account values, "
+                                  f"drawdown check and equity-dependent orders wait for a current quote."
+                                  if paused else f"Account state unreadable: {acct_err}"))
             equity = None
         else:
             account = acct.to_dict()
             account["unreadable"] = False
             equity = acct.equity
+        account["valuation_paused"] = paused
         account["drawdown_stop_pct"] = params.get("drawdown_stop_pct")
         positions = []
         pos_by = {}
         try:
-            pos_views = list(self.broker.positions(pm) or [])
+            pos_views = list(self.broker.positions(pm, True) or [])
         except Exception:
             logger.exception("positions unreadable for /fund/state")
             pos_views = []
@@ -1679,27 +1982,44 @@ class FundEngine:
             positions.append({"symbol": p.symbol, "qty": p.qty, "asset_class": p.asset_class,
                               "instrument": p.instrument, "avg_price": p.avg_price, "last_price": p.last_price,
                               "market_value": p.market_value,
-                              "weight": (p.market_value / equity) if equity and equity > 0 else None,
+                              "weight": (p.market_value / equity)
+                              if (p.market_value is not None and equity and equity > 0) else None,
                               "unrealized_pnl": p.unrealized_pnl, "realized_pnl": p.realized_pnl,
                               "opened_at": p.opened_at, "side": p.side, "borrow_rate_pct": p.borrow_rate_pct})
 
         if not self._last_agents and not self._agents_loaded:
             self._load_agents_from_store()
         recs = self.store.latest_recommendations() or {}
+        if not self._symbol_status_loaded:
+            self._load_symbol_status()
         watch = list(params.get("watchlist") or [])
         syms = watch + [s for s in pos_by if s not in watch]
         symbols = []
         for s in syms:
+            st = self._symbol_status.get(s) or {}
+            judge_na, data_na = st.get("judge_unavailable"), st.get("data_unavailable")
             rec = recs.get(s)
             if rec is not None:
                 rec = dict(rec)
                 pos = pos_by.get(s)
-                rec["current_weight"] = (pos.market_value / equity) if (pos and equity and equity > 0) else 0.0
+                mv = pos.market_value if pos else 0.0
+                rec["current_weight"] = (mv / equity) if (mv is not None and equity and equity > 0) else \
+                    (0.0 if not pos else None)
+                # the last full cycle produced no new recommendation: this one keeps its own
+                # time and says so — it is never shown as if it were fresh (D9, 2026-10-02)
+                rec["not_updated"] = (f"not updated: {judge_na or data_na}" if (judge_na or data_na) else None)
+                # a carried recommendation re-uses an earlier AI judgement (change detection, accepted
+                # design 2026-09-26): ``judged_at`` is that judgement's ORIGINAL time (its provenance),
+                # ``ts`` only when it was carried
+                prov = rec.get("provenance") if isinstance(rec.get("provenance"), dict) else {}
+                rec["judged_at"] = prov.get("generated_at") if rec.get("source") == "carried" else rec.get("ts")
             crypto = fund_params.is_crypto(s)
             symbols.append({"symbol": s, "asset_class": "crypto" if crypto else "equity",
                             "tradable_now": True if crypto else bool(session.get("open")),
                             "quote": _quote_dict(self._last_quotes.get(s)),
-                            "agents": list(self._last_agents.get(s) or []), "recommendation": rec})
+                            "agents": list(self._last_agents.get(s) or []), "recommendation": rec,
+                            "judge_unavailable": judge_na, "data_unavailable": data_na,
+                            "status_run_id": st.get("run_id")})
 
         last_run = None
         if last:
@@ -1718,9 +2038,10 @@ class FundEngine:
             "engine": {"running": self.running, "cycle_in_progress": self.cycle_in_progress,
                        # "session": scheduled full cycles every interval_minutes (US regular session);
                        # "manual_only": US market closed — full cycles only via "Run now" (SPEC §10)
-                       "schedule_mode": "session" if in_session else "manual_only",
-                       "next_run_at": _iso(self.next_run_at) if in_session else None,
-                       "next_session_run_at": _iso(self.next_run_at),
+                       # sandbox profile: no scheduled cycles at all ("manual_only", no next run)
+                       "schedule_mode": "session" if in_session and not self.sandbox_off_reason else "manual_only",
+                       "next_run_at": _iso(self.next_run_at) if in_session and not self.sandbox_off_reason else None,
+                       "next_session_run_at": None if self.sandbox_off_reason else _iso(self.next_run_at),
                        "next_risk_watch_at": _iso(next_watch),
                        "crypto_risk_watch": watch_on,
                        "risk_watch_interval_minutes": self._interval_minutes(params, key="closed_interval_minutes"),
@@ -1740,5 +2061,14 @@ class FundEngine:
             "pending_orders": self.store.pending_orders() or [],
             "symbols": symbols,
             "paper_trading": True,
+            # stage 7 (strategy_platform SPEC §17.1): who trades this (old) paper account
+            "legacy_account": self._legacy_account_state(),
         }
         return json_safe(payload)
+
+    def _legacy_account_state(self) -> dict:
+        st = self.migration_state()
+        if st is None:
+            return {"status": "active", "owner": "old engine", "migrated_at": None, "migration_id": None}
+        return {"status": st.get("status"), "owner": "platform", "migrated_at": st.get("at"),
+                "migration_id": st.get("migration_id")}

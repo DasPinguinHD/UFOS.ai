@@ -17,7 +17,7 @@ from typing import Set
 import websockets
 from websockets.legacy.server import WebSocketServerProtocol, WebSocketServer
 
-from config import WS_HOST, WS_PORT
+from config import WS_PORT
 import api_auth
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ class Broadcaster:
 
     async def start(self) -> None:
         self._server = await websockets.serve(
-            self._handler, api_auth.bind_host(WS_HOST, "WebSocket server"), WS_PORT,
+            self._handler, api_auth.bind_host("WebSocket server"), WS_PORT,
             # Session token + origin check before the handshake (api_auth).
             process_request=api_auth.ws_process_request(self._origins),
             ping_interval=self._ping_interval, ping_timeout=self._ping_timeout,

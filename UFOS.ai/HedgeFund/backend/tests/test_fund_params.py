@@ -5,7 +5,7 @@ python -m unittest tests.test_fund_params -v
 import copy
 import unittest
 
-from fund import params as P
+from strategy_platform.core import params as P
 
 
 class DefaultsTest(unittest.TestCase):

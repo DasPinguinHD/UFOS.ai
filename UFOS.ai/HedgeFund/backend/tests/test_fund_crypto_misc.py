@@ -23,13 +23,13 @@ except ImportError:  # pragma: no cover - run as package
     from tests.fund_testkit import SAT, make_bars
 
 from fund import api as fund_api
-from fund import params as P
+from strategy_platform.core import params as P
 from fund import sizing
-from fund.agents import macro as macro_agent
+from strategy_platform.strategy.features import macro_agent
 from fund.agents import risk as risk_agent
 from fund.agents import technical
 from fund.backtest import run_backtest
-from fund.types import Bar, JudgeDecision, PositionView
+from strategy_platform.core.types import Bar, JudgeDecision, PositionView
 
 
 class CryptoAgentTest(unittest.TestCase):

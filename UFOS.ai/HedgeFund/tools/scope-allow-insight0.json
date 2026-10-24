@@ -1,0 +1,10 @@
+{
+  "label": "insight0",
+  "approved": "user, 2026-10-18 (stage 9b portfolio insights: the MainWindow 'Portfolio Insight' overview card shows the Shadow Account rough guide; scope exception for the files below only; contract HedgeFund/backend/strategy_platform/SPEC.md §20)",
+  "files": [
+    "UFOS.ai/MainWindow.xaml",
+    "UFOS.ai/MainWindow.xaml.cs",
+    "UFOS.ai/Services/IPortfolioInsightProvider.cs"
+  ],
+  "note": "UFOS.ai/Services/IPortfolioInsightProvider.cs is the card's existing provider seam (its own comment: swapping the placeholder provider for a real one is the only change MainWindow needs); the real provider reuses UFOS.ai/Shared/BackendAuth.cs (unchanged)."
+}

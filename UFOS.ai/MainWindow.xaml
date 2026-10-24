@@ -203,6 +203,17 @@
                                                ToolTip="Show the notice on AI-generated content and financial data again"
                                                MouseLeftButtonDown="AiNoticeLink_MouseLeftButtonDown" />
 
+                                    <!-- Central AI budget window (task B: AiBudgetsWindow, one instance; contract
+                                         UFOS.ai/docs/ai-budgets-spec.md §6). Every module backend enforces its own caps. -->
+                                    <Button x:Name="AiBudgetsButton" Click="AiBudgetsButton_Click"
+                                            Template="{StaticResource RoundedDarkButtonTemplate}" Padding="10,5" Margin="0,0,0,12"
+                                            Background="{StaticResource ControlBackgroundBrush}" BorderBrush="{StaticResource ControlBorderBrush}"
+                                            BorderThickness="1" Cursor="Hand" HorizontalAlignment="Stretch"
+                                            AutomationProperties.Name="AI budgets"
+                                            ToolTip="Show and edit the AI spending limits of every module (each module's backend checks them before every AI call)">
+                                        <TextBlock Text="AI budgets…" FontSize="11.5" Foreground="{StaticResource PrimaryForegroundBrush}" />
+                                    </Button>
+
                                     <!-- Python environments of the module backends (Services/PythonEnvManager.cs).
                                          Required installs happen automatically when a module starts its backend;
                                          optional upgrades only via this button. -->
@@ -218,7 +229,7 @@
                                                     Template="{StaticResource RoundedDarkButtonTemplate}" Padding="10,5" Margin="0,6,0,0"
                                                     Background="{StaticResource ControlBackgroundBrush}" BorderBrush="{StaticResource ControlBorderBrush}"
                                                     BorderThickness="1" Cursor="Hand"
-                                                    ToolTip="Runs pip install -r requirements.txt --upgrade for every module backend, one after another. Running backends are stopped first; each module starts its backend again the next time it needs it.">
+                                                    ToolTip="For every module backend, one after another: regenerates its requirements.lock with the newest versions requirements.txt allows (make_lockfile.py --update, needs internet), then installs exactly that lock (pip --require-hashes). Running backends are stopped first; each module starts its backend again the next time it needs it.">
                                                 <TextBlock x:Name="UpdatePythonPackagesButtonText" Text="Update Python packages" FontSize="11.5"
                                                            Foreground="{StaticResource PrimaryForegroundBrush}" />
                                             </Button>
@@ -299,18 +310,49 @@
                         </StackPanel>
                     </Button>
 
-                    <!-- Portfolio Insight -->
-                    <Button Focusable="False" Padding="14,12" Margin="0,0,14,0"
+                    <!-- Portfolio Insight (HedgeFund stage 9b, HedgeFund/backend/strategy_platform/SPEC.md §20.3): live headline figures
+                         from the HedgeFund backend (GET /v2/insights/summary — ONLY your imported broker statements; per currency, no FX),
+                         filled by RefreshPortfolioInsightCardAsync. No stand-in numbers; click → Hedge Fund → Monitoring → Portfolio insights. -->
+                    <Button x:Name="PortfolioInsightCardButton" Click="PortfolioInsightCard_Click" Cursor="Hand" Padding="14,12" Margin="0,0,14,0"
                             Template="{StaticResource OverviewCardButtonTemplate}" FocusVisualStyle="{x:Null}"
-                            Background="{StaticResource ModulePanelBackgroundBrush}" BorderBrush="{StaticResource AccentBorderBrush}" BorderThickness="1">
+                            Background="{StaticResource ModulePanelBackgroundBrush}" BorderBrush="{StaticResource AccentBorderBrush}" BorderThickness="1"
+                            AutomationProperties.Name="Portfolio Insight: open Hedge Fund, Monitoring, Portfolio insights"
+                            ToolTip="Your imported broker statements (Hedge Fund → Shadow Account) — click for the details in Hedge Fund → Monitoring → Portfolio insights">
+                        <!-- Compact layout (user feedback 2026-10-19 "zu unübersichtlich"): figure rows (number left, label right) built in
+                             ApplyPortfolioInsightCard; depot count, price dates, computed time and the full label go into the ToolTip.
+                             States (not running / starting / no imports / not available) use Headline + Detail: at most two short lines. -->
                         <StackPanel>
-                            <TextBlock Text="PORTFOLIO INSIGHT" FontSize="10" FontFamily="Consolas" Foreground="{StaticResource MutedForegroundBrush}" Margin="0,0,0,6" />
-                            <TextBlock x:Name="PortfolioInsightHeadlineText" Text="Diversification improved 4%" FontSize="13.5" FontWeight="SemiBold" TextWrapping="Wrap"
+                            <!-- Sandbox profile (HedgeFund strategy_platform/SPEC.md "Sandbox profile", 2026-10-23): small amber "SANDBOX" chip
+                                 while the backend's GET /health says mode == "sandbox" (set in ApplyPortfolioInsightCard). -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                <TextBlock x:Name="PortfolioInsightCaptionText" Text="PORTFOLIO INSIGHT" FontSize="10" FontFamily="Consolas" Foreground="{StaticResource MutedForegroundBrush}" VerticalAlignment="Center" />
+                                <Border x:Name="PortfolioInsightSandboxChip" Visibility="Collapsed" Background="#FFFFA51F" CornerRadius="3" Padding="5,0,5,1" Margin="8,0,0,0"
+                                        VerticalAlignment="Center" ToolTip="The Hedge Fund backend runs in SANDBOX mode: copies of the databases, brokers blocked. These figures come from the sandbox copy."
+                                        AutomationProperties.Name="Sandbox mode: the Hedge Fund backend runs on sandbox copies, brokers blocked">
+                                    <TextBlock Text="SANDBOX" FontSize="9.5" FontFamily="Consolas" FontWeight="Bold" Foreground="#FF000000" />
+                                </Border>
+                            </StackPanel>
+                            <StackPanel x:Name="PortfolioInsightRowsPanel" Visibility="Collapsed" />
+                            <TextBlock x:Name="PortfolioInsightHeadlineText" Text="Loading your insights…" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"
                                        Foreground="{StaticResource PrimaryForegroundBrush}" />
-                            <TextBlock x:Name="PortfolioInsightDetailText" Text="Illustrative sample · no portfolio connected yet" FontSize="10.5" Foreground="{StaticResource QuietForegroundBrush}" Margin="0,6,0,0" />
+                            <TextBlock x:Name="PortfolioInsightDetailText" Text="" FontSize="10.5" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="30"
+                                       Foreground="{StaticResource QuietForegroundBrush}" Margin="0,4,0,0" />
+                            <TextBlock x:Name="PortfolioInsightWarningText" Text="" FontSize="10.5" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                       Foreground="{StaticResource CautionBrush}" Margin="0,6,0,0" Visibility="Collapsed" />
+                            <TextBlock x:Name="PortfolioInsightLabelText" Text="Not tax data — see broker's annual statement" FontSize="9.5" TextWrapping="NoWrap"
+                                       TextTrimming="CharacterEllipsis" Foreground="{StaticResource QuietForegroundBrush}" Margin="0,6,0,0" Visibility="Collapsed" />
                         </StackPanel>
                     </Button>
                 </UniformGrid>
+
+                <!-- Data sources of the overview cards (security/licence audit S10-A2 L8): quotes from Yahoo Finance's
+                     chart endpoint (Services/MarketQuoteService.cs), news from MarketWatch / Dow Jones RSS and the
+                     Yahoo Finance RSS index (Services/NewsFeedService.cs). Sits in the 18 px gap row above MODULES. -->
+                <TextBlock Grid.Row="4" VerticalAlignment="Center" FontSize="9.5" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                           Foreground="{StaticResource QuietForegroundBrush}"
+                           Text="Data: quotes via Yahoo Finance (public chart endpoint) · news via MarketWatch / Dow Jones and Yahoo Finance RSS feeds — headlines and content © their publishers; unofficial use, not affiliated."
+                           ToolTip="Quotes: Yahoo Finance chart endpoint (query1.finance.yahoo.com), unofficial and for personal use. News: MarketWatch RSS feeds (Dow Jones, feeds.content.dowjones.io) and the Yahoo Finance RSS index; each headline links to its publisher. UFOS.ai is not affiliated with Yahoo or Dow Jones."
+                           AutomationProperties.Name="Data sources of the overview cards" />
 
                 <TextBlock Grid.Row="5" Text="MODULES" FontSize="11" FontFamily="Consolas" FontWeight="SemiBold"
                            Foreground="{StaticResource SecondaryForegroundBrush}" Margin="0,0,0,10" />

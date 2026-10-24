@@ -11,12 +11,12 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from fund import params as P
+from strategy_platform.core import params as P
 from fund import store
-from fund import broker as broker_mod
-from fund.broker import PaperBroker, StateUnavailable, fill_values
-from fund.market import FakeFeed
-from fund.types import Bar, OrderRequest, Quote
+from strategy_platform.execution import paper_broker as broker_mod
+from strategy_platform.execution.paper_broker import PaperBroker, StateUnavailable, fill_values
+from strategy_platform.data.market_feed import FakeFeed
+from strategy_platform.core.types import Bar, OrderRequest, Quote
 from newsroom import db
 
 FRI = datetime(2026, 10, 2, 14, 0, tzinfo=timezone.utc)      # Friday, session open (10:00 EDT)

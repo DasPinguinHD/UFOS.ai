@@ -18,8 +18,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from newsroom import db
 
-from . import params as fund_params
-from .types import AgentSignal, Bar
+from strategy_platform.core import params as fund_params
+from strategy_platform.core.types import AgentSignal, Bar
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ META_LAST_DIVIDEND = "fund.last_dividend_date"
 META_AI_SPEND = "fund.ai_spend"
 META_LAST_FUNDING = "fund.last_funding_at"     # UTC iso of the last perp funding window booked
 META_CRYPTO_ROLLOUT = "fund.crypto_rollout"    # one-time watchlist migration done (iso timestamp)
+META_MIGRATION = "fund.migrated_to_platform"   # stage 7 (strategy_platform SPEC §17.9): {status, migration_id, at}
 META_BARS_FETCHED = "fund.bars_fetched:"       # + SYMBOL -> {"at": iso, "days": n}
 
 ORDER_UPDATABLE = ("status", "qty", "fill_price", "fees", "filled_at", "reject_reason", "notional",
@@ -420,7 +421,7 @@ def orders_on_trading_day(day: str, origin: Optional[str] = None,
     market.trading_day(filled_at or ts): a fill during the session counts for
     that day, an order queued while the market is closed (weekend, night)
     counts for the session it will execute in (SPEC §9 max_trades_per_day)."""
-    from . import market  # stdlib-only module; imported here to keep store's import light
+    from strategy_platform.data import market_feed as market  # stdlib-only; imported here (light store import)
     d = date.fromisoformat(str(day)[:10])
     lo = (d - timedelta(days=7)).isoformat()      # long weekends / holidays before the session
     hi = (d + timedelta(days=2)).isoformat()
@@ -832,6 +833,24 @@ def get_halted() -> dict:
 def set_halted(active: bool, reason: Optional[str] = None, at=None) -> bool:
     return db.meta_set(META_HALTED, _dumps({"active": bool(active), "reason": reason if active else None,
                                             "at": _iso(at) if active else None}))
+
+
+def get_migration_state() -> Optional[dict]:
+    """Stage 7 (strategy_platform/SPEC.md §17.1, §17.9): ``{"status": "migrating"|"migrated",
+    "migration_id", "at"}`` once the paper account was (being) migrated to the Strategy Platform —
+    the old engine then no longer trades it; None before."""
+    v = _loads(db.meta_get(META_MIGRATION))
+    if not isinstance(v, dict) or v.get("status") not in ("migrating", "migrated"):
+        return None
+    return {"status": v["status"], "migration_id": v.get("migration_id"), "at": v.get("at")}
+
+
+def set_migration_state(state: Optional[dict]) -> bool:
+    """Writes (or with None clears) the migration flag; True when stored."""
+    if state is None:      # cleared (crash recovery: nothing was moved) — newsroom meta keys are never deleted
+        return db.meta_set(META_MIGRATION, _dumps({"status": "active", "migration_id": None, "at": None}))
+    return db.meta_set(META_MIGRATION, _dumps({"status": state["status"], "migration_id": state.get("migration_id"),
+                                               "at": state.get("at")}))
 
 
 def get_peak_equity() -> Optional[float]:

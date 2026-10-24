@@ -4,10 +4,9 @@ Security-by-default rule (CLAUDE.md, 2026-09-25). Each module keeps its own
 copy of this file (compartmentalization) — keep the copies in sync:
 Global Monitoring/backend, HedgeFund/backend, LiveStreamAgent/backend.
 
-1. Loopback by default — bind_host() returns 127.0.0.1 unless the user opts
-   in with ALLOW_REMOTE_ACCESS=true in .env. An old .env that still says
-   WS_HOST=0.0.0.0 is therefore ignored (with a warning) instead of silently
-   exposing the backend to the local network.
+1. Loopback only — bind_host() always returns 127.0.0.1. The former
+   ALLOW_REMOTE_ACCESS opt-in and the WS_HOST / HTTP_HOST switches existed for
+   containers and were removed with Docker (user decision 2026-10-24).
 2. Per-start session token — init_token() creates a fresh random token at
    every backend start; publish_token() writes it to data/api-token
    (git-ignored) once the servers are bound. The app
@@ -20,11 +19,15 @@ Global Monitoring/backend, HedgeFund/backend, LiveStreamAgent/backend.
    WebView page; the others: none), so a random website open in the user's
    browser can't call the API — not even "simple" requests that skip the
    CORS preflight. Native clients (the WPF app) send no Origin.
+4. Host check (stage 10 security audit L2, 2026-10-24) — every HTTP request
+   and WebSocket handshake, /health and /version included, must carry
+   Host: 127.0.0.1:<port> or localhost:<port>, <port> being the port the
+   server actually listens on (read from the socket). Anything else (a DNS-
+   rebinding page, another host name) gets 403 "host not allowed"; when the
+   port can't be read the request is refused too (fail closed).
 
-Residual risks (documented on purpose): the token file is readable by any
-program running as the same Windows user; with ALLOW_REMOTE_ACCESS=true the
-traffic (incl. the token) is unencrypted http/ws — only use it on a trusted
-network.
+Residual risk (documented on purpose): the token file is readable by any
+program running as the same Windows user.
 """
 import hmac
 import logging
@@ -41,31 +44,17 @@ TOKEN_QUERY = "token"
 TOKEN_FILE = Path(__file__).resolve().parent / "data" / "api-token"
 PUBLIC_PATHS = frozenset({"/health", "/version"})
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+HOST_REFUSED = "host not allowed"
 
 _token = None
 
 
-def _truthy(value) -> bool:
-    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+BIND_HOST = "127.0.0.1"
 
 
-def remote_access_allowed() -> bool:
-    return _truthy(os.getenv("ALLOW_REMOTE_ACCESS"))
-
-
-def bind_host(configured, what: str) -> str:
-    """The address a server may listen on: loopback unless ALLOW_REMOTE_ACCESS=true."""
-    host = str(configured or "").strip() or "127.0.0.1"
-    if host in LOOPBACK_HOSTS:
-        return host
-    if remote_access_allowed():
-        logger.warning("%s listens on %s (ALLOW_REMOTE_ACCESS=true): reachable from other machines. "
-                       "Traffic is NOT encrypted (plain http/ws) — use only on a trusted network. "
-                       "The session token is still required.", what, host)
-        return host
-    logger.warning("%s: configured host %s ignored — listening on 127.0.0.1 only. "
-                   "Set ALLOW_REMOTE_ACCESS=true in .env to expose it on the network.", what, host)
-    return "127.0.0.1"
+def bind_host(what: str = "server") -> str:
+    """The address every server of this backend listens on: 127.0.0.1, always (no remote access since stage 10)."""
+    return BIND_HOST
 
 
 def allowed_origins(default=()) -> frozenset:
@@ -121,8 +110,30 @@ def _query_token(path: str) -> str:
         return ""
 
 
-def check(method: str, path: str, headers, origins: frozenset, websocket: bool = False):
-    """(status, message) when the request must be refused, else None. Pure — unit tested."""
+def allowed_hosts(port) -> frozenset:
+    """Host header values accepted by a server listening on ``port`` (point 4 of the module docstring)."""
+    p = int(port)
+    return frozenset({f"127.0.0.1:{p}", f"localhost:{p}"})
+
+
+def host_allowed(host_header, port) -> bool:
+    return str(host_header or "").strip().lower() in allowed_hosts(port)
+
+
+def local_port(transport):
+    """The local port of a connection's transport (``get_extra_info("sockname")``), or None."""
+    try:
+        sock = transport.get_extra_info("sockname") if transport is not None else None
+        return int(sock[1]) if sock else None
+    except Exception:
+        return None
+
+
+def check(method: str, path: str, headers, origins: frozenset, websocket: bool = False, port=None):
+    """(status, message) when the request must be refused, else None. Pure — unit tested. ``port`` (the server's
+    listening port) enables the Host check; the middleware / WebSocket hook always pass it."""
+    if port is not None and not host_allowed(headers.get("Host"), port):
+        return HTTPStatus.FORBIDDEN, HOST_REFUSED
     origin = headers.get("Origin")
     if origin is not None and origin not in origins:
         return HTTPStatus.FORBIDDEN, "origin not allowed"
@@ -155,7 +166,9 @@ def http_middleware(origins: frozenset):
     async def _auth(request, handler):
         origin = request.headers.get("Origin")
         extra = cors_headers(origin, origins)
-        refused = check(request.method, request.path_qs, request.headers, origins)
+        port = local_port(getattr(request, "transport", None))
+        refused = ((HTTPStatus.FORBIDDEN, HOST_REFUSED) if port is None else
+                   check(request.method, request.path_qs, request.headers, origins, port=port))
         if refused:
             status, message = refused
             logger.warning("Refused %s %s from %s: %s (origin %s)", request.method, request.path,
@@ -180,7 +193,16 @@ def http_middleware(origins: frozenset):
 def ws_process_request(origins: frozenset):
     """process_request hook for websockets.serve (websockets >= 14 API)."""
     def _process_request(connection, request):
-        refused = check("GET", request.path, request.headers, origins, websocket=True)
+        port = None
+        try:
+            addr = getattr(connection, "local_address", None)
+            port = int(addr[1]) if addr else None
+        except Exception:
+            port = None
+        if port is None:
+            port = local_port(getattr(connection, "transport", None))
+        refused = ((HTTPStatus.FORBIDDEN, HOST_REFUSED) if port is None else
+                   check("GET", request.path, request.headers, origins, websocket=True, port=port))
         if refused:
             status, message = refused
             logger.warning("Refused WebSocket connection from %s: %s (origin %s)",

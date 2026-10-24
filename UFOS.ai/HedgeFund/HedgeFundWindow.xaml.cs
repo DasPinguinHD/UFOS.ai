@@ -14,7 +14,9 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using UFOS.ai.HedgeFund.Fund;
+using UFOS.ai.HedgeFund.MarketResearch;
 using UFOS.ai.HedgeFund.Newsroom;
+using UFOS.ai.HedgeFund.Platform;
 using UFOS.ai.Logging;
 using UFOS.ai.Shared;
 
@@ -24,7 +26,7 @@ namespace UFOS.ai.HedgeFund
     {
         // Live dashboard of the autonomous PAPER-TRADING loop (backend/fund, contract:
         // backend/fund/SPEC.md §11/§13). Everything here is simulated — the backend has no
-        // live-trading code path at all. Proof of concept, not investment advice.
+        // live-trading code path at all. Paper only (notice: AiContent.PaperExecutionNotice).
         //
         // - Polls GET /fund/state every 5 s while the window is visible; engine settings
         //   (GET/PUT /fund/params, debounced 600 ms), run history, the equity curve and the
@@ -34,7 +36,11 @@ namespace UFOS.ai.HedgeFund
         // - AI labelling (CLAUDE.md): the judge's verdict and the sentiment agent carry the
         //   "✦ AI-GENERATED · model · time" badge, caveat, violet container, cost line and a
         //   screen-reader name starting with "AI-generated" whenever their provenance marks
-        //   them as LLM output; rule output is shown as "Rule-based · no AI".
+        //   them as LLM output; "Rule-based · no AI" only for old rows of the former rule-based
+        //   judge, which no longer exists (no-fallback rule, D9 2026-10-02).
+        // - D9 (2026-10-02): symbols[].judge_unavailable / data_unavailable and
+        //   recommendation.not_updated are shown as status (amber/red notice, chip marker), never as a
+        //   verdict; an older recommendation keeps its own time and says "not updated: …".
         // - Backend lifetime (SPEC §14): closing this window no longer stops the backend; it
         //   lives as long as the UFOS.ai app (Job Object) or, opt-in, detached.
         // - The Financial Newsroom (toolbar button, Newsroom/) is unchanged.
@@ -55,6 +61,12 @@ namespace UFOS.ai.HedgeFund
         private DispatcherTimer? _stateTimer;
         private readonly DispatcherTimer _paramsDebounce;
         private FinancialNewsroomWindow? _newsroomWindow;
+        private KeysAndDataWindow? _keysWindow;
+        private LibraryView? _libraryView; // Strategy Platform stage 2: created on first use of the rail's "Library"
+        // Market Research MR1: the ONE research view, created on first use of the rail's "Research"; it lives in
+        // ResearchViewHost or, while popped out, in _researchPopout (never both, never a second instance).
+        private ResearchView? _researchView;
+        private ResearchPopoutWindow? _researchPopout;
         private readonly EquityChart _equityChart = new();
         private readonly Dictionary<Slider, (string Key, bool IsInt)> _sliderKeys = new();
         private readonly bool _uiReady;
@@ -106,6 +118,13 @@ namespace UFOS.ai.HedgeFund
         public HedgeFundWindow()
         {
             InitializeComponent();
+            FundUi.EnsureWheelScrolling();   // retest 2026-10-23: one wheel notch ≈ 48 px in every Hedge Fund page
+            // user request 2026-10-23: start maximized on the monitor it opens on, within the work area (taskbar visible); the
+            // maximized look is applied once (WPF raises no StateChanged for the initial state)
+            UFOS.ai.Shared.WindowMaximize.ConstrainToWorkArea(this);
+            UFOS.ai.Shared.WindowMaximize.StartMaximized(this);
+            _lastNonMinimizedState = WindowState.Maximized;
+            Window_StateChanged(this, EventArgs.Empty);
 
             _paramsDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
             _paramsDebounce.Tick += async (_, _) =>
@@ -116,8 +135,8 @@ namespace UFOS.ai.HedgeFund
             EquityChartHost.Child = _equityChart;
 
             // "▶ Run now" can call the AI judge / sentiment agent -> AI trigger tooltip.
-            _runNowTooltip = "Runs one engine cycle now (agents + judge). " + AiContent.TriggerTooltip +
-                             " Stays within the AI daily budget; without budget the judge is rule-based.";
+            _runNowTooltip = "Runs one engine cycle now (Council of AIs: agents + judge). " + AiContent.TriggerTooltip +
+                             " Stays within the AI daily budget; when it is reached, no new verdicts are made (shown as \"not updated\").";
             RunNowButton.ToolTip = _runNowTooltip;
             AutomationProperties.SetHelpText(RunNowButton, AiContent.TriggerTooltip);
 
@@ -162,6 +181,7 @@ namespace UFOS.ai.HedgeFund
 
             MuteToastsCheck.IsChecked = FundSettings.MuteNotifications;
             KeepRunningCheck.IsChecked = FundSettings.IsDetached;
+            StartWithAppCheck.IsChecked = FundSettings.StartWithApp;   // stage 9b (SPEC §20.8)
             SetConnectedUi(false);
 
             _uiReady = true;
@@ -192,8 +212,16 @@ namespace UFOS.ai.HedgeFund
 
             // Windows toasts for engine events: app-wide, keeps running after this window closes.
             FundNotifications.EnsureStarted();
+            ResearchAlertNotifier.EnsureStarted(); // Market Research MR7: alert toasts while UFOS.ai runs (MarketResearch/ResearchAlertNotifier.cs)
             FundNotifications.AutopilotSwitchedOff += OnAutopilotSwitchedOff;
             _autopilotOffEvent = FundNotifications.LastAutopilotEvent;
+            // Strategy Platform stage 9 (SPEC §19.13): monitoring alert toasts, app-wide (Platform/MonitoringNotifier.cs); the rail
+            // badge shows the alerts not yet seen; a toast clicked while no Hedge Fund window was open opens Monitoring here.
+            MonitoringNotifier.EnsureStarted();
+            MonitoringNotifier.Changed += MonitoringNotifier_Changed;
+            UpdateMonitoringBadge(MonitoringNotifier.Unacked);
+            if (MonitoringNotifier.TakePendingOpen(out var pendingAlertId))
+                Dispatcher.BeginInvoke(new Action(() => ShowMonitoring(pendingAlertId)), DispatcherPriority.Loaded);
 
             _stateTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = StatePollInterval };
             _stateTimer.Tick += async (_, _) => await PollTickAsync();
@@ -222,8 +250,22 @@ namespace UFOS.ai.HedgeFund
 
             NewsroomBackend.StatusChanged -= OnNewsroomBackendStatusChanged;
             FundNotifications.AutopilotSwitchedOff -= OnAutopilotSwitchedOff;
+            MonitoringNotifier.Changed -= MonitoringNotifier_Changed;
             _newsroomWindow?.Close();
             _newsroomWindow = null;
+            _keysWindow?.Close();
+            _keysWindow = null;
+            _libraryView?.CloseEditors();
+            _studioView?.Shutdown();   // Strategy Studio: stops its run-status poll
+            _loopView?.Shutdown();     // Discovery loop (stage 6): stops its 2 s poll
+            _tradingView?.Shutdown();  // Portfolio & Trading (stage 7): stops its 5 s poll
+            _monitoringView?.Shutdown(); // Monitoring (stage 9): stops its 10 s poll (the app-wide toast notifier keeps running)
+            _shadowView?.Shutdown();     // Shadow Account (stage 9): no poll; ignores late answers
+            // Market Research: stop its polling for good, then close the pop-out (its Closed handler sees _closed
+            // and does not move the view back).
+            _researchView?.Shutdown();
+            _researchPopout?.Close();
+            _researchPopout = null;
             // SPEC §14 (2026-09-26): closing this window no longer stops the backend — the
             // paper-trading engine keeps running as long as the UFOS.ai app does (Job Object in
             // NewsroomBackend), or beyond that in the opt-in "detached" mode.
@@ -288,14 +330,40 @@ namespace UFOS.ai.HedgeFund
         // its invisible resize frame hangs off the screen edges, cutting off the title
         // bar and the top corners. Pad the content by that frame while maximized and
         // drop the rounded corners there (same fix as Newsroom/FinancialNewsroomWindow).
+        /// <summary>True once the window is closing (Window_Closing ran) — the main app then opens a new window instead.</summary>
+        public bool IsClosingOrClosed => _closed;
+
+        /// <summary>The last state that was not minimized (Normal / Maximized) — restored by <see cref="BringToFront"/>.</summary>
+        private WindowState _lastNonMinimizedState = WindowState.Normal;
+
+        /// <summary>
+        /// Live click-test 2026-10-22: the MainWindow tile and the insight card bring an open Hedge Fund window back — a minimized
+        /// window returns to its last non-minimized state (Normal or Maximized), then it is activated and focused. Never throws.
+        /// </summary>
+        public void BringToFront()
+        {
+            if (_closed) return;
+            try
+            {
+                if (!IsVisible) Show();
+                if (WindowState == WindowState.Minimized) WindowState = _lastNonMinimizedState;
+                Activate();
+                Focus();
+            }
+            catch (Exception ex)
+            {
+                try { UFOS.ai.Logging.AppLog.Warn("HedgeFund", "Could not bring the Hedge Fund window to the front.", ex); } catch { }
+            }
+        }
+
         private void Window_StateChanged(object? sender, EventArgs e)
         {
+            if (WindowState != WindowState.Minimized) _lastNonMinimizedState = WindowState;
             if (WindowState == WindowState.Maximized)
             {
-                var frame = SystemParameters.WindowResizeBorderThickness;
-                const double paddedBorder = 4; // SM_CXPADDEDBORDER, not exposed by SystemParameters
-                RootBorder.Margin = new Thickness(frame.Left + paddedBorder, frame.Top + paddedBorder,
-                                                  frame.Right + paddedBorder, frame.Bottom + paddedBorder);
+                // 2026-10-23: the WM_GETMINMAXINFO hook (Shared/WindowMaximize.cs) fits the maximized window to the work area —
+                // no frame padding (the old padding left a gap and the window covered the taskbar)
+                RootBorder.Margin = new Thickness(0);
                 RootBorder.CornerRadius = new CornerRadius(0);
                 TitleBarBorder.CornerRadius = new CornerRadius(0);
             }
@@ -324,6 +392,256 @@ namespace UFOS.ai.HedgeFund
         private void NewsroomMenuButton_Click(object sender, RoutedEventArgs e)
         {
             OpenNewsroom(null);
+        }
+
+        // ---------- Keys & data sources (Strategy Platform stage 1, Platform/KeysAndDataWindow) ----------
+
+        /// <summary>Opens (or brings to front) the single "Keys &amp; data sources" window.</summary>
+        private void KeysAndDataButton_Click(object sender, RoutedEventArgs e)
+        {
+            OpenKeysWindow(brokers: false);
+        }
+
+        /// <summary>
+        /// Opens (or brings to front) the single Keys &amp; data window — "Settings"; with <paramref name="brokers"/> it scrolls to its
+        /// Brokers section (Strategy Platform stage 8, SPEC §18.12 — "Brokers…" in Portfolio &amp; Trading).
+        /// </summary>
+        private void OpenKeysWindow(bool brokers)
+        {
+            if (_keysWindow == null)
+            {
+                var window = new KeysAndDataWindow { Owner = this };
+                window.Closed += (_, _) =>
+                {
+                    if (ReferenceEquals(_keysWindow, window)) _keysWindow = null;
+                };
+                // live click-test 2026-10-22: a connect / resolve / route change in Settings reloads Portfolio & Trading at once
+                window.BrokersChanged += () => _tradingView?.RequestRefresh();
+                _keysWindow = window;
+                if (brokers) window.Loaded += (_, _) => window.Dispatcher.BeginInvoke(new Action(window.ShowBrokersSection), System.Windows.Threading.DispatcherPriority.Loaded);
+                window.Show();
+            }
+            else
+            {
+                if (_keysWindow.WindowState == WindowState.Minimized) _keysWindow.WindowState = WindowState.Normal;
+                _keysWindow.Activate();
+                if (brokers) _keysWindow.ShowBrokersSection();
+            }
+        }
+
+        // ---------- Navigation rail (Strategy Platform stage 2, SPEC §7.12) ----------
+
+        // Overview = the dashboard (OverviewScroll), Library = Platform/LibraryView (created lazily).
+        // Only visibility changes: the clock, the 5 s state poll and the params debounce keep running
+        // while the Library is shown (PollTickAsync depends on the WINDOW being visible), so the
+        // Overview — banners, kill-switch state, positions — is current whenever the user returns.
+        // The toolbar row (Newsroom, Keys & data, Run now, Kill switch) is outside this area and
+        // stays pinned in both views.
+        // Research (Market Research MR1) = MarketResearch/ResearchView, created lazily like the Library; it polls its
+        // feed status only while it is visible, so switching away stops that poll and nothing else.
+        // Loop (Strategy Platform stage 6) = Platform/LoopView, created lazily; it polls the selected loop only while visible.
+        // Portfolio & Trading (Strategy Platform stage 7) = Platform/TradingView, created lazily; it polls only while visible.
+        private async void NavButton_Checked(object sender, RoutedEventArgs e)
+        {
+            if (OverviewScroll == null || LibraryHost == null || ResearchHost == null || StudioHost == null || LoopHost == null || TradingHost == null
+                || MonitoringHost == null || ShadowHost == null) return; // raised during InitializeComponent
+            if (!ReferenceEquals(sender, NavTradingButton)) TradingHost.Visibility = Visibility.Collapsed;
+            // Strategy Platform stage 9 (SPEC §19.13): Monitoring + Shadow Account (HedgeFundWindow.Monitoring.cs)
+            if (!ReferenceEquals(sender, NavMonitoringButton)) MonitoringHost.Visibility = Visibility.Collapsed;
+            if (!ReferenceEquals(sender, NavShadowButton)) ShadowHost.Visibility = Visibility.Collapsed;
+            if (ReferenceEquals(sender, NavLibraryButton))
+            {
+                if (_libraryView == null)
+                {
+                    _libraryView = new LibraryView();
+                    LibraryHost.Child = _libraryView;
+                }
+                OverviewScroll.Visibility = Visibility.Collapsed;
+                ResearchHost.Visibility = Visibility.Collapsed;
+                StudioHost.Visibility = Visibility.Collapsed;
+                LoopHost.Visibility = Visibility.Collapsed;
+                LibraryHost.Visibility = Visibility.Visible;
+                // Studio "Open in Library" (SPEC §13.3): select that strategy instead of the last selection
+                var pending = _pendingLibraryStrategyId;
+                _pendingLibraryStrategyId = null;
+                await (pending != null ? _libraryView.ShowStrategyAsync(pending) : _libraryView.ActivateAsync());
+            }
+            else if (ReferenceEquals(sender, NavStudioButton))
+            {
+                EnsureStudioView();
+                OverviewScroll.Visibility = Visibility.Collapsed;
+                LibraryHost.Visibility = Visibility.Collapsed;
+                ResearchHost.Visibility = Visibility.Collapsed;
+                LoopHost.Visibility = Visibility.Collapsed;
+                StudioHost.Visibility = Visibility.Visible;
+                await _studioView!.ActivateAsync();
+            }
+            else if (ReferenceEquals(sender, NavLoopButton))
+            {
+                EnsureLoopView();
+                OverviewScroll.Visibility = Visibility.Collapsed;
+                LibraryHost.Visibility = Visibility.Collapsed;
+                ResearchHost.Visibility = Visibility.Collapsed;
+                StudioHost.Visibility = Visibility.Collapsed;
+                LoopHost.Visibility = Visibility.Visible;
+                await _loopView!.ActivateAsync();
+            }
+            else if (ReferenceEquals(sender, NavTradingButton))
+            {
+                EnsureTradingView();
+                OverviewScroll.Visibility = Visibility.Collapsed;
+                LibraryHost.Visibility = Visibility.Collapsed;
+                ResearchHost.Visibility = Visibility.Collapsed;
+                StudioHost.Visibility = Visibility.Collapsed;
+                LoopHost.Visibility = Visibility.Collapsed;
+                TradingHost.Visibility = Visibility.Visible;
+                await _tradingView!.ActivateAsync();
+            }
+            else if (ReferenceEquals(sender, NavMonitoringButton))
+            {
+                EnsureMonitoringView();
+                OverviewScroll.Visibility = Visibility.Collapsed;
+                LibraryHost.Visibility = Visibility.Collapsed;
+                ResearchHost.Visibility = Visibility.Collapsed;
+                StudioHost.Visibility = Visibility.Collapsed;
+                LoopHost.Visibility = Visibility.Collapsed;
+                MonitoringHost.Visibility = Visibility.Visible;
+                await _monitoringView!.ActivateAsync();
+            }
+            else if (ReferenceEquals(sender, NavShadowButton))
+            {
+                EnsureShadowView();
+                OverviewScroll.Visibility = Visibility.Collapsed;
+                LibraryHost.Visibility = Visibility.Collapsed;
+                ResearchHost.Visibility = Visibility.Collapsed;
+                StudioHost.Visibility = Visibility.Collapsed;
+                LoopHost.Visibility = Visibility.Collapsed;
+                ShadowHost.Visibility = Visibility.Visible;
+                await _shadowView!.ActivateAsync();
+            }
+            else if (ReferenceEquals(sender, NavResearchButton))
+            {
+                EnsureResearchView();
+                OverviewScroll.Visibility = Visibility.Collapsed;
+                LibraryHost.Visibility = Visibility.Collapsed;
+                StudioHost.Visibility = Visibility.Collapsed;
+                LoopHost.Visibility = Visibility.Collapsed;
+                ResearchHost.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                LibraryHost.Visibility = Visibility.Collapsed;
+                ResearchHost.Visibility = Visibility.Collapsed;
+                StudioHost.Visibility = Visibility.Collapsed;
+                LoopHost.Visibility = Visibility.Collapsed;
+                OverviewScroll.Visibility = Visibility.Visible;
+            }
+        }
+
+        // ---------- Market Research section + pop-out (MR1, plan "Integrated architecture") ----------
+
+        private void EnsureResearchView()
+        {
+            if (_researchView != null) return;
+            _researchView = new ResearchView();
+            _researchView.PopOutToggleRequested += ResearchView_PopOutToggleRequested;
+            _researchView.OrderHandOverRequested += ResearchView_OrderHandOverRequested; // MR8: Buy/Sell → manual paper order panel
+            ResearchViewHost.Child = _researchView;
+        }
+
+        // "⧉ Pop out" in the section moves the SAME view into the pop-out window; the same button in the pop-out
+        // ("Return to Hedge Fund window") closes it, and ResearchPopout_Closed moves the view back.
+        private void ResearchView_PopOutToggleRequested(object? sender, EventArgs e)
+        {
+            if (_researchPopout != null)
+            {
+                _researchPopout.Close();
+                return;
+            }
+            if (_researchView == null || _closed) return;
+
+            ResearchViewHost.Child = null; // a visual has one parent: detach before re-parenting
+            var window = new ResearchPopoutWindow { Owner = this };
+            window.Attach(_researchView);
+            _researchView.IsPoppedOut = true;
+            window.Closed += ResearchPopout_Closed;
+            _researchPopout = window;
+            ResearchPoppedOutPanel.Visibility = Visibility.Visible;
+            window.Show();
+        }
+
+        private void ResearchPopout_Closed(object? sender, EventArgs e)
+        {
+            if (sender is not ResearchPopoutWindow window) return;
+            window.Closed -= ResearchPopout_Closed;
+            var view = window.ReleaseView();
+            if (ReferenceEquals(_researchPopout, window)) _researchPopout = null;
+            ResearchPoppedOutPanel.Visibility = Visibility.Collapsed;
+            if (view == null) return;
+            view.IsPoppedOut = false;
+            if (_closed) return; // this window is closing: the view was shut down in Window_Closing
+            ResearchViewHost.Child = view; // polls again only if the Research entry is the selected one (visible)
+        }
+
+        // MR8 (Market Research SPEC "MR8 backend notes", plan Q4): Buy/Sell/Short/Cover in Research only PRE-FILL the manual
+        // paper order panel (ticker; size left empty) and show it — nothing is submitted. The panel's own validation,
+        // confirmation dialog, POST /fund/orders and audit apply unchanged. Paper only, never live.
+        private void ResearchView_OrderHandOverRequested(object? sender, MarketResearch.ResearchOrderHandOverEventArgs e)
+        {
+            if (_closed || !FundAssets.IsValidSymbol(e.Symbol)) return;
+            var side = e.Side switch { "buy" => "Buy", "sell" => "Sell", "short" => "Short", "cover" => "Cover", _ => null };
+            if (side == null) return;
+            // S10 review C1: the hand-over opens Portfolio & Trading's order dialog (POST /v2/oms/orders), pre-filled — not /fund/orders
+            if (WindowState == WindowState.Minimized) WindowState = _lastNonMinimizedState;
+            Activate();
+            NavTradingButton.IsChecked = true;
+            EnsureTradingView();
+            var symbol = e.Symbol;
+            var sideKey = e.Side;
+            Dispatcher.BeginInvoke(new Action(async () =>
+            {
+                try { if (_tradingView != null && !_closed) await _tradingView.OpenOrderFromResearchAsync(symbol, sideKey); }
+                catch (Exception ex) { try { AppLog.Warn("HedgeFund", "Research order hand-over failed.", ex); } catch { } }
+            }), DispatcherPriority.Loaded);
+        }
+
+        // MR8: "Open in Market Research" from a backtest report (Platform/BacktestReportView): shows the Research section
+        // (or the pop-out) with the symbol and the run's markers.
+        internal void OpenInResearch(string symbol, string? runId)
+        {
+            if (_closed) return;
+            EnsureResearchView();
+            if (_researchPopout != null)
+            {
+                if (_researchPopout.WindowState == WindowState.Minimized) _researchPopout.WindowState = WindowState.Normal;
+                _researchPopout.Activate();
+            }
+            else
+            {
+                NavResearchButton.IsChecked = true;
+                if (WindowState == WindowState.Minimized) WindowState = _lastNonMinimizedState;
+                Activate();
+            }
+            _researchView?.OpenFromBacktest(symbol, runId);
+        }
+
+        private void ResearchShowPopout_Click(object sender, RoutedEventArgs e)
+        {
+            if (_researchPopout == null) return;
+            if (_researchPopout.WindowState == WindowState.Minimized) _researchPopout.WindowState = WindowState.Normal;
+            _researchPopout.Activate();
+        }
+
+        private void ResearchReturn_Click(object sender, RoutedEventArgs e)
+        {
+            _researchPopout?.Close();
+        }
+
+        /// <summary>Switches the rail to Overview (e.g. before scrolling to a dashboard control).</summary>
+        private void ShowOverview()
+        {
+            if (NavOverviewButton.IsChecked != true) NavOverviewButton.IsChecked = true; // raises NavButton_Checked
+            UpdateLayout(); // so a following BringIntoView finds the dashboard laid out
         }
 
         /// <summary>Opens (or brings to front) the single Financial Newsroom window on the given section.</summary>
@@ -381,6 +699,12 @@ namespace UFOS.ai.HedgeFund
                 {
                     await LoadParamsAsync();
                 }
+                // Strategy Platform §11.2: the explanations' own daily budget + today's spend (refreshed every 30 s)
+                if (DateTime.UtcNow - _explainSettingsLoadedAt > ExplainSettingsReloadInterval) await LoadExplainSettingsAsync();
+                // Strategy Platform §13 (stage 5a): the Studio's ideation budget + this month's / today's spend (every 30 s)
+                if (DateTime.UtcNow - _ideationSettingsLoadedAt > IdeationSettingsReloadInterval) await LoadIdeationSettingsAsync();
+                // Strategy Platform §14 (stage 5b): committee auto-run setting (every 30 s)
+                if (DateTime.UtcNow - _committeeSettingsLoadedAt > CommitteeSettingsReloadInterval) await LoadCommitteeSettingsAsync();
 
                 var lastId = _state.Engine?.LastRun?.Id;
                 if (lastId != _lastRunIdSeen || !_historyLoadedOnce)
@@ -496,6 +820,8 @@ namespace UFOS.ai.HedgeFund
             UpdateChips(s);
             UpdateHalt(s);
             UpdateAccountBanner(s);
+            UpdateLegacyBanner(s);
+            UpdateSandboxStrip(s);
             UpdateStatusLine();
             UpdateAgentsAndVerdict();
             UpdatePortfolio(s);
@@ -597,8 +923,17 @@ namespace UFOS.ai.HedgeFund
                 var closedNow = symState?.TradableNow == false;
                 if (isCrypto) panel.Children.Add(ChipMarker("24/7", FundPalette.Focus));
                 if (closedNow) panel.Children.Add(ChipMarker("closed", FundPalette.Faint));
-                var tradeNote = isCrypto ? (closedNow ? "crypto · currently not tradable" : "crypto · trades 24/7, fractional quantities")
+                // D9 (2026-10-02): status of the last cycle — data missing / no new verdict. Status, not a verdict.
+                var dataNa = string.IsNullOrWhiteSpace(symState?.DataUnavailable) ? null : DataUnavailableText(symState!.DataUnavailable!);
+                var judgeNa = string.IsNullOrWhiteSpace(symState?.JudgeUnavailable) ? null : symState!.JudgeUnavailable!.Trim();
+                var notUpdated = string.IsNullOrWhiteSpace(rec?.NotUpdated) ? null : NotUpdatedText(rec!.NotUpdated!);
+                if (dataNa != null) panel.Children.Add(ChipMarker("no data", FundPalette.Kill));
+                else if (judgeNa != null || notUpdated != null) panel.Children.Add(ChipMarker("not updated", FundPalette.Risk));
+                var statusNote = string.Join("\n", new[] { dataNa, dataNa == null ? judgeNa : null, notUpdated }
+                    .Where(x => !string.IsNullOrWhiteSpace(x)).Distinct());
+                string tradeNote = isCrypto ? (closedNow ? "crypto · currently not tradable" : "crypto · trades 24/7, fractional quantities")
                     : closedNow ? "market closed — orders queue until the next open" : "";
+                if (statusNote.Length > 0) tradeNote = tradeNote.Length > 0 ? tradeNote + "\n" + statusNote : statusNote;
                 chip.Content = panel;
                 // AI labelling (CLAUDE.md rule 6): a verdict from the language model says so in the
                 // tooltip and the screen-reader name; everything else is marked rule-based.
@@ -611,11 +946,16 @@ namespace UFOS.ai.HedgeFund
                 var isAi = IsAiRecommendation(rec, out var model, out var at);
                 var origin = isAi
                     ? "AI-generated verdict" + (AiContent.ShortModelName(model) is { Length: > 0 } sm ? " (" + sm + (at.HasValue ? ", " + at.Value.ToLocalTime().ToString("HH:mm", Inv) : "") + ")" : "")
-                    : "rule-based verdict (no AI)";
+                    : string.Equals(rec.Source, "rules", StringComparison.OrdinalIgnoreCase)
+                        ? "rule-based verdict (no AI, older engine version)"
+                        : "verdict source: " + (rec.Source ?? "unknown") + " (not AI-labelled)";
+                if (notUpdated != null) origin += " · from " + FundFormat.LocalTime(rec.Ts, "MM-dd HH:mm");
+                if (string.Equals(rec.Source, "carried", StringComparison.OrdinalIgnoreCase))
+                    origin += " · carried" + (string.IsNullOrWhiteSpace(rec.JudgedAt) ? "" : " · judged " + FundFormat.LocalTime(rec.JudgedAt, "HH:mm"));
                 var conf = FundFormat.Fraction(rec.Confidence, 0);
                 AutomationProperties.SetName(chip, (isAi
                     ? $"AI-generated verdict for {sym}: {(action.Length > 0 ? action : "none")}, confidence {conf}"
-                    : $"{sym}, rule-based verdict {(action.Length > 0 ? action : "none")}, confidence {conf}") +
+                    : $"{sym}, verdict {(action.Length > 0 ? action : "none")} (not AI-generated), confidence {conf}") +
                     (tradeNote.Length > 0 ? ", " + tradeNote : ""));
                 chip.ToolTip = $"{sym} — {(action.Length > 0 ? action : "—")}, confidence {conf}\n{origin}" +
                                (isAi ? "\n" + AiContent.Caveat : "") +
@@ -755,7 +1095,7 @@ namespace UFOS.ai.HedgeFund
                 parts.Add(budget.SpendUnreadable == true
                     ? "AI spend couldn't be read — AI calls paused (fails closed)"
                     : $"AI today {FundFormat.Usd2(budget.SpentTodayUsd)} / {FundFormat.Usd2(budget.LimitUsd)}" +
-                      (budget.Exhausted ? " (budget reached → rule-based)" : ""));
+                      (budget.Exhausted ? " (budget reached → no new AI verdicts)" : ""));
             }
 
             var market = s.Market;
@@ -809,7 +1149,7 @@ namespace UFOS.ai.HedgeFund
                 RunNowButton.Foreground = FundPalette.TextBright;
                 RunNowButton.BorderThickness = new Thickness(2);
                 RunNowButton.ToolTip = "US market closed: there are no scheduled runs until the open. ▶ Run now runs one full cycle " +
-                                       "(agents + judge) — crypto orders fill immediately, stock/ETF orders are queued for the next open. " +
+                                       "(Council of AIs: agents + judge) — crypto orders fill immediately, stock/ETF orders are queued for the next open. " +
                                        AiContent.TriggerTooltip;
                 RunNowHintText.Visibility = Visibility.Visible;
             }
@@ -846,6 +1186,54 @@ namespace UFOS.ai.HedgeFund
             AutomationProperties.SetName(AccountBannerText, AccountBannerText.Text);
         }
 
+        /// <summary>
+        /// Strategy Platform stage 7 (SPEC §17.1, coexistence): after the migration of this paper account the engine is
+        /// advisory only (it analyses; every trading path answers 409 with the backend's text) — say so where the user
+        /// trades. Absent on older backends (no banner).
+        /// </summary>
+        /// <summary>
+        /// Sandbox profile (strategy_platform/SPEC.md "Sandbox profile" S2): the amber strip under the title bar stays visible while
+        /// the state says mode == "sandbox"; a state with mode "normal" (or an older backend without the field) hides it. Text =
+        /// the payload's banner + "Brokers blocked — data: &lt;data_dir&gt;" (plain text, verbatim; missing parts say so).
+        /// </summary>
+        private void UpdateSandboxStrip(FundState s)
+        {
+            if (!s.IsSandbox)
+            {
+                SandboxStrip.Visibility = Visibility.Collapsed;
+                return;
+            }
+            var sb = s.Sandbox;
+            var banner = string.IsNullOrWhiteSpace(sb?.Banner)
+                ? "Sandbox mode — banner text not available (the state payload has no sandbox banner)"
+                : sb!.Banner!.Trim();
+            var dataDir = string.IsNullOrWhiteSpace(sb?.DataDir) ? "not available (not in the state payload)" : sb!.DataDir!.Trim();
+            SandboxStripText.Text = banner + "  ·  Brokers blocked — data: " + dataDir
+                                    + (string.IsNullOrWhiteSpace(sb?.PricesNote) ? "" : "  ·  " + sb!.PricesNote!.Trim());   // fix1023 B6
+            SandboxStrip.ToolTip = sb?.Since is string since && !string.IsNullOrWhiteSpace(since)
+                ? "Sandbox active since " + FundFormat.LocalTime(since, "yyyy-MM-dd HH:mm") + " · " + (sb.Brokers ?? "brokers: not reported")
+                : sb?.Brokers;
+            SandboxStrip.Visibility = Visibility.Visible;
+            AutomationProperties.SetName(SandboxStrip, "Sandbox mode: " + SandboxStripText.Text);
+        }
+
+        private void UpdateLegacyBanner(FundState s)
+        {
+            var la = s.LegacyAccount;
+            if (la == null || la.Status == null || la.Status == "active")
+            {
+                LegacyBanner.Visibility = Visibility.Collapsed;
+                return;
+            }
+            LegacyBannerText.Text = la.Status == "migrating"
+                ? "This paper account is being migrated to the Strategy Platform — it is frozen (no trading) until the copy is complete."
+                : "This paper account was migrated to the Strategy Platform on " + FundFormat.LocalTime(la.MigratedAt, "yyyy-MM-dd HH:mm") +
+                  " — it is traded in Portfolio & Trading now (account paper-council, source \"Council of AIs\"). The engine here keeps analysing " +
+                  "(agents, AI judge, recommendations) but places no orders; the kill switch still covers both.";
+            LegacyBanner.Visibility = Visibility.Visible;
+            AutomationProperties.SetName(LegacyBannerText, LegacyBannerText.Text);
+        }
+
         // ---------- agent cards + verdict ----------
 
         private void UpdateAgentsAndVerdict()
@@ -863,6 +1251,93 @@ namespace UFOS.ai.HedgeFund
             UpdateDirectionalCard(Find("sentiment"), SentCard, SentStripe, SentStance, SentBarNeg, SentBarPos, SentSummary, SentConf, SentMeta, "Sentiment", isSentiment: true);
             UpdateRiskCard(Find("risk"));
             UpdateVerdict(sym);
+
+            // D9: market data missing in the last cycle → this symbol was not analysed (no fallback).
+            var dataNa = string.IsNullOrWhiteSpace(sym?.DataUnavailable) ? null : DataUnavailableText(sym!.DataUnavailable!);
+            AgentsDataBannerText.Text = dataNa ?? "";
+            AgentsDataBanner.Visibility = dataNa == null ? Visibility.Collapsed : Visibility.Visible;
+            AutomationProperties.SetName(AgentsDataBannerText, dataNa ?? "");
+        }
+
+        /// <summary>"Market data unavailable: … — not analysed this run" (backend text kept when it already says so).</summary>
+        private static string DataUnavailableText(string reason)
+        {
+            var r = reason.Trim();
+            return r.StartsWith("Market data unavailable", StringComparison.OrdinalIgnoreCase)
+                ? r
+                : "Market data unavailable: " + r.TrimEnd('.') + " — not analysed this run.";
+        }
+
+        /// <summary>"not updated: &lt;reason&gt;" (backend text kept when it already starts that way).</summary>
+        private static string NotUpdatedText(string reason)
+        {
+            var r = reason.Trim();
+            return r.StartsWith("not updated", StringComparison.OrdinalIgnoreCase) ? r : "not updated: " + r;
+        }
+
+        /// <summary>Notice above the verdict rationale (status, not AI output) + the matching settings button.</summary>
+        private void SetVerdictNotice(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                VerdictNoticeBorder.Visibility = Visibility.Collapsed;
+                VerdictNoticeText.Text = "";
+                VerdictNoticeButton.Visibility = Visibility.Collapsed;
+                VerdictNoticeButton.Tag = null;
+                return;
+            }
+            VerdictNoticeText.Text = text;
+            VerdictNoticeBorder.Visibility = Visibility.Visible;
+            AutomationProperties.SetName(VerdictNoticeText, "Status: " + text);
+            if (text.Contains("budget", StringComparison.OrdinalIgnoreCase))
+            {
+                VerdictNoticeButton.Content = "Open AI budget setting";
+                VerdictNoticeButton.Tag = "budget";
+                VerdictNoticeButton.ToolTip = "Scrolls to the \"AI daily budget (USD)\" input in the engine settings.";
+                VerdictNoticeButton.Visibility = Visibility.Visible;
+            }
+            else if (text.Contains("Settings → Keys", StringComparison.OrdinalIgnoreCase) ||
+                     text.Contains("is not set", StringComparison.OrdinalIgnoreCase) ||
+                     text.Contains("Credential Manager", StringComparison.OrdinalIgnoreCase))
+            {
+                VerdictNoticeButton.Content = "Open Keys & data";
+                VerdictNoticeButton.Tag = "keys";
+                VerdictNoticeButton.ToolTip = "Opens Keys & data sources to set the missing key.";
+                VerdictNoticeButton.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                VerdictNoticeButton.Visibility = Visibility.Collapsed;
+                VerdictNoticeButton.Tag = null;
+            }
+        }
+
+        private DispatcherTimer? _budgetHighlightTimer;
+
+        private void VerdictNoticeButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (VerdictNoticeButton.Tag is "keys")
+            {
+                KeysAndDataButton_Click(sender, e);
+                return;
+            }
+            if (VerdictNoticeButton.Tag is not "budget") return;
+            ShowOverview(); // the AI budget input lives on the Overview
+            // Scroll to and highlight the AI budget input (engine settings, always visible).
+            AiBudgetInput.BringIntoView();
+            AiBudgetInput.Focus();
+            AiBudgetInput.SelectAll();
+            AiBudgetInput.BorderBrush = FundPalette.Risk;
+            AiBudgetInput.BorderThickness = new Thickness(2);
+            _budgetHighlightTimer?.Stop();
+            _budgetHighlightTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+            _budgetHighlightTimer.Tick += (_, _) =>
+            {
+                _budgetHighlightTimer?.Stop();
+                AiBudgetInput.ClearValue(Control.BorderBrushProperty);
+                AiBudgetInput.ClearValue(Control.BorderThicknessProperty);
+            };
+            _budgetHighlightTimer.Start();
         }
 
         private void UpdateDirectionalCard(FundAgentSignal? a, Border card, Border stripe, TextBlock stance, Border barNeg, Border barPos,
@@ -876,6 +1351,7 @@ namespace UFOS.ai.HedgeFund
                 barNeg.RenderTransform = new ScaleTransform(0, 1);
                 barPos.RenderTransform = new ScaleTransform(0, 1);
                 summary.Text = _state == null ? "Waiting for the engine…" : "No signal yet — waiting for the first run with this symbol.";
+                if (_summaryForeground.TryGetValue(summary, out var originalForeground)) summary.Foreground = originalForeground;
                 conf.Text = "conf —";
                 meta.Text = isSentiment ? "—" : "rule-based";
                 card.ToolTip = null;
@@ -903,9 +1379,30 @@ namespace UFOS.ai.HedgeFund
                         " · conf " + (a.Confidence.HasValue ? (confidence * 100).ToString("0", Inv) + "%" : "—");
             meta.Text = SourceLabel(a.Source);
             card.ToolTip = DetailsTooltip(title, a);
+            // D9 (2026-10-02): an unavailable rule-based agent (e.g. macro data missing) shows its reason as
+            // a status (amber, no stance) — never as a signal. No AI styling (it is not AI output).
+            if (!isSentiment)
+            {
+                if (!_summaryForeground.ContainsKey(summary)) _summaryForeground[summary] = summary.Foreground;
+                var unavailable = string.Equals(a.Source, "unavailable", StringComparison.OrdinalIgnoreCase);
+                summary.Foreground = unavailable ? FundPalette.Risk : _summaryForeground[summary];
+                if (unavailable)
+                {
+                    stance.Text = "N/A";
+                    stance.Foreground = FundPalette.Neutral;
+                    stripe.Background = FundPalette.Risk;
+                    barNeg.RenderTransform = new ScaleTransform(0, 1);
+                    barPos.RenderTransform = new ScaleTransform(0, 1);
+                    summary.Text = "Unavailable: " + (string.IsNullOrWhiteSpace(a.Summary) ? "no reason given" : a.Summary!.Trim());
+                    conf.Text = "not analysed";
+                }
+            }
             if (isSentiment) SetSentimentLabel(a);
-            else AutomationProperties.SetName(summary, title + " agent (rule-based): " + summary.Text);
+            else AutomationProperties.SetName(summary, title + " agent (rule-based)" +
+                (string.Equals(a.Source, "unavailable", StringComparison.OrdinalIgnoreCase) ? ", status: " : ": ") + summary.Text);
         }
+
+        private readonly Dictionary<TextBlock, Brush> _summaryForeground = new();
 
         private static string SourceLabel(string? source) => (source ?? "").ToLowerInvariant() switch
         {
@@ -920,6 +1417,17 @@ namespace UFOS.ai.HedgeFund
         /// <summary>AI label on the sentiment card when its text came from the language model (or its cache).</summary>
         private void SetSentimentLabel(FundAgentSignal? a)
         {
+            // Backend 2026-10-02: insider data could not be loaded → details.insider_unavailable holds the
+            // reason (the summary ends "(insider data unavailable)"). Shown as a status hint line.
+            string? insiderNa = null;
+            if (a?.Details is JsonElement sd && sd.ValueKind == JsonValueKind.Object &&
+                sd.TryGetProperty("insider_unavailable", out var iu) && iu.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(iu.GetString()))
+                insiderNa = iu.GetString()!.Trim();
+            SentInsiderHint.Text = insiderNa == null ? "" : "Insider data unavailable: " + insiderNa;
+            SentInsiderHint.Visibility = insiderNa == null ? Visibility.Collapsed : Visibility.Visible;
+            AutomationProperties.SetName(SentInsiderHint, "Status: " + SentInsiderHint.Text);
+
             var source = (a?.Source ?? "").ToLowerInvariant();
             var isAi = source == "llm" || source == "cached";
             var summaryText = SentSummary.Text;
@@ -937,14 +1445,15 @@ namespace UFOS.ai.HedgeFund
             }
             else if (source == "unavailable")
             {
-                // An error is never dressed up as analysis (labelling rule 7).
-                SentBadge.Text = AiContent.UnavailableBadge;
-                SentBadge.Foreground = FundPalette.Faint;
+                // An error is never dressed up as analysis (labelling rule 7). D9 (2026-10-02): shown as a
+                // plain status — no ✦ glyph, no caveat, no violet container.
+                SentBadge.Text = "Sentiment unavailable — status, not an AI result";
+                SentBadge.Foreground = FundPalette.Risk;
                 SentBadge.Visibility = Visibility.Visible;
                 SentCaveat.Visibility = Visibility.Collapsed;
                 SentCard.Background = FundPalette.Panel;
                 SentCard.BorderBrush = FundPalette.PanelBorder;
-                AutomationProperties.SetName(SentSummary, "AI sentiment unavailable: " + summaryText);
+                AutomationProperties.SetName(SentSummary, "Status: sentiment unavailable. " + summaryText);
             }
             else
             {
@@ -998,6 +1507,7 @@ namespace UFOS.ai.HedgeFund
                 RiskStripe.Background = FundPalette.Focus;
                 RiskBar.RenderTransform = new ScaleTransform(0, 1);
                 RiskSummary.Text = _state == null ? "Waiting for the engine…" : "No risk assessment yet.";
+                if (_summaryForeground.TryGetValue(RiskSummary, out var riskForeground)) RiskSummary.Foreground = riskForeground;
                 RiskConf.Text = "size —";
                 RiskMeta.Text = "rule-based";
                 RiskCard.ToolTip = null;
@@ -1027,7 +1537,27 @@ namespace UFOS.ai.HedgeFund
             RiskConf.Text = "size ×" + (veto ? 0 : multiplier).ToString("0.00", Inv);
             RiskMeta.Text = SourceLabel(a.Source);
             RiskCard.ToolTip = DetailsTooltip("Risk Manager", a);
-            AutomationProperties.SetName(RiskSummary, "Risk manager (rule-based): " + RiskSummary.Text);
+            // Backend 2026-10-02: source "unavailable" (e.g. calendar data could not be loaded) → the risk
+            // card is incomplete and the engine places no orders for the symbol. Amber status, no size.
+            if (!_summaryForeground.ContainsKey(RiskSummary)) _summaryForeground[RiskSummary] = RiskSummary.Foreground;
+            var riskUnavailable = string.Equals(a.Source, "unavailable", StringComparison.OrdinalIgnoreCase);
+            RiskSummary.Foreground = riskUnavailable ? FundPalette.Risk : _summaryForeground[RiskSummary];
+            if (riskUnavailable)
+            {
+                string? why = null;
+                if (a.Details is JsonElement rd && rd.ValueKind == JsonValueKind.Object &&
+                    rd.TryGetProperty("unavailable", out var ru) && ru.ValueKind == JsonValueKind.String)
+                    why = ru.GetString();
+                RiskStance.Text = "UNAVAILABLE";
+                RiskStance.Foreground = FundPalette.Risk;
+                RiskStripe.Background = FundPalette.Risk;
+                RiskBar.RenderTransform = new ScaleTransform(0, 1);
+                RiskSummary.Text = string.IsNullOrWhiteSpace(a.Summary)
+                    ? "Risk card " + (string.IsNullOrWhiteSpace(why) ? "unavailable" : why!.Trim()) + " — no orders for this symbol."
+                    : a.Summary!;
+                RiskConf.Text = "no orders";
+            }
+            AutomationProperties.SetName(RiskSummary, "Risk manager (rule-based)" + (riskUnavailable ? ", status: " : ": ") + RiskSummary.Text);
         }
 
         private static ToolTip DetailsTooltip(string title, FundAgentSignal a)
@@ -1067,9 +1597,14 @@ namespace UFOS.ai.HedgeFund
                 VerdictArc.Data = Geometry.Empty;
                 VerdictSizeText.Text = "";
                 VerdictRuleText.Text = "";
-                VerdictRationaleText.Text = _state == null ? "Waiting for the engine…" : "No verdict yet — the judge runs with the next engine cycle.";
+                var judgeNa = string.IsNullOrWhiteSpace(sym?.JudgeUnavailable) ? null : sym!.JudgeUnavailable!.Trim();
+                var dataNa = string.IsNullOrWhiteSpace(sym?.DataUnavailable) ? null : DataUnavailableText(sym!.DataUnavailable!);
+                VerdictRationaleText.Text = _state == null ? "Waiting for the engine…"
+                    : judgeNa != null || dataNa != null ? "No verdict for this symbol in the last run."
+                    : "No verdict yet — the judge runs with the next engine cycle.";
                 VerdictRationaleText.Opacity = 1;
-                SetVerdictBadge(null, isAi: false);
+                SetVerdictBadge(judgeNa != null || dataNa != null ? "Verdict unavailable" : null, isAi: false);
+                SetVerdictNotice(judgeNa ?? dataNa);
                 VerdictCaveatText.Text = "";
                 VerdictCostText.Visibility = Visibility.Collapsed;
                 VerdictStatusText.Text = "";
@@ -1086,7 +1621,7 @@ namespace UFOS.ai.HedgeFund
             VerdictConfText.Text = rec.Confidence.HasValue ? (confidence * 100).ToString("0", Inv) + "%" : "—";
             VerdictArc.Data = ArcGeometry(confidence);
             VerdictSizeText.Text = "Target " + FundFormat.Fraction(rec.TargetWeight, 1, signed: true) + " of equity · now " +
-                                   FundFormat.Fraction(rec.CurrentWeight ?? 0, 1, signed: true);
+                                   FundFormat.Fraction(rec.CurrentWeight, 1, signed: true);
             VerdictRuleText.Text = "rule score " + (rec.RuleScore ?? 0).ToString("+0.00;-0.00;0.00", Inv) + " · " +
                                    FundFormat.LocalTime(rec.Ts) + (rec.RunId is long id ? " · run #" + id.ToString(Inv) : "");
 
@@ -1098,13 +1633,16 @@ namespace UFOS.ai.HedgeFund
 
             if (isAi)
             {
-                SetVerdictBadge(AiContent.Badge(model, at) + (carried ? " · CARRIED" : ""), isAi: true);
+                SetVerdictBadge(AiContent.Badge(model, at) + (carried
+                    ? " · CARRIED" + (string.IsNullOrWhiteSpace(rec.JudgedAt) ? "" : " · JUDGED " + FundFormat.LocalTime(rec.JudgedAt, "HH:mm"))
+                    : ""), isAi: true);
                 VerdictCaveatText.Text = AiContent.Caveat;
                 AutomationProperties.SetName(VerdictRationaleText, AiContent.AutomationName(model, at) + " Verdict rationale: " + rationale);
                 var cost = rec.Usage?.EffectiveCost;
                 if (carried)
                 {
-                    VerdictCostText.Text = "Carried from an earlier judgement — no new AI cost.";
+                    VerdictCostText.Text = "Carried" + (string.IsNullOrWhiteSpace(rec.JudgedAt) ? "" : " · judged " + FundFormat.LocalTime(rec.JudgedAt, "HH:mm")) +
+                                           " — reused from an earlier judgement, no new AI cost.";
                     VerdictCostText.Visibility = Visibility.Visible;
                 }
                 else if (cost.HasValue)
@@ -1129,11 +1667,29 @@ namespace UFOS.ai.HedgeFund
             }
             else
             {
-                SetVerdictBadge("Rule-based · no AI", isAi: false);
-                VerdictCaveatText.Text = "Rule-based verdict from the agents' weighted scores (no AI). Not investment advice.";
+                if (source == "rules")
+                {
+                    // Old row of the former rule-based judge (removed 2026-10-02, D9).
+                    SetVerdictBadge("Rule-based · no AI · older verdict", isAi: false);
+                    VerdictCaveatText.Text = "Rule-based verdict from an earlier engine version (no AI) — information for your own decision.";
+                    AutomationProperties.SetName(VerdictRationaleText, "Rule-based verdict, older engine version: " + rationale);
+                }
+                else
+                {
+                    SetVerdictBadge("Verdict · source " + (string.IsNullOrWhiteSpace(rec.Source) ? "unknown" : rec.Source), isAi: false);
+                    VerdictCaveatText.Text = "Rule-based verdict (no AI) — information for your own decision.";
+                    AutomationProperties.SetName(VerdictRationaleText, "Verdict rationale: " + rationale);
+                }
                 VerdictCostText.Visibility = Visibility.Collapsed;
-                AutomationProperties.SetName(VerdictRationaleText, "Rule-based verdict: " + rationale);
             }
+
+            // D9: the last cycle made no new verdict → this one is older and says so (keeps its own time).
+            var notUpdated = string.IsNullOrWhiteSpace(rec.NotUpdated) ? null
+                : NotUpdatedText(rec.NotUpdated!) + " — showing the verdict from " + FundFormat.LocalTime(rec.Ts, "MM-dd HH:mm") +
+                  (rec.RunId is long oldRun ? " (run #" + oldRun.ToString(Inv) + ")" : "") + ".";
+            var symJudgeNa = string.IsNullOrWhiteSpace(sym?.JudgeUnavailable) ? null : sym!.JudgeUnavailable!.Trim();
+            var symDataNa = string.IsNullOrWhiteSpace(sym?.DataUnavailable) ? null : DataUnavailableText(sym!.DataUnavailable!);
+            SetVerdictNotice(notUpdated ?? symJudgeNa ?? symDataNa);
 
             var status = (rec.Status ?? "open").ToLowerInvariant();
             VerdictStatusText.Text = status switch
@@ -1210,6 +1766,30 @@ namespace UFOS.ai.HedgeFund
         private void UpdatePortfolio(FundState s)
         {
             var a = s.Account;
+            // D9 (2026-10-02): valuation paused → figures that depend on current prices are "—" with the
+            // reason (tooltip + amber banner), never the last known (stale) numbers.
+            var paused = string.IsNullOrWhiteSpace(a?.ValuationPaused) ? null : a!.ValuationPaused!.Trim();
+            ValuationBannerText.Text = paused == null ? "" : char.ToUpperInvariant(paused[0]) + paused[1..] +
+                " — equity, P&L, drawdown and margin figures are not current and are not shown.";
+            ValuationBanner.Visibility = paused == null ? Visibility.Collapsed : Visibility.Visible;
+            AutomationProperties.SetName(ValuationBannerText, ValuationBannerText.Text);
+            if (paused != null)
+            {
+                a = new FundAccount
+                {
+                    Cash = a?.Cash,
+                    DrawdownStopPct = a?.DrawdownStopPct,
+                    FundingTotal = a?.FundingTotal,
+                    StartingCapital = a?.StartingCapital,
+                    ResetAt = a?.ResetAt,
+                    Unreadable = a?.Unreadable,
+                    Error = a?.Error,
+                    ValuationPaused = paused,
+                };
+            }
+            object? pausedTip = paused == null ? null : "Not shown: " + paused;
+            foreach (var t in new[] { EquityValueText, DayPnlText, TotalPnlText, BuyingPowerText, DrawdownText, MarginExcessText, ShortExposureText, MaintenanceText, CryptoMarginExcessText })
+                t.ToolTip = pausedTip;
             EquityValueText.Text = FundFormat.Money(a?.Equity);
             CashText.Text = FundFormat.Money(a?.Cash);
             BuyingPowerText.Text = FundFormat.Money(a?.BuyingPower);
@@ -1225,7 +1805,7 @@ namespace UFOS.ai.HedgeFund
             var ratio = limit > 0 ? Math.Clamp(dd / limit, 0, 1) : 0;
             DrawdownBar.RenderTransform = new ScaleTransform(ratio, 1);
             DrawdownBar.Background = ratio >= 0.75 ? FundPalette.Short : FundPalette.Risk;
-            DrawdownText.Text = accountUnreadable ? "— from peak" : FundFormat.Pct(dd, 2) + " from peak";
+            DrawdownText.Text = paused != null ? "— from peak (valuation paused)" : accountUnreadable ? "— from peak" : FundFormat.Pct(dd, 2) + " from peak";
             DrawdownLimitText.Text = limit > 0 ? "Stop at " + FundFormat.Pct(limit, 1) : "Stop —";
 
             MarginExcessText.Text = FundFormat.Money(a?.MarginExcess);
@@ -1280,6 +1860,8 @@ namespace UFOS.ai.HedgeFund
         {
             var isShort = p.IsShort;
             var sideBrush = isShort ? FundPalette.Short : FundPalette.Long;
+            // D9: no current quote → these are null; "—" + tooltip, never a stale number.
+            var unvalued = p.LastPrice == null || p.MarketValue == null || p.UnrealizedPnl == null || p.Weight == null;
 
             var line1 = new Grid();
             line1.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1305,6 +1887,7 @@ namespace UFOS.ai.HedgeFund
             }
             line1.Children.Add(left);
             var pnl = FundUi.Text(FundFormat.Money(p.UnrealizedPnl, signed: true), 12, FundPalette.ForSigned(p.UnrealizedPnl), mono: true, wrap: false);
+            if (p.UnrealizedPnl == null) pnl.ToolTip = "Not valued right now — no current quote";
             Grid.SetColumn(pnl, 1);
             line1.Children.Add(pnl);
 
@@ -1334,6 +1917,8 @@ namespace UFOS.ai.HedgeFund
                 Cursor = Cursors.Hand,
                 ToolTip = "Opened " + FundFormat.LocalTime(p.OpenedAt, "yyyy-MM-dd HH:mm") + " · market value " +
                           FundFormat.Money(p.MarketValue) +
+                          (unvalued ? "\nNot valued right now (last price, market value, P&L and weight shown as —)" +
+                                      (string.IsNullOrWhiteSpace(_state?.Account?.ValuationPaused) ? "" : ": " + _state!.Account!.ValuationPaused!.Trim()) : "") +
                           (p.IsPerp ? "\nPerpetual future (simulated): funding every 8 h, own margin, liquidated below the maintenance margin (liquidation fee)"
                            : p.IsCrypto ? "\nCrypto spot · trades 24/7" : "") +
                           "\nClick to show its signals",
@@ -1427,7 +2012,7 @@ namespace UFOS.ai.HedgeFund
                         "(partly AI-generated) within these limits:\n" + limits +
                         "\n\nThe kill switch stays available at all times. The autopilot is switched off at every backend start" +
                         (_heartbeatSupported == true ? " and after " + MinutesLabel(HeartbeatSlider.Value) + " without contact from UFOS.ai (heartbeat)" : "") + ".",
-                        "Switch on", footnote: "Paper trading · simulated · not investment advice"))
+                        "Switch on", footnote: "Paper trading · simulated money"))
                     return;
             }
             AutoEngageToggle.IsEnabled = false;
@@ -1679,7 +2264,7 @@ namespace UFOS.ai.HedgeFund
 
         private void SetBudgetHint(string? error)
         {
-            AiBudgetHintText.Text = error ?? "0 = rule-based only";
+            AiBudgetHintText.Text = error ?? "0 = no AI calls, no new verdicts";
             AiBudgetHintText.Foreground = error == null ? FundPalette.Faint : FundPalette.Short;
         }
 
@@ -1894,12 +2479,20 @@ namespace UFOS.ai.HedgeFund
 
         private async void KillSwitchButton_Click(object sender, RoutedEventArgs e)
         {
+            // S10 review C1 (2026-10-24): POST /v2/oms/kill (control.kill_all) runs the platform kill (all platform accounts, brokers
+            // included) AND the old engine's kill; each half reports its own result — this one button covers both.
             var values = FundDialogs.Form(this, "Kill switch",
-                "This halts the engine immediately:\n" +
+                "This halts BOTH engines immediately.\n\n" +
+                "Old engine (Overview):\n" +
                 "• the autopilot is switched off,\n" +
                 "• every simulated position is closed with market orders (queued until the next open while the market is closed),\n" +
                 "• no autopilot orders until you resume the engine.\n\n" +
-                "Paper trading only — no real orders are sent anywhere.",
+                "Strategy Platform (Portfolio & Trading — every platform paper account):\n" +
+                "• auto trading is switched off,\n" +
+                "• all working orders are cancelled and every position is closed,\n" +
+                "• on connected broker accounts (Alpaca paper, Binance Spot demo) every open order AT THE BROKER is cancelled (Binance demo: only the platform's UFOS_ orders) and the platform's positions there are closed,\n" +
+                "• each account stays halted until you resume it in Portfolio & Trading.\n\n" +
+                "Paper / demo trading only — simulated money, no real orders are sent anywhere.",
                 new[] { ("Reason (optional, stored in the audit log)", "") },
                 "■ Halt and close all", danger: true);
             if (values == null) return;
@@ -1907,20 +2500,21 @@ namespace UFOS.ai.HedgeFund
             KillSwitchButton.IsEnabled = false;
             try
             {
-                var result = await FundClient.KillAsync(values.Length > 0 ? values[0] : null);
+                var result = await PlatformClient.KillAllAsync(values.Length > 0 ? values[0] : null);
                 if (result.Ok)
                 {
-                    var orders = result.Value?.Orders ?? new List<FundOrder>();
-                    FundDialogs.Info(this, "Engine halted", orders.Count == 0
-                        ? "The engine is halted. There were no positions to close."
-                        : "The engine is halted. Closing orders:\n" + string.Join("\n", orders.Take(12).Select(FundOrderText.Result)) +
-                          (orders.Count > 12 ? "\n…" : ""));
+                    var (title, text) = KillResultText(result.Value);
+                    FundDialogs.Info(this, title, text);
                 }
                 else
                 {
                     FundDialogs.Info(this, "Kill switch failed",
-                        "The engine did not confirm the halt: " + result.Describe() +
-                        "\n\nWhile the backend is unreachable it cannot place any simulated orders either, and the autopilot is always off after a backend start.");
+                        (result.TimedOut
+                            ? "No answer in time — the kill may be running or done (it waits for the broker accounts to confirm flat). Check the Overview and "
+                              + "Portfolio & Trading before pressing it again."
+                            : "The backend did not confirm the halt: " + PlatformClient.DescribeFailure(result)) +
+                        "\n\nNeither half is confirmed — check the Overview and Portfolio & Trading. While the backend is unreachable it cannot place any simulated " +
+                        "orders either, and the autopilot and the platform's auto trading are always off after a backend start.");
                 }
             }
             finally
@@ -1928,6 +2522,89 @@ namespace UFOS.ai.HedgeFund
                 KillSwitchButton.IsEnabled = true;
             }
             await RefreshStateAsync();
+        }
+
+        /// <summary>
+        /// The two halves of a /fund/kill result (old engine + Strategy Platform, SPEC §17.1/§17.12), each with its own outcome.
+        /// Title: "Both engines halted" only when both halves confirmed AND no closing order failed (state "error" / "rejected").
+        /// </summary>
+        private static (string Title, string Text) KillResultText(TradingKillAllResult? r)
+        {
+            var lines = new List<string>();
+            var ok = true;
+            var ordersFailed = 0;
+            var notFlat = false;
+            // S10 C1: /v2/oms/kill reports the old engine's half as {ok, error, halted} — its closing orders are listed in the Overview
+            var legacy = r?.Legacy;
+            if (legacy == null)
+            {
+                ok = false;
+                lines.Add("Old engine: no result reported — check the Overview.");
+            }
+            else if (!legacy.Ok)
+            {
+                ok = false;
+                lines.Add("Old engine: the halt was NOT confirmed — " + (string.IsNullOrWhiteSpace(legacy.Error) ? "no reason given" : legacy.Error!.Trim()));
+            }
+            else
+            {
+                lines.Add(legacy.Halted == true
+                    ? "Old engine: halted; its positions are being closed (closing orders: Overview → Orders)."
+                    : "Old engine: the kill ran, but the halt is not reported as active — check the Overview.");
+                if (legacy.Halted != true) ok = false;
+            }
+            var half = PlatformClient.ReadKillHalf(r?.Platform);
+            if (half == null)
+            {
+                ok = false;
+                lines.Add("Strategy Platform: no result reported — the running backend may be older than stage 7; check Portfolio & Trading.");
+            }
+            else
+            {
+                if (!half.Ok) ok = false;
+                lines.Add(half.Ok ? "Strategy Platform: auto trading off, accounts halted." : "Strategy Platform: NOT fully confirmed — " + (half.Error ?? "see the accounts below"));
+                var accounts = half.Accounts ?? new List<TradingKillAccount>();
+                if (accounts.Count == 0 && half.Ok) lines.Add("• no platform paper account is open.");
+                foreach (var a in accounts)
+                {
+                    var closing = a.Orders ?? new List<OmsOrder>();
+                    var line = "• " + (a.AccountId ?? "?") + ": " + (a.Cancelled ?? 0).ToString(Inv) + " working order(s) cancelled, "
+                               + (closing.Count == 0 ? "no positions to close" : closing.Count.ToString(Inv) + " closing order(s)");
+                    if (!string.IsNullOrWhiteSpace(a.Error)) { ok = false; line += " — ERROR: " + a.Error!.Trim(); }
+                    if (a.Broker != null)
+                    {
+                        // stage 8 (SPEC §18.6): the broker half of a broker account (cancel all at the broker, flatten from its positions)
+                        line += " (" + (a.Broker.CancelledAtBroker ?? 0).ToString(Inv) + " of them at the broker)";
+                        if (a.Broker.Ok == false) { ok = false; line += " — BROKER: " + (string.IsNullOrWhiteSpace(a.Broker.Error) ? "not confirmed" : a.Broker.Error!.Trim()); }
+                        if (!string.IsNullOrWhiteSpace(a.Broker.Note)) line += " — " + a.Broker.Note!.Trim();
+                        // §18.13 verified kill: never "halted" without flat == true
+                        var flatText = BrokerText.KillFlatText(a.Broker.Flat, a.Broker.Pending, a.Broker.NotFlat, null);
+                        if (flatText != null)
+                        {
+                            ok = false;
+                            notFlat = true;
+                            line += "\n   " + flatText.Replace("\n", "\n   ");
+                        }
+                        // §18.14: orders that are not the platform's (Binance: no UFOS_ prefix) — informational only (ok / notFlat unchanged)
+                        if (BrokerText.UntouchedText(a.Broker.UntouchedOrders, a.Broker.UntouchedNote) is string untouched)
+                            line += "\n   ℹ " + untouched;
+                    }
+                    var failed = closing.Count(o => o.State == "error" || o.State == "rejected");
+                    if (failed > 0) line += " — " + failed.ToString(Inv) + " closing order(s) FAILED";
+                    ordersFailed += failed;
+                    lines.Add(line);
+                    foreach (var o in closing.Take(8)) lines.Add("   " + TradingText.OrderLine(o));
+                    if (closing.Count > 8) lines.Add("   …");
+                }
+            }
+            if (ordersFailed > 0)
+                lines.Add(ordersFailed.ToString(Inv) + " closing order(s) failed (state error / rejected, reasons above) — those positions are still open; "
+                          + "check the Overview and Portfolio & Trading and close them manually.");
+            var title = notFlat ? "Kill switch — a broker is NOT verified flat, check the results"
+                : !ok ? "Kill switch — check the results"
+                : ordersFailed > 0 ? "Halted — some closing orders failed"
+                : "Both engines halted";
+            return (title, string.Join("\n\n", lines));
         }
 
         private async void ResumeButton_Click(object sender, RoutedEventArgs e)
@@ -1956,10 +2633,10 @@ namespace UFOS.ai.HedgeFund
             if (sym == null || rec == null) return;
             var isAi = IsAiRecommendation(rec, out _, out _);
             var message = $"Execute the {(isAi ? "AI-generated " : "rule-based ")}recommendation for {sym.Symbol}: {rec.Action}, " +
-                          $"target {FundFormat.Fraction(rec.TargetWeight, 1, signed: true)} of equity (now {FundFormat.Fraction(rec.CurrentWeight ?? 0, 1, signed: true)}).\n\n" +
+                          $"target {FundFormat.Fraction(rec.TargetWeight, 1, signed: true)} of equity (now {FundFormat.Fraction(rec.CurrentWeight, 1, signed: true)}).\n\n" +
                           "The paper broker places the simulated market order(s) needed to reach the target — queued until the next open while the market is closed. " +
                           "The minimum holding period is ignored for this manual acceptance.";
-            if (!FundDialogs.Confirm(this, "Execute recommendation", message, "Execute", footnote: "Paper trading · simulated · not investment advice"))
+            if (!FundDialogs.Confirm(this, "Execute recommendation", message, "Execute", footnote: "Paper trading · simulated money"))
                 return;
 
             ExecuteButton.IsEnabled = false;
@@ -2140,7 +2817,7 @@ namespace UFOS.ai.HedgeFund
                     : "The market is closed (or its state is unknown): the order is queued and fills at the next open.";
             }
             if (!FundDialogs.Confirm(this, "Confirm paper order", $"{sideText} {sizeText} of {ticker} — market order.\n\n{market}",
-                    "Place paper order", footnote: "Paper trading · simulated · not investment advice"))
+                    "Place paper order", footnote: "Paper trading · simulated money"))
                 return;
 
             ManualStatusText.Text = "Placing order…";
@@ -2199,8 +2876,10 @@ namespace UFOS.ai.HedgeFund
                 Cell(0, FundFormat.LocalTime(run.StartedAt, "MM-dd HH:mm:ss"), FundPalette.Text);
                 Cell(1, run.Status ?? "?", FundRunDetailsWindow.StatusBrush(run.Status));
                 Cell(2, riskWatch ? "risk watch" : run.Trigger ?? "", riskWatch ? FundPalette.Risk : FundPalette.Faint);
-                Cell(3, riskWatch ? "no AI" : "judge " + (run.JudgeMode ?? "—"),
-                     riskWatch || string.Equals(run.JudgeMode, "none", StringComparison.OrdinalIgnoreCase) ? FundPalette.Faint : FundPalette.Dim);
+                var judgeMode = (run.JudgeMode ?? "").ToLowerInvariant();
+                Cell(3, riskWatch ? "no AI" : judgeMode == "unavailable" ? "judge unavailable" : "judge " + (run.JudgeMode ?? "—"),
+                     riskWatch || judgeMode == "none" ? FundPalette.Faint
+                     : judgeMode == "unavailable" || judgeMode == "mixed" ? FundPalette.Risk : FundPalette.Dim);
                 Cell(4, (run.CostUsd ?? 0) > 0 ? FundFormat.Usd(run.CostUsd) : "$0", FundPalette.Dim);
                 var flips = run.Flips?.Count ?? 0;
                 var summary = riskWatch
@@ -2240,8 +2919,9 @@ namespace UFOS.ai.HedgeFund
         private static string JudgeOrigin(string? judgeMode) => (judgeMode ?? "").ToLowerInvariant() switch
         {
             "llm" => "Verdicts: AI-generated (language model judge) — " + AiContent.Caveat,
-            "mixed" => "Verdicts: partly AI-generated (language model judge), partly rule-based — " + AiContent.Caveat,
-            "rules" => "Verdicts: rule-based (no AI)",
+            "mixed" => "Verdicts: partly AI-generated (language model judge); for the other symbols the judge was unavailable — no verdict — " + AiContent.Caveat,
+            "unavailable" => "Judge unavailable — no new verdicts in this run (see the run details for the reason)",
+            "rules" => "Verdicts: rule-based (no AI, older engine version)",
             "none" => "No verdicts in this run",
             _ => "Verdicts: origin unknown",
         };
@@ -2249,12 +2929,16 @@ namespace UFOS.ai.HedgeFund
         private static string JudgeAutomationPrefix(string? judgeMode) => (judgeMode ?? "").ToLowerInvariant() switch
         {
             "llm" => "AI-generated verdicts. ",
-            "mixed" => "AI-generated verdicts (partly rule-based). ",
-            "rules" => "Rule-based verdicts. ",
+            "mixed" => "AI-generated verdicts for some symbols, judge unavailable for others. ",
+            "unavailable" => "Judge unavailable, no new verdicts. ",
+            "rules" => "Rule-based verdicts, older engine version. ",
             _ => "",
         };
 
-        private async Task OpenRunDetailsAsync(long id)
+        // dlgguard (2026-10-23): one at a time — queued clicks / a second shortcut return at once; the dialog itself is open-once
+        private Task OpenRunDetailsAsync(long id) => DialogGuard.RunAsync("fund-run-details:" + id.ToString(Inv), () => OpenRunDetailsCoreAsync(id));
+
+        private async Task OpenRunDetailsCoreAsync(long id)
         {
             HistoryStatusText.Text = "Loading run #" + id.ToString(Inv) + "…";
             var result = await FundClient.GetRunAsync(id);
@@ -2301,14 +2985,68 @@ namespace UFOS.ai.HedgeFund
 
         // ---------- backtest / exports ----------
 
+        // Strategy Platform stage 3 (SPEC §8.6): the Overview's Backtest button opens the new backtest
+        // dialog for the library strategy "Council Rules (no AI)" (renamed from "Agentic Committee (rules)", 2026-10-06). The old rule-strategy backtest
+        // (LegacyBacktest_Click → POST /fund/backtest, FundBacktestResultWindow) stays in the code but is
+        // no longer wired to any control; it is removed in stage 10.
+        private const string OverviewBacktestLibraryKey = "agentic_committee_rules";
+
         private async void Backtest_Click(object sender, RoutedEventArgs e)
         {
+            BacktestButton.IsEnabled = false;
+            try
+            {
+                var list = await PlatformClient.GetStrategiesAsync();
+                if (!list.Ok)
+                {
+                    FundDialogs.Info(this, "Backtest", list.Message);
+                    return;
+                }
+                var strategy = list.Value?.Strategies?.FirstOrDefault(s =>
+                    string.Equals(s.LibraryKey, OverviewBacktestLibraryKey, StringComparison.Ordinal) ||
+                    string.Equals(s.Library?.Key, OverviewBacktestLibraryKey, StringComparison.Ordinal));
+                if (strategy == null)
+                {
+                    var seed = list.Value?.LibraryStatus?.Message;
+                    FundDialogs.Info(this, "Backtest",
+                        "The library strategy \"Council Rules (no AI)\" (library key " + OverviewBacktestLibraryKey + ") was not found in the strategy list."
+                        + (string.IsNullOrWhiteSpace(seed) ? "" : "\n\nAlpha library status: " + seed));
+                    return;
+                }
+                string? benchmark = null;
+                if (strategy.CurrentVersion is int version)
+                {
+                    var ver = await PlatformClient.GetStrategyVersionAsync(strategy.Id, version);
+                    if (!ver.Ok)
+                    {
+                        FundDialogs.Info(this, "Backtest", ver.Message);
+                        return;
+                    }
+                    if (ver.Value?.Spec is JsonElement spec && spec.ValueKind == JsonValueKind.Object)
+                        benchmark = StrategyJson.Str(spec, "benchmark");
+                }
+                var name = string.IsNullOrWhiteSpace(strategy.Name) ? "Council Rules (no AI)" : strategy.Name!;
+                await BacktestLauncher.RunAsync(this, strategy.Id, name, strategy.CurrentVersion, benchmark);
+            }
+            finally
+            {
+                BacktestButton.IsEnabled = true;
+            }
+        }
+
+        // Unused since stage 3 (see above) — kept unchanged until stage 10.
+        // dlgguard (2026-10-23): the button is disabled while the form + backtest run; queued clicks return at once
+        private async void LegacyBacktest_Click(object sender, RoutedEventArgs e)
+            => await DialogGuard.RunAsync("fund-legacy-backtest", () => LegacyBacktestCoreAsync(sender, e), sender, "Running…");
+
+        private async Task LegacyBacktestCoreAsync(object sender, RoutedEventArgs e)
+        {
             var defaults = string.Join(", ", WatchlistFromParams());
-            var values = FundDialogs.Form(this, "Backtest",
-                "Rule-based backtest on daily bars: technical + macro agents with risk sizing, fills at the next open, fees and borrow cost included, no dividends. " +
+            var values = FundDialogs.Form(this, "Backtest rule strategy",
+                "Backtest rule strategy on daily bars: technical + macro agents with risk sizing, fills at the next open, fees and borrow cost included, no dividends. " +
                 "No AI is used (a language model could know the outcome).",
                 new[] { ("Symbols (comma separated, max 10, empty = watchlist)", defaults), ("Years (1–20)", "5") },
-                "Run backtest", footnote: "Hypothetical, simulated results — not investment advice.");
+                "Run backtest", footnote: "Hypothetical, simulated results — they do not indicate future results.");
             if (values == null) return;
 
             var symbols = new List<string>();
@@ -2413,6 +3151,13 @@ namespace UFOS.ai.HedgeFund
             FundSettings.MuteNotifications = MuteToastsCheck.IsChecked == true;
         }
 
+        /// <summary>Stage 9b (SPEC §20.8): start the backend together with UFOS.ai (applies from the next app start).</summary>
+        private void StartWithAppCheck_Click(object sender, RoutedEventArgs e)
+        {
+            FundSettings.StartWithApp = StartWithAppCheck.IsChecked == true;
+            StartWithAppCheck.IsChecked = FundSettings.StartWithApp;   // shows what was actually stored
+        }
+
         private void KeepRunningCheck_Click(object sender, RoutedEventArgs e)
         {
             var wanted = KeepRunningCheck.IsChecked == true;
@@ -2442,7 +3187,7 @@ namespace UFOS.ai.HedgeFund
         }
 
         /// <summary>
-        /// "Stop engine…": kill switch (POST /fund/kill, reason "engine stopped by user") and then
+        /// "Stop engine…": kill switch (POST /v2/oms/kill — both engines, S10 C1; reason "engine stopped by user") and then
         /// POST /shutdown (token-authenticated, loopback only) — the in-app way to end a detached
         /// engine. If the halt is not confirmed, the user decides whether to shut down anyway.
         /// </summary>
@@ -2457,7 +3202,7 @@ namespace UFOS.ai.HedgeFund
                     (detached ? " — including an engine that keeps running after UFOS.ai closes (detached mode)" : "") + ".\n\n" +
                     "The Financial Newsroom goes offline too. The backend starts again the next time the Hedge Fund window is opened; " +
                     "the halt stays active until you resume the engine.",
-                    "■ Halt and stop engine", danger: true, footnote: "Paper trading · simulated · not investment advice"))
+                    "■ Halt and stop engine", danger: true, footnote: "Paper trading · simulated money"))
                 return;
 
             _stoppingEngine = true;
@@ -2465,7 +3210,7 @@ namespace UFOS.ai.HedgeFund
             StopEngineHintText.Text = "Stopping… (kill switch)";
             try
             {
-                var kill = await FundClient.KillAsync("engine stopped by user");
+                var kill = await PlatformClient.KillAllAsync("engine stopped by user");
                 if (!kill.Ok)
                 {
                     if (!await NewsroomBackend.IsRunningAsync())
@@ -2474,7 +3219,7 @@ namespace UFOS.ai.HedgeFund
                         return;
                     }
                     if (!FundDialogs.Confirm(this, "Kill switch failed",
-                            "The engine did not confirm the halt: " + kill.Describe() +
+                            "The engine did not confirm the halt: " + PlatformClient.DescribeFailure(kill) +
                             "\n\nShut the backend down anyway? Open simulated positions then stay as they are until the next start " +
                             "(the autopilot is always off after a backend start).",
                             "Shut down anyway", danger: true))
@@ -2483,11 +3228,7 @@ namespace UFOS.ai.HedgeFund
 
                 StopEngineHintText.Text = "Stopping… (shutting the backend down)";
                 var (ok, message) = await NewsroomBackend.ShutdownAsync();
-                var orders = kill.Value?.Orders ?? new List<FundOrder>();
-                var killText = !kill.Ok ? "The halt was not confirmed. "
-                    : orders.Count == 0 ? "The engine was halted (no positions to close). "
-                    : "The engine was halted; closing orders:\n" + string.Join("\n", orders.Take(8).Select(FundOrderText.Result)) +
-                      (orders.Count > 8 ? "\n…" : "") + "\n\n";
+                var killText = !kill.Ok ? "The halt was not confirmed. " : KillResultText(kill.Value).Text + "\n\n";
                 FundDialogs.Info(this, ok ? "Engine stopped" : "Engine not stopped", killText + message);
             }
             catch (Exception ex)

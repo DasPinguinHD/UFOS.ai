@@ -21,7 +21,7 @@ except ImportError:  # pragma: no cover
     from tests.fund_testkit import SYMS, EngineCase
 
 from fund import api as fund_api
-from fund import params as P
+from strategy_platform.core import params as P
 from fund import store
 
 _BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -129,6 +129,31 @@ class HandlerTest(EngineCase):
         self.assertEqual(call(self.api, "execute", body={}, match={"id": str(rec["id"])})[0], 409)
         self.assertEqual(call(self.api, "execute", body={}, match={"id": "12345"})[0], 404)
 
+    def test_execute_with_failing_data_source_is_503_with_reason(self):
+        from strategy_platform.core.errors import DataSourceUnavailable
+        self.cycle()
+        rec = store.latest_recommendations()["QQQ"]
+
+        def down(sym):
+            raise DataSourceUnavailable("alpaca", "quotes", "HTTP 503")
+        self.feed.quote = down
+        status, err = call(self.api, "execute", body={}, match={"id": str(rec["id"])})
+        self.assertEqual(status, 503)
+        self.assertIn("alpaca is unavailable for quotes", err["error"])
+
+    def test_state_carries_judge_unavailable_per_symbol(self):
+        """D9 (2026-10-02): budget reached -> no recommendation, the reason per symbol."""
+        store.save_params(dict(store.effective_params()[1], ai_daily_budget_usd=0.01), "test")
+        store.add_ai_spend(0.05)
+        self.cycle()
+        status, st = call(self.api, "state")
+        self.assertEqual(status, 200)
+        for row in st["symbols"]:
+            self.assertEqual(row["judge_unavailable"], "AI budget reached — raise the limit in Settings to continue.")
+            self.assertIsNone(row["data_unavailable"])
+            self.assertIsNone(row["recommendation"])
+        self.assertEqual(st["engine"]["last_run"]["judge_mode"], "unavailable")
+
     def test_equity_and_reset(self):
         self.cycle()
         status, eq = call(self.api, "equity")
@@ -210,6 +235,14 @@ class _StubRequest:
 
     async def text(self):
         return self._text or ""
+
+
+def _drop_module(name):
+    """Pop ``name`` from sys.modules and drop the parent package attribute that still points at it."""
+    mod = sys.modules.pop(name, None)
+    parent, _, child = name.rpartition(".")
+    if mod is not None and parent and getattr(sys.modules.get(parent), child, None) is mod:
+        delattr(sys.modules[parent], child)
 
 
 class RegisterTest(EngineCase):
@@ -309,7 +342,7 @@ class MainImportTest(unittest.TestCase):
                 if name.startswith(("newsroom.ai", "main_smoke", "config", "api_auth", "aiohttp", "websockets",
                                     "dotenv", "openai", "logging_setup", "newsroom.fred", "newsroom.sec",
                                     "newsroom.calendar", "newsroom.overview", "newsroom.insider_summary")):
-                    sys.modules.pop(name, None)
+                    _drop_module(name)
             for name, m in saved.items():
                 if m is None:
                     sys.modules.pop(name, None)

@@ -1,5 +1,5 @@
-"""Judge: rule score, rule judge with hysteresis, change detection and the
-batch LLM judge — fund/SPEC.md §8.
+"""Judge: rule score (an input only), change detection and the batch LLM
+judge — fund/SPEC.md §8.
 
 Paper-trading proof of concept; decisions are simulated and not investment
 advice. Public API (wired by the engine):
@@ -8,16 +8,17 @@ advice. Public API (wired by the engine):
 - ``rule_action(s, previous_action) -> "LONG"|"SHORT"|"FLAT"``
 - ``rule_confidence(s, agreement) -> float``
 - ``apply_veto(action, risk) -> (action, note|None)``
-- ``rule_decision(symbol, signals, risk, previous_action, params, prefix="Rule-based") -> JudgeDecision``
+- ``rule_suggestion(signals, previous_action, params) -> {score, agreement, action, confidence}``
+  (prompt input / change detection only — never a recommendation)
 - ``needs_judgement(previous, signals, rule_act, params, now, risk=None, llm_possible=False) -> (bool, reason)``
 - ``previous_state(judged, latest=None, agent_scores=None, position_changed=False, params_changed=False,
-  last_rule_action=None) -> dict``
+  last_rule_action=None, judge_retry=False) -> dict``
 - ``rule_action_from_score(score) -> action | None`` (None inside the hysteresis band)
 - ``decision_params_changed(old_params, new_params) -> bool``
 - ``is_flip(previous_action, new_action, has_position) -> bool``
 - ``await judge(ctx, signals_by_symbol, risk_by_symbol, previous, params, budget, llm=chat_json)
-  -> {symbol: JudgeDecision}``
-- ``summarize(decisions) -> {"judge_mode", "models", "cost_usd", "sources"}`` for the run row.
+  -> {symbol: JudgeDecision | JudgeUnavailable}``
+- ``summarize(decisions) -> {"judge_mode", "models", "cost_usd", "sources", "unavailable"}`` for the run row.
 
 ``previous`` (per symbol, missing = no history) is the dict built by
 ``previous_state``::
@@ -29,7 +30,8 @@ advice. Public API (wired by the engine):
      "agent_scores": {agent: score} of the judged recommendation's run,
      "last_rule_action": <the RULE judge's action of the previous cycle> | None,
      "position_changed": bool,   # position changed outside the loop
-     "params_changed": bool}     # decision-relevant params changed since then
+     "params_changed": bool,     # decision-relevant params changed since then
+     "judge_retry": bool}        # the last judgement attempt for the symbol failed
 
 Change detection compares the current rule action with the previous RULE
 action (not with the last, possibly LLM-made, action): while the LLM
@@ -39,9 +41,16 @@ previous rule action (first cycle after a restart, score inside the band)
 -> compared with the last action as before (at most one extra call).
 
 Decision sources: "llm" (provenance feature ``fund-judge`` + usage share of
-the batch call), "rules" (rationale starts with "Rule-based" and names the
-reason, never dressed as AI), "carried" (previous judged decision re-used;
-``carried_from`` = its id; its provenance is kept, usage None).
+the batch call), "carried" (previous AI-judged decision re-used because
+nothing material changed; ``carried_from`` = its id; its provenance is kept,
+usage None). When the AI judge cannot judge a symbol (no key, request error,
+invalid answer, budget reached / 0) the symbol gets a ``JudgeUnavailable``
+with the user-facing reason (e.g. "AI budget reached — raise the limit in
+Settings to continue.") and NO decision: the rule-based stand-in judge was
+removed (user decision D9, 2026-10-02; CLAUDE.md "No unrequested
+fallbacks"). The rule score stays only as an input to the prompt and to the
+change detection. Legacy recommendations with source "rules" are never
+carried — they always need an AI judgement.
 """
 from __future__ import annotations
 
@@ -49,10 +58,11 @@ import json
 from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from . import llm as llm_mod
-from .agents.macro import asset_class
-from .llm import LlmUnavailable, chat_json
-from .types import ACTIONS, DIRECTIONAL_AGENTS, AgentSignal, JudgeDecision, RiskAssessment
+from strategy_platform.core import llm as llm_mod
+from strategy_platform.strategy.features.macro_agent import asset_class
+from strategy_platform.core.llm import LlmUnavailable, chat_json
+from strategy_platform.core.types import (ACTIONS, DIRECTIONAL_AGENTS, AgentSignal, JudgeDecision, JudgeUnavailable,
+                                         RiskAssessment)
 
 FEATURE = "fund-judge"
 FEATURE_LABEL = "Hedge Fund · Judge"
@@ -90,7 +100,7 @@ Answer with JSON ONLY — no prose, no code fences — an array with one object 
 [{"symbol": "SPY", "action": "LONG", "confidence": 0.62, "rationale": "..."}]"""
 
 
-# --- rule judge ---------------------------------------------------------------------
+# --- rule score (inputs only) -----------------------------------------------------------
 
 def _sign(x: float) -> int:
     return 1 if x > 0 else -1 if x < 0 else 0
@@ -175,16 +185,14 @@ def apply_veto(action: str, risk: Optional[RiskAssessment]) -> Tuple[str, Option
     return action, None
 
 
-def rule_decision(symbol: str, signals, risk: Optional[RiskAssessment], previous_action: Optional[str],
-                  params: dict, prefix: str = "Rule-based") -> JudgeDecision:
+def rule_suggestion(signals, previous_action: Optional[str], params: dict) -> dict:
+    """The pure rule INPUT for the LLM prompt and for change detection:
+    {"score", "agreement", "action", "confidence"}. It never becomes a
+    recommendation by itself — the former rule-judge stand-in is removed
+    (user decision D9, 2026-10-02)."""
     s, agr = rule_score(signals, (params or {}).get("agent_weights"))
-    act = rule_action(s, previous_action)
-    conf = rule_confidence(s, agr)
-    final, note = apply_veto(act, risk)
-    text = (f"{prefix}: weighted agent score {s:+.2f} with {agr * 100:.0f}% agreement → {act}"
-            + (f"; {note} → FLAT" if note else "") + ".")
-    return JudgeDecision(symbol=symbol, action=final, confidence=round(conf, 4), rationale=text, source="rules",
-                         rule_score=round(s, 4), rule_action=act)
+    return {"score": round(s, 4), "agreement": round(agr, 4), "action": rule_action(s, previous_action),
+            "confidence": round(rule_confidence(s, agr), 4)}
 
 
 # --- change detection -------------------------------------------------------------------
@@ -214,7 +222,7 @@ def decision_params_changed(old_params: Optional[dict], new_params: Optional[dic
 
 def previous_state(judged: Optional[dict], latest: Optional[dict] = None, agent_scores=None,
                    position_changed: bool = False, params_changed: bool = False,
-                   last_rule_action: Optional[str] = None) -> dict:
+                   last_rule_action: Optional[str] = None, judge_retry: bool = False) -> dict:
     """Builds the per-symbol ``previous`` dict. ``agent_scores``: {agent: score}
     or store.agent_scores(run_id, symbol) rows. ``last_rule_action``: the rule
     judge's action of the previous cycle (engine memory); when None it is
@@ -233,16 +241,23 @@ def previous_state(judged: Optional[dict], latest: Optional[dict] = None, agent_
     rule_prev = last_rule_action if last_rule_action in ACTIONS else \
         rule_action_from_score((latest or judged or {}).get("rule_score"))
     return {"judged": judged, "last_action": last, "agent_scores": scores, "last_rule_action": rule_prev,
-            "position_changed": bool(position_changed), "params_changed": bool(params_changed)}
+            "position_changed": bool(position_changed), "params_changed": bool(params_changed),
+            "judge_retry": bool(judge_retry)}
 
 
 def needs_judgement(previous: Optional[dict], signals, rule_act: str, params: dict, now,
                     risk: Optional[RiskAssessment] = None, llm_possible: bool = False) -> Tuple[bool, str]:
     """(True, reason) when the symbol must be judged again (SPEC §8.3), else
-    (False, "no material change")."""
+    (False, "no material change"). ``llm_possible`` is accepted for
+    compatibility and no longer used: a rule-based judgement (legacy rows
+    before 2026-10-02) is never carried."""
     judged = (previous or {}).get("judged")
     if not previous or not judged:
         return True, "no previous recommendation"
+    if previous.get("judge_retry"):
+        return True, "the last judgement attempt failed"
+    if judged.get("source") == "rules":
+        return True, "last judgement was rule-based (legacy) — needs an AI judgement"
     if previous.get("params_changed"):
         return True, "decision parameters changed"
     if previous.get("position_changed"):
@@ -277,8 +292,6 @@ def needs_judgement(previous: Optional[dict], signals, rule_act: str, params: di
         vetoed, _ = apply_veto(last_action or "FLAT", risk)
         if vetoed != (last_action or "FLAT"):
             return True, "risk now vetoes the last action"
-    if llm_possible and judged.get("source") == "rules":
-        return True, "last judgement was rule-based; AI available again"
     return False, "no material change"
 
 
@@ -322,8 +335,10 @@ def _position_info(ctx, symbol: str) -> Optional[dict]:
         return None
     info = {"side": pos.side, "qty": pos.qty}
     acct = getattr(ctx, "account", None)
-    if acct is not None and getattr(acct, "equity", 0):
+    if acct is not None and getattr(acct, "equity", 0) and pos.market_value is not None:
         info["weight_pct"] = round(pos.market_value / acct.equity * 100.0, 2)
+    elif pos.market_value is None:
+        info["valuation"] = "paused: no current quote"
     return info
 
 
@@ -344,9 +359,10 @@ def build_messages(ctx, items: Dict[str, dict]) -> List[dict]:
             "risk": {"veto": risk.veto, "veto_short": risk.veto_short,
                      "size_multiplier": round(risk.size_multiplier, 3), "block_increase": risk.block_increase,
                      "block_short_increase": bool(getattr(risk, "block_short_increase", False)),
+                     "unavailable": getattr(risk, "unavailable", None),
                      "reasons": [llm_mod.sanitize_untrusted(r, 120) for r in risk.reasons]},
-            "rule_suggestion": {"action": it["rule"].rule_action, "score": it["rule"].rule_score,
-                                "confidence": it["rule"].confidence},
+            "rule_suggestion": {"action": it["rule"]["action"], "score": it["rule"]["score"],
+                                "confidence": it["rule"]["confidence"]},
         })
     user = ("Judge these symbols (swing horizon, days to weeks): " + ", ".join(items) + ".\n<<<DATA\n"
             + json.dumps(payload, ensure_ascii=False, indent=1) + "\nDATA>>>\nReturn the JSON array only.")
@@ -374,7 +390,7 @@ def _clip_words(text: str, n: int = RATIONALE_MAX_WORDS) -> str:
 def validate_answer(parsed, items: Dict[str, dict]) -> Dict[str, Tuple[str, float, str, Optional[str]]]:
     """{symbol: (action, confidence, rationale, veto_note)} for every valid item
     of a requested symbol; unknown symbols / actions and missing or invalid
-    confidences are dropped (-> rule fallback). Confidence: 0..1 as is,
+    confidences are dropped (-> that symbol is unavailable this run). Confidence: 0..1 as is,
     1 < c ≤ 100 is read as a percentage (c/100), negative / > 100 / non-finite
     is invalid. Vetoed directions become FLAT."""
     out = {}
@@ -393,7 +409,7 @@ def validate_answer(parsed, items: Dict[str, dict]) -> Dict[str, Tuple[str, floa
         except (TypeError, ValueError, OverflowError):
             continue
         if conf != conf or conf < 0.0 or conf > 100.0:
-            continue                     # NaN / negative / > 100 % -> rule result for this symbol
+            continue                     # NaN / negative / > 100 % -> unavailable for this symbol
         if conf > 1.0:
             conf = conf / 100.0          # a model answering in percent ("82", also "3" = 3 %)
         conf = max(0.0, min(1.0, conf))
@@ -403,29 +419,40 @@ def validate_answer(parsed, items: Dict[str, dict]) -> Dict[str, Tuple[str, floa
     return out
 
 
-async def _batch(ctx, items: Dict[str, dict], tier: str, budget, llm) -> Tuple[Optional[dict], Optional[str], dict]:
-    """One LLM call. -> (validated answers or None, fallback prefix or None, meta)."""
+def _unavailable_message(ex: LlmUnavailable) -> str:
+    if ex.reason == "no_key":
+        return ex.message or "OpenRouter API key is not set — enter it in Hedge Fund → Settings → Keys."
+    if ex.reason == "budget":
+        return llm_mod.BUDGET_REACHED_MESSAGE
+    if ex.reason == "bad_json":
+        return "AI judge answer was invalid — no new recommendation this run."
+    return f"AI judge request failed: {llm_mod.sanitize_untrusted(ex.message, 160) or 'unknown error'}"
+
+
+async def _batch(ctx, items: Dict[str, dict], tier: str, budget, llm) -> Tuple[Optional[dict], Optional[tuple], dict]:
+    """One LLM call. -> (validated answers or None, (reason, user message) when
+    the call failed / was not made, meta {model, usage, error})."""
     model = llm_mod.models()[tier]
     messages = build_messages(ctx, items)
     max_tokens = min(4000, 150 + 130 * len(items))
     estimate = llm_mod.estimate_cost(messages, max_tokens, tier)
     if budget is not None and not budget.can_spend(estimate):
-        return None, "Rule-based (AI budget reached)", {}
+        return None, ("budget", llm_mod.budget_message(budget)), {}
     try:
         parsed, _raw, used_model, usage = await llm(messages, model, max_tokens, FEATURE, FEATURE_LABEL,
                                                    temperature=0.2)
     except LlmUnavailable as ex:
         llm_mod.charge_failed_call(budget, ex, estimate)   # completed call / sent but timed out
-        prefix = {"no_key": "Rule-based (AI not configured)", "bad_json": "Rule-based (AI answer invalid)",
-                  "budget": "Rule-based (AI budget reached)"}.get(ex.reason, "Rule-based (AI unavailable)")
         meta = {"error": ex.message}
         if ex.usage is not None:      # the call went through (e.g. garbage JSON): its cost is shown too
             share = llm_mod.split_usage(ex.usage, len(items), fallback_cost=llm_mod.usage_cost(ex.usage, estimate))
             share["tier"] = tier
             meta.update({"usage": share, "model": ex.model or model})
-        return None, prefix, meta
+        return None, (ex.reason if ex.reason in ("no_key", "bad_json", "budget") else "error",
+                      _unavailable_message(ex)), meta
     except Exception as ex:
-        return None, "Rule-based (AI unavailable)", {"error": str(ex)[:200]}
+        return None, ("error", "AI judge request failed — no new recommendation this run."), \
+            {"error": str(ex)[:200]}
     cost = llm_mod.usage_cost(usage, estimate)
     if budget is not None:
         budget.add(cost)
@@ -434,75 +461,92 @@ async def _batch(ctx, items: Dict[str, dict], tier: str, budget, llm) -> Tuple[O
     return validate_answer(parsed, items), None, {"model": used_model or model, "usage": share}
 
 
-def summarize(decisions: Dict[str, JudgeDecision]) -> dict:
-    """judge_mode llm|rules|mixed|none (carried ones count by their origin
-    being re-used, i.e. they don't change the mode), models used, AI cost."""
-    fresh = [d for d in decisions.values() if d.source in ("llm", "rules")]
+def summarize(decisions: Dict[str, object]) -> dict:
+    """For the run row: judge_mode "llm" (every symbol that needed a judgement
+    got an AI judgement), "unavailable" (none did), "mixed" (some did, some
+    are unavailable), "none" (nothing needed judging — all carried); models
+    used; AI cost of the decisions (incl. failed calls that still cost money)
+    and the sorted list of sources. ``unavailable`` maps symbol -> message."""
+    fresh = [d for d in decisions.values() if d.source == "llm"]
+    missing = {s: d for s, d in decisions.items() if isinstance(d, JudgeUnavailable)}
     sources = sorted({d.source for d in decisions.values()})
-    if not fresh:
-        mode = "none"
-    elif all(d.source == "llm" for d in fresh):
-        mode = "llm"
-    elif all(d.source == "rules" for d in fresh):
-        mode = "rules"
-    else:
+    if fresh and missing:
         mode = "mixed"
-    models = sorted({d.model for d in fresh if d.source == "llm" and d.model})
+    elif fresh:
+        mode = "llm"
+    elif missing:
+        mode = "unavailable"
+    else:
+        mode = "none"
+    models = sorted({d.model for d in fresh if d.model})
     cost = 0.0
-    for d in fresh:
+    for d in fresh + list(missing.values()):
         c = (d.usage or {}).get("cost_usd")
         if c is not None:
             cost += float(c)
-    return {"judge_mode": mode, "models": models, "cost_usd": round(cost, 8), "sources": sources}
+    return {"judge_mode": mode, "models": models, "cost_usd": round(cost, 8), "sources": sources,
+            "unavailable": {s: d.message for s, d in missing.items()}}
+
+
+def unavailable(symbol: str, message: str, reason: str, suggestion: Optional[dict] = None,
+                usage: Optional[dict] = None, model: Optional[str] = None) -> JudgeUnavailable:
+    """No judgement for ``symbol`` this run — never a decision (D9, 2026-10-02)."""
+    sug = suggestion or {}
+    return JudgeUnavailable(symbol=symbol, message=message, reason=reason,
+                            rule_score=float(sug.get("score") or 0.0), rule_action=sug.get("action") or "FLAT",
+                            model=model, usage=dict(usage) if usage else None)
 
 
 async def judge(ctx, signals_by_symbol: dict, risk_by_symbol: dict, previous: Optional[dict], params: dict,
-                budget, llm=chat_json) -> Dict[str, JudgeDecision]:
-    """See module docstring. Never raises for LLM problems (rule fallback)."""
+                budget, llm=chat_json) -> Dict[str, object]:
+    """See module docstring. -> {symbol: JudgeDecision | JudgeUnavailable}.
+    Never raises for LLM problems: a symbol the AI cannot judge (no key,
+    error, invalid answer, budget) becomes ``JudgeUnavailable`` with the
+    user-facing reason — there is NO rule-based stand-in (user decision D9,
+    2026-10-02; CLAUDE.md "No unrequested fallbacks")."""
     params = params or {}
     previous = previous or {}
     now = getattr(ctx, "now", None) or datetime.now(timezone.utc).isoformat(timespec="seconds")
     limit = float(params.get("ai_daily_budget_usd", 0.0) or 0.0)
-    llm_possible = limit > 0 and (budget is None or not budget.exhausted)
-    decisions: Dict[str, JudgeDecision] = {}
+    decisions: Dict[str, object] = {}
     todo: Dict[str, dict] = {}
     for sym, sigs in (signals_by_symbol or {}).items():
         sig_map = _as_signal_map(sigs)
         risk = (risk_by_symbol or {}).get(sym) or RiskAssessment(symbol=sym)
         prev = previous.get(sym)
         last_action = (prev or {}).get("last_action")
-        rule = rule_decision(sym, sig_map, risk, last_action, params)
-        need, reason = needs_judgement(prev, sig_map, rule.rule_action, params, now, risk, llm_possible)
+        sug = rule_suggestion(sig_map, last_action, params)
+        need, reason = needs_judgement(prev, sig_map, sug["action"], params, now, risk)
         if not need:
-            decisions[sym] = carried_decision(sym, prev["judged"], rule.rule_score, rule.rule_action)
+            decisions[sym] = carried_decision(sym, prev["judged"], sug["score"], sug["action"])
             continue
-        todo[sym] = {"signals": sig_map, "risk": risk, "rule": rule, "previous_action": last_action,
+        todo[sym] = {"signals": sig_map, "risk": risk, "rule": sug, "previous_action": last_action,
                      "reason": reason}
     if not todo:
         return decisions
 
-    def _fallback(symbols: Iterable[str], prefix: str, usage: Optional[dict] = None):
+    def _none(symbols: Iterable[str], reason: str, message: str, usage: Optional[dict] = None,
+              model: Optional[str] = None):
         for s in symbols:
-            it = todo[s]
-            decisions[s] = rule_decision(s, it["signals"], it["risk"], it["previous_action"], params, prefix=prefix)
-            if usage:
-                decisions[s].usage = dict(usage)
+            decisions[s] = unavailable(s, message, reason, todo[s]["rule"], usage, model)
 
     if limit <= 0:
-        _fallback(todo, "Rule-based (AI disabled: daily budget 0)")
+        _none(todo, "disabled", llm_mod.AI_DISABLED_MESSAGE)
         return decisions
     if budget is not None and budget.exhausted:
-        _fallback(todo, "Rule-based (AI budget reached)")
+        _none(todo, "budget", llm_mod.budget_message(budget, limit))
         return decisions
 
     mode = params.get("judge_model_mode", "standard")
     tier = "premium" if mode == "premium" else "standard"
-    answers, prefix, meta = await _batch(ctx, todo, tier, budget, llm)
+    answers, failure, meta = await _batch(ctx, todo, tier, budget, llm)
     if answers is None:
-        _fallback(todo, prefix or "Rule-based (AI unavailable)", meta.get("usage"))
+        reason, message = failure or ("error", "AI judge unavailable — no new recommendation this run.")
+        _none(todo, reason, message, meta.get("usage"), meta.get("model"))
         return decisions
     usage_by_sym = {s: dict(meta["usage"]) for s in answers}
     model_by_sym = {s: meta["model"] for s in answers}
+    skip: set = set()                  # symbols already decided as unavailable (premium flip failed)
 
     if mode == "premium_on_flip":
         flips = {}
@@ -512,31 +556,45 @@ async def judge(ctx, signals_by_symbol: dict, risk_by_symbol: dict, previous: Op
             if is_flip(todo[s]["previous_action"], action, has_pos):
                 flips[s] = todo[s]
         if flips:
-            p_answers, _p_prefix, p_meta = await _batch(ctx, flips, "premium", budget, llm)
+            p_answers, p_failure, p_meta = await _batch(ctx, flips, "premium", budget, llm)
             if p_answers:
                 for s, ans in p_answers.items():
                     answers[s] = ans
                     usage_by_sym[s] = llm_mod.merge_usage(usage_by_sym.get(s), p_meta["usage"])
                     model_by_sym[s] = p_meta["model"]
-            # premium failed / over budget -> the standard answer stands; its cost share still counts
+            # premium failed / over budget / no valid item: NO recommendation for that flip this
+            # run — the standard answer is not used as a stand-in (user decision 2026-10-02)
             for s in flips:
-                if not (p_answers and s in p_answers) and p_meta.get("usage") and s in usage_by_sym:
-                    usage_by_sym[s] = llm_mod.merge_usage(usage_by_sym[s], p_meta["usage"])
+                if p_answers and s in p_answers:
+                    continue
+                usage = llm_mod.merge_usage(usage_by_sym.get(s), p_meta.get("usage")) if p_meta.get("usage") \
+                    else usage_by_sym.get(s)
+                if p_failure is not None:
+                    reason, msg = p_failure
+                    msg = msg if reason == "budget" else f"Premium AI judge unavailable for this flip: {msg}"
+                else:
+                    reason, msg = "invalid_item", ("Premium AI judge answer had no valid result for this symbol — "
+                                                   "no new recommendation this run.")
+                decisions[s] = unavailable(s, msg, reason, todo[s]["rule"], usage, p_meta.get("model"))
+                answers.pop(s, None)
+                skip.add(s)
 
     for s, it in todo.items():
+        if s in skip:
+            continue
         ans = answers.get(s)
         if ans is None:
-            d = rule_decision(s, it["signals"], it["risk"], it["previous_action"], params,
-                              prefix="Rule-based (AI answer invalid for this symbol)")
-            d.usage = usage_by_sym.get(s) or dict(meta["usage"])  # the call still cost money
-            decisions[s] = d
+            # the call still cost money: its share is kept on the unavailable entry
+            decisions[s] = unavailable(s, "AI judge answer had no valid result for this symbol — no new "
+                                          "recommendation this run.", "invalid_item", it["rule"],
+                                       usage_by_sym.get(s) or dict(meta["usage"]), meta.get("model"))
             continue
         action, conf, rationale, note = ans
         if note:
             rationale = f"{rationale} [{note} → FLAT]"
         model = model_by_sym.get(s) or meta["model"]
         decisions[s] = JudgeDecision(symbol=s, action=action, confidence=round(conf, 4), rationale=rationale,
-                                     source="llm", rule_score=it["rule"].rule_score,
-                                     rule_action=it["rule"].rule_action, model=model,
+                                     source="llm", rule_score=it["rule"]["score"],
+                                     rule_action=it["rule"]["action"], model=model,
                                      provenance=llm_mod.provenance(FEATURE, model), usage=usage_by_sym.get(s))
     return decisions

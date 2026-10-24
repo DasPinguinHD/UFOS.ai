@@ -30,10 +30,10 @@ from datetime import date
 from typing import List, Optional
 
 from .. import indicators as ind
-from .. import market
-from .. import params as fund_params
-from ..types import RiskAssessment
-from .macro import asset_class
+from strategy_platform.data import market_feed as market
+from strategy_platform.core import params as fund_params
+from strategy_platform.core.types import RiskAssessment
+from strategy_platform.strategy.features.macro_agent import asset_class
 
 HIGH_IMPACT = ("high",)
 
@@ -116,10 +116,15 @@ def assess(ctx, symbol: str, params: Optional[dict] = None) -> RiskAssessment:
         if dd is not None and stop > 0 and float(dd) >= 0.75 * stop:
             mult *= 0.5
             reasons.append(f"drawdown {float(dd):.1f}% near the {stop:.1f}% stop (×0.5)")
-        try:
-            near = calendar_events_near(getattr(ctx, "calendar", None), ctx.now)
-        except Exception:
-            near = []
+        cal_err = getattr(ctx, "calendar_error", None)
+        near = []
+        if cal_err:
+            ra.unavailable = f"unavailable: calendar data could not be loaded ({str(cal_err)[:160]})"
+        else:
+            try:
+                near = calendar_events_near(getattr(ctx, "calendar", None), ctx.now)
+            except Exception as ex:      # never "no events" as a stand-in (user decision 2026-10-02)
+                ra.unavailable = f"unavailable: calendar data could not be read ({type(ex).__name__})"
         if near:
             e = sorted(near, key=lambda x: (x.get("kind") != "fomc", str(x.get("date"))))[0]
             name = "FOMC decision" if e.get("kind") == "fomc" else (e.get("name") or "high-impact release")

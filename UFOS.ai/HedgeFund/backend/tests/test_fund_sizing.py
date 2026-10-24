@@ -4,9 +4,9 @@ Run from HedgeFund/backend:  python -m unittest tests.test_fund_sizing -v
 """
 import unittest
 
-from fund import params as P
+from strategy_platform.core import params as P
 from fund.sizing import plan_trade, target_weight, vol_scaler
-from fund.types import JudgeDecision, PositionView, RiskAssessment
+from strategy_platform.core.types import JudgeDecision, PositionView, RiskAssessment
 
 MON = "2026-10-05T15:00:00+00:00"
 TUE = "2026-10-06T15:00:00+00:00"

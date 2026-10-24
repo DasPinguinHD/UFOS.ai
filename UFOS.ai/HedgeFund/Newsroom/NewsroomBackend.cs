@@ -82,7 +82,7 @@ namespace UFOS.ai.HedgeFund.Newsroom
 
         private static Process? _process;
         private static bool _weStarted;
-        private static StreamWriter? _processLog;
+        private static RotatingLogFile? _processLog; // size-capped: 5 MB, 3 old files (Shared/RotatingLogFile.cs, S10-A2 L6)
         private static Task? _startTask;
         // Incremented by Stop(): a start that was still waiting for the Python environment
         // must not launch the backend after the window was closed.
@@ -163,10 +163,14 @@ namespace UFOS.ai.HedgeFund.Newsroom
                 {
                     var logPath = Path.Combine(backendDir, "data", "logs", "process.log");
                     try { Directory.CreateDirectory(Path.GetDirectoryName(logPath)!); } catch { }
+                    // The detached run script appends to this file itself: cap it before each start (S10-A2 L6).
+                    var rotateProblem = RotatingLogFile.RotateIfLarge(logPath);
+                    if (rotateProblem != null) AppLog.Warn(LogModule, "Could not rotate process.log before the start: " + rotateProblem);
                     psi = new ProcessStartInfo
                     {
-                        FileName = "powershell.exe",
-                        Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{script}\" -SkipInstall -LogFile \"{logPath}\"",
+                        // Absolute Windows PowerShell path + why Bypass stays for this .ps1: Shared/WindowsPowerShell.cs (S10-A2 L4).
+                        FileName = WindowsPowerShell.ExePath,
+                        Arguments = WindowsPowerShell.ScriptArguments(script, $"-SkipInstall -LogFile \"{logPath}\"", "-WindowStyle Hidden"),
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         WorkingDirectory = backendDir,
@@ -177,8 +181,8 @@ namespace UFOS.ai.HedgeFund.Newsroom
                     OpenProcessLog(script);
                     psi = new ProcessStartInfo
                     {
-                        FileName = "powershell.exe",
-                        Arguments = $"-ExecutionPolicy Bypass -File \"{script}\" -SkipInstall",
+                        FileName = WindowsPowerShell.ExePath,
+                        Arguments = WindowsPowerShell.ScriptArguments(script, "-SkipInstall"),
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
@@ -414,7 +418,7 @@ namespace UFOS.ai.HedgeFund.Newsroom
             {
                 var logDir = Path.Combine(Path.GetDirectoryName(script)!, "data", "logs");
                 Directory.CreateDirectory(logDir);
-                _processLog = new StreamWriter(Path.Combine(logDir, "process.log"), append: true) { AutoFlush = true };
+                _processLog = new RotatingLogFile(Path.Combine(logDir, "process.log"));
                 _processLog.WriteLine($"--- {DateTime.Now:yyyy-MM-dd HH:mm:ss} starting backend via run_hedgefund_backend.ps1 ---");
             }
             catch (Exception ex)

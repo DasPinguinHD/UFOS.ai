@@ -18,7 +18,8 @@ from datetime import datetime, timezone
 import aiohttp
 
 import refresh
-from config import OPENSKY_POLL_SECONDS, OPENSKY_CLIENT_ID, OPENSKY_CLIENT_SECRET, OPENSKY_MIN_NOTABLE_ALTITUDE_METERS
+import credstore
+from config import OPENSKY_POLL_SECONDS, OPENSKY_MIN_NOTABLE_ALTITUDE_METERS
 from events import make_event
 from .military_registry import is_notable_military, describe_callsign
 
@@ -51,14 +52,18 @@ class _TokenCache:
         self.expires_at = 0.0
 
     async def get(self, session: aiohttp.ClientSession):
-        if not (OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET):
+        # stage 10 (S10-E): the optional OAuth2 pair lives in the Credential Manager (⚙ Keys & data); missing ->
+        # anonymous, unreadable store -> anonymous with a warning (raised to _poll_once, which logs it)
+        client_id = credstore.get_secret("opensky-client-id")
+        client_secret = credstore.get_secret("opensky-client-secret")
+        if not (client_id and client_secret):
             return None
         if self.token and time.time() < self.expires_at - 30:
             return self.token
         data = {
             "grant_type": "client_credentials",
-            "client_id": OPENSKY_CLIENT_ID,
-            "client_secret": OPENSKY_CLIENT_SECRET,
+            "client_id": client_id,
+            "client_secret": client_secret,
         }
         async with session.post(TOKEN_URL, data=data, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             resp.raise_for_status()

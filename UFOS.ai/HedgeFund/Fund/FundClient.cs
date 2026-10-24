@@ -79,7 +79,9 @@ namespace UFOS.ai.HedgeFund.Fund
         {
             var body = new Dictionary<string, object?>();
             if (!string.IsNullOrWhiteSpace(reason)) body["reason"] = reason.Trim();
-            return SendAsync<FundKillResponse>(HttpMethod.Post, "/fund/kill", body, TimeSpan.FromSeconds(30));
+            // retest 2026-10-23: the platform half waits for every broker account to confirm flat (cancel wait 10 s + up to 3 × 10 s
+            // settle per broker) — 30 s was shorter than the kill itself
+            return SendAsync<FundKillResponse>(HttpMethod.Post, "/fund/kill", body, TimeSpan.FromSeconds(150));
         }
 
         public static Task<FundResult<JsonElement>> ResumeAsync()
@@ -288,6 +290,15 @@ namespace UFOS.ai.HedgeFund.Fund
         // params.autopilot_heartbeat_minutes without the app. Absent on older backends.
         // Kept raw: ISO string expected, epoch seconds tolerated (see LastClientSeenAt).
         [JsonPropertyName("last_client_seen")] public JsonElement? LastClientSeen { get; set; }
+        // Strategy Platform stage 7 (fund/SPEC.md §16): who trades this paper account — {status: active|migrating|migrated,
+        // owner: "old engine"|"platform", migrated_at, migration_id}. Absent on older backends.
+        [JsonPropertyName("legacy_account")] public FundLegacyAccount? LegacyAccount { get; set; }
+        // Sandbox profile (strategy_platform/SPEC.md "Sandbox profile" S2, 2026-10-23): "normal" | "sandbox"; in sandbox
+        // mode also {since, banner, brokers, data_dir}. The window shows a permanent amber strip while mode == sandbox.
+        [JsonPropertyName("mode")] public string? Mode { get; set; }
+        [JsonPropertyName("sandbox")] public FundSandboxInfo? Sandbox { get; set; }
+
+        public bool IsSandbox => string.Equals(Mode, "sandbox", StringComparison.OrdinalIgnoreCase);
 
         public DateTimeOffset? LastClientSeenAt
         {
@@ -396,12 +407,17 @@ namespace UFOS.ai.HedgeFund.Fund
         // "error" says why; autopilot, drawdown checks and snapshots are paused for that run.
         [JsonPropertyName("unreadable")] [JsonConverter(typeof(FlexBoolConverter))] public bool? Unreadable { get; set; }
         [JsonPropertyName("error")] public string? Error { get; set; }
+        // No-fallback rule (D9, 2026-10-02, optional): e.g. "valuation paused: no current quote for X".
+        // Equity/drawdown figures are then not current and are shown as "—" with this reason.
+        [JsonPropertyName("valuation_paused")] public string? ValuationPaused { get; set; }
     }
 
     internal sealed class FundPosition
     {
         [JsonPropertyName("symbol")] public string Symbol { get; set; } = "";
         // Nullable (2026-09-26 review): one null qty must not make the whole /fund/state unreadable.
+        // D9 (2026-10-02): last_price, market_value, unrealized_pnl and weight are null for a position
+        // that can't be valued right now (no current quote) — shown as "—", never a stale number.
         [JsonPropertyName("qty")] public double? Qty { get; set; }
         [JsonPropertyName("avg_price")] public double? AvgPrice { get; set; }
         [JsonPropertyName("last_price")] public double? LastPrice { get; set; }
@@ -492,6 +508,12 @@ namespace UFOS.ai.HedgeFund.Fund
         // (crypto 24/7; equities only during the US regular session).
         [JsonPropertyName("asset_class")] public string? AssetClass { get; set; }
         [JsonPropertyName("tradable_now")] [JsonConverter(typeof(FlexBoolConverter))] public bool? TradableNow { get; set; }
+        // No-fallback rule (decision D9, 2026-10-02, optional): why the last full cycle produced no new
+        // verdict for this symbol (AI budget reached, key missing, judge request failed …) and why its
+        // market data was missing ("… — not analysed this run"). Shown as status, never as a verdict.
+        [JsonPropertyName("judge_unavailable")] public string? JudgeUnavailable { get; set; }
+        [JsonPropertyName("data_unavailable")] public string? DataUnavailable { get; set; }
+        [JsonPropertyName("status_run_id")] public long? StatusRunId { get; set; }
 
         public bool IsCrypto => string.Equals(AssetClass, "crypto", StringComparison.OrdinalIgnoreCase);
     }
@@ -537,6 +559,11 @@ namespace UFOS.ai.HedgeFund.Fund
         [JsonPropertyName("run_id")] public long? RunId { get; set; }
         [JsonPropertyName("current_weight")] public double? CurrentWeight { get; set; }
         [JsonPropertyName("order_id")] public long? OrderId { get; set; }
+        // D9 (2026-10-02, optional): "not updated: <reason>" when the last cycle made no new verdict —
+        // this (older) recommendation keeps its own time and must never be shown as fresh.
+        [JsonPropertyName("not_updated")] public string? NotUpdated { get; set; }
+        // D9 (optional): when the reused (source "carried") judgement was originally made.
+        [JsonPropertyName("judged_at")] public string? JudgedAt { get; set; }
     }
 
     internal sealed class FundUsage
@@ -577,11 +604,35 @@ namespace UFOS.ai.HedgeFund.Fund
         [JsonPropertyName("autopilot")] public bool Autopilot { get; set; }
     }
 
+    internal sealed class FundLegacyAccount
+    {
+        [JsonPropertyName("status")] public string? Status { get; set; }
+        [JsonPropertyName("owner")] public string? Owner { get; set; }
+        [JsonPropertyName("migrated_at")] public string? MigratedAt { get; set; }
+        [JsonPropertyName("migration_id")] public JsonElement? MigrationId { get; set; }
+    }
+
+    /// <summary>The "sandbox" block of the state payloads (SPEC "Sandbox profile" S2) — shown verbatim, plain text.</summary>
+    internal sealed class FundSandboxInfo
+    {
+        [JsonPropertyName("since")] public string? Since { get; set; }
+        [JsonPropertyName("banner")] public string? Banner { get; set; }
+        [JsonPropertyName("brokers")] public string? Brokers { get; set; }
+        [JsonPropertyName("data_dir")] public string? DataDir { get; set; }
+        // fix1023 B6: "prices for copied positions may be unavailable while brokers are blocked" (text only)
+        [JsonPropertyName("prices_note")] public string? PricesNote { get; set; }
+    }
+
     internal sealed class FundKillResponse
     {
         // SPEC: {halted, orders:[...]} — "halted" may be a bool or the halt object; kept raw.
         [JsonPropertyName("halted")] public JsonElement? Halted { get; set; }
         [JsonPropertyName("orders")] public List<FundOrder>? Orders { get; set; }
+        // Strategy Platform stage 7 (strategy_platform/SPEC.md §17.1/§17.12, fund/SPEC.md §16): the old engine's half failed
+        // (its text) while the platform half still ran; `platform` = the platform half {ok, error, accounts} (read by
+        // Platform/PlatformClient.ReadKillHalf). Both absent on older backends.
+        [JsonPropertyName("error")] public string? Error { get; set; }
+        [JsonPropertyName("platform")] public JsonElement? Platform { get; set; }
     }
 
     internal sealed class FundRunSummary
@@ -600,6 +651,9 @@ namespace UFOS.ai.HedgeFund.Fund
         [JsonPropertyName("recommendations")] public int? Recommendations { get; set; }
         [JsonPropertyName("orders")] public int? Orders { get; set; }
         [JsonPropertyName("flips")] public List<JsonElement>? Flips { get; set; }
+        // Run summary (optional): judge_unavailable / data_unavailable map symbol -> reason (D9,
+        // incl. premium_on_flip failures). Kept raw.
+        [JsonPropertyName("summary")] public JsonElement? Summary { get; set; }
     }
 
     internal sealed class FundRunDetails

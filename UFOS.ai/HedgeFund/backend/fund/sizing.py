@@ -43,9 +43,9 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from . import market
-from . import params as fund_params
-from .types import JudgeDecision, PositionView, RiskAssessment
+from strategy_platform.data import market_feed as market
+from strategy_platform.core import params as fund_params
+from strategy_platform.core.types import JudgeDecision, PositionView, RiskAssessment
 
 VOL_TARGET = 0.015
 CRYPTO_VOL_TARGET = 0.03
@@ -108,6 +108,8 @@ def _current(position, equity: Optional[float]) -> Tuple[float, Optional[str]]:
             return 0.0, None
         if not equity or equity <= 0:
             raise ValueError("plan_trade needs equity to size a PositionView")
+        if position.market_value is None:
+            raise ValueError(f"plan_trade needs a current price for {position.symbol} (valuation paused)")
         return position.market_value / float(equity), position.opened_at
     return float(position), None
 

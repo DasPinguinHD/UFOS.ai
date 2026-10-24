@@ -250,6 +250,7 @@ namespace UFOS.ai.HedgeFund.Newsroom
             if (root.TryGetProperty("items", out var arr) && arr.ValueKind == JsonValueKind.Array)
             {
                 var regimeDrawn = false;
+                string? regimeUnavailable = null;
                 foreach (var el in arr.EnumerateArray())
                 {
                     if (el.TryGetProperty("macro", out var mm) && mm.ValueKind == JsonValueKind.Object &&
@@ -260,6 +261,16 @@ namespace UFOS.ai.HedgeFund.Newsroom
                         regimeDrawn = true;
                         continue;
                     }
+                    // Regime with regime: null + unavailable (backend 2026-10-02): shown as unavailable, not dropped.
+                    if (el.TryGetProperty("macro", out var mu) && mu.ValueKind == JsonValueKind.Object &&
+                        mu.TryGetProperty("group", out var grp) && grp.ValueKind == JsonValueKind.String && grp.GetString() == "regime")
+                    {
+                        regimeUnavailable = mu.TryGetProperty("unavailable", out var why) && why.ValueKind == JsonValueKind.String &&
+                                            !string.IsNullOrWhiteSpace(why.GetString())
+                            ? why.GetString()!.Trim()
+                            : "unavailable (no reason given)";
+                        continue;
+                    }
                     var vm = MacroSeriesViewModel.FromJson(el, _range);
                     if (vm != null) items.Add(vm);
                 }
@@ -268,6 +279,12 @@ namespace UFOS.ai.HedgeFund.Newsroom
                     RegimeCard.Visibility = Visibility.Collapsed;
                     UpdateRegimeExtended(null);
                 }
+                var showUnavailable = !regimeDrawn && regimeUnavailable != null;
+                RegimeUnavailableText.Text = showUnavailable
+                    ? "Macro Regime " + regimeUnavailable + " — the regime map is not shown (no older map, no substitute input)."
+                    : "";
+                RegimeUnavailableCard.Visibility = showUnavailable ? Visibility.Visible : Visibility.Collapsed;
+                System.Windows.Automation.AutomationProperties.SetName(RegimeUnavailableText, RegimeUnavailableText.Text);
             }
 
             // Until the FRED collector has finished its first poll (status.ok still null)
@@ -335,8 +352,8 @@ namespace UFOS.ai.HedgeFund.Newsroom
                 var failed = st.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.False;
                 var text = st.TryGetProperty("message", out var m) ? m.GetString() : null;
                 if (failed && !string.IsNullOrWhiteSpace(text))
-                    return "FRED collector: " + text + "\n\nIf the key is missing, set FRED_API_KEY in HedgeFund/backend/.env " +
-                           "and restart the Hedge Fund window.";
+                    return "FRED collector: " + text + "\n\nIf the key is missing, set it in the Windows Credential Manager " +
+                           "(FRED API key: Hedge Fund → ⚙ Keys & data) and restart the Hedge Fund window.";
             }
             return "No macro data loaded yet — the FRED collector fetches all series within a few seconds of the backend " +
                    "starting. This view refreshes automatically.";
@@ -703,6 +720,8 @@ namespace UFOS.ai.HedgeFund.Newsroom
                 episodes, history, series, inflationName, tendencies);
         }
 
+        private string? _regimeEuroError;
+
         /// <summary>Called from Render with the regime element (null = no regime in the response).</summary>
         private void UpdateRegimeExtended(JsonElement? r)
         {
@@ -721,6 +740,12 @@ namespace UFOS.ai.HedgeFund.Newsroom
                 ext = null; // malformed extended block -> compact card only
                 raw = "";
             }
+            // euro_error (backend 2026-10-02): the euro-area point could not be computed — said so in
+            // the extended view instead of silently leaving the point out.
+            _regimeEuroError = null;
+            if (ext != null && r is JsonElement rr && rr.TryGetProperty("extended", out var exEl) && exEl.ValueKind == JsonValueKind.Object &&
+                exEl.TryGetProperty("euro_error", out var ee) && ee.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(ee.GetString()))
+                _regimeEuroError = ee.GetString()!.Trim();
             var changed = raw != _regimeExtRaw;
             _regimeExt = ext;
             _regimeExtRaw = raw;
@@ -1394,13 +1419,26 @@ namespace UFOS.ai.HedgeFund.Newsroom
                 tb.Inlines.Add(link);
                 RegimeBigLegend.Children.Add(tb);
             }
+            else if (euro == null && !string.IsNullOrWhiteSpace(_regimeEuroError))
+            {
+                RegimeBigLegend.Children.Add(new TextBlock
+                {
+                    Text = "Euro area " + _regimeEuroError,
+                    FontSize = 10,
+                    Margin = new Thickness(0, 0, 16, 4),
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = FrozenBrush(Color.FromRgb(0xF3, 0x9C, 0x4A)),
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+            }
 
             // Summary (visible caption + screen-reader name of the canvas).
             var last = pts[^1];
             var summary = $"{PhaseName(quadrant)} as of {RegimeMonth(ext.Date)}: US growth {Signed(last.X)} pp, inflation {Signed(last.Y)} pp. " +
                           $"Showing {pts.Count} month{(pts.Count == 1 ? "" : "s")} ({RegimeMonth(pts[0].Date)} – {RegimeMonth(last.Date)})" +
                           (ext.Recessions.Count > 0 ? $", {recessionCount} of them in NBER recessions" : "") + "." +
-                          (euro != null ? $" Euro area: {PhaseName(euro.Quadrant)} (growth {Signed(euro.X)} pp, inflation {Signed(euro.Y)} pp, {RegimeMonth(euro.Date)})." : "") +
+                          (euro != null ? $" Euro area: {PhaseName(euro.Quadrant)} (growth {Signed(euro.X)} pp, inflation {Signed(euro.Y)} pp, {RegimeMonth(euro.Date)})."
+                           : !string.IsNullOrWhiteSpace(_regimeEuroError) ? " Euro area " + _regimeEuroError + "." : "") +
                           (ext.Episodes.Count > 0 ? $" Diamonds: {ext.Episodes.Count} historical episodes for comparison." : "") +
                           " Hover the dots for each month.";
             RegimeBigSummary.Text = summary;
@@ -1751,7 +1789,7 @@ namespace UFOS.ai.HedgeFund.Newsroom
             var mixedBrush = FrozenBrush(Color.FromRgb(0x9A, 0x9A, 0x9A));
             var sepBrush = FrozenBrush(Color.FromRgb(0x26, 0x26, 0x26));
             var disclaimer = string.IsNullOrWhiteSpace(t.Disclaimer)
-                ? "Historical tendencies, simplified; not a forecast, not investment advice."
+                ? "Historical tendencies, simplified; not a forecast, information only."
                 : t.Disclaimer;
 
             g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) });
@@ -1997,7 +2035,35 @@ namespace UFOS.ai.HedgeFund.Newsroom
             {
                 if (!e.TryGetProperty("macro", out var m) || m.ValueKind != JsonValueKind.Object) return null;
                 var value = Num(m, "value");
-                if (value == null) return null;
+                if (value == null)
+                {
+                    // Backend 2026-10-02: an indicator whose input is missing arrives without a value and
+                    // with macro.unavailable ("unavailable: core PCE missing") — shown as an unavailable
+                    // card, never dropped and never with an older value.
+                    var why = Str(m, "unavailable");
+                    if (string.IsNullOrWhiteSpace(why) || Str(m, "group") == "regime") return null;
+                    var sid = Str(m, "series_id");
+                    var label = Str(m, "label");
+                    if (string.IsNullOrWhiteSpace(label)) label = Str(e, "title");
+                    if (string.IsNullOrWhiteSpace(label)) label = sid;
+                    var text = why.Trim();
+                    text = char.ToUpperInvariant(text[0]) + text[1..];
+                    var emptyPoints = new PointCollection();
+                    emptyPoints.Freeze();
+                    return new MacroSeriesViewModel
+                    {
+                        Label = label,
+                        ValueDisplay = "—",
+                        DateDisplay = "no current value",
+                        Group = string.IsNullOrEmpty(Str(m, "group")) ? "us" : Str(m, "group"),
+                        SparkPoints = emptyPoints,
+                        SignalBrush = WatchBrush,
+                        SignalText = "● " + text,
+                        IsDerived = Str(m, "group") == "derived",
+                        SourceDisplay = "",
+                        Signature = $"{sid}:unavailable:{text}:{chartRange}",
+                    };
+                }
 
                 var unit = Str(m, "unit");
                 var seriesId = Str(m, "series_id");

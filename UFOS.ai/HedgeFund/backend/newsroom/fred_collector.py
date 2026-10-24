@@ -2,8 +2,11 @@
 "Macro Indicators" section.
 
 Free, but requires a personal API key (register at
-https://fred.stlouisfed.org/docs/api/api_key.html) — set FRED_API_KEY in
-.env or this collector stays disabled.
+https://fred.stlouisfed.org/docs/api/api_key.html). Since 2026-10-02 the key
+comes ONLY from the Windows Credential Manager (Hedge Fund → Settings → Keys,
+secret "fred-api-key"), read at use time; FRED_API_KEY in .env is ignored.
+Without it the collector reports the "not set" message as its status and
+re-checks every minute (newsroom/keys.py).
 
 Moved from Global Monitoring on 2026-09-24. There it only showed the latest
 value of four series as a text ticker next to the globe (FRED is a national
@@ -30,15 +33,23 @@ from datetime import date, timedelta
 
 import aiohttp
 
-from config import FRED_API_KEY, FRED_POLL_SECONDS
+from config import FRED_POLL_SECONDS
 from .store import make_event
 from . import macro_derived
 from . import db as store_db
 from .macro_rules import stability_signal, describe_rules
+from . import keys as _keys
+from strategy_platform import secrets as _secrets
 
 logger = logging.getLogger(__name__)
 
 OBSERVATIONS_URL = "https://api.stlouisfed.org/fred/series/observations"
+FRED_SECRET = "fred-api-key"
+
+
+def _fred_key() -> str:
+    """The FRED key, read at use time from the Credential Manager (raises SecretMissing)."""
+    return _secrets.require_secret(FRED_SECRET)
 HISTORY_POINTS = 24
 FRED_CONCURRENCY = 4  # FRED allows 120 requests/minute; 4 in parallel is gentle
 
@@ -214,16 +225,21 @@ async def _fetch_observations(session: aiohttp.ClientSession, series_id: str, un
     """Native observations from observation_start on, oldest first, as
     [{"date": "YYYY-MM-DD", "value": float}]. FRED marks missing values '.'."""
     global _requests
+    key = _fred_key()
     params = {
-        "series_id": series_id, "api_key": FRED_API_KEY, "file_type": "json",
+        "series_id": series_id, "api_key": key, "file_type": "json",
         "sort_order": "asc", "observation_start": observation_start,
     }
     if units:
         params["units"] = units
     _requests += 1
-    async with session.get(OBSERVATIONS_URL, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-        resp.raise_for_status()
-        data = await resp.json(content_type=None)
+    try:
+        async with session.get(OBSERVATIONS_URL, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            resp.raise_for_status()
+            data = await resp.json(content_type=None)
+    except Exception as ex:
+        # aiohttp errors carry the request URL incl. ?api_key=… — never let it reach logs/UI
+        raise RuntimeError(_keys.redact(str(ex) or type(ex).__name__, key)) from None
     points = []
     for obs in data.get("observations") or []:
         try:
@@ -339,11 +355,15 @@ _RELEASE_IDS: dict = {}  # series_id -> (release_id, release_name); cached for t
 async def _get_json(session, endpoint: str, params: dict) -> dict:
     global _requests
     _requests += 1
-    params = {**params, "api_key": FRED_API_KEY, "file_type": "json"}
-    async with session.get(f"https://api.stlouisfed.org/fred/{endpoint}", params=params,
-                           timeout=aiohttp.ClientTimeout(total=15)) as resp:
-        resp.raise_for_status()
-        return await resp.json(content_type=None)
+    key = _fred_key()
+    params = {**params, "api_key": key, "file_type": "json"}
+    try:
+        async with session.get(f"https://api.stlouisfed.org/fred/{endpoint}", params=params,
+                               timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            resp.raise_for_status()
+            return await resp.json(content_type=None)
+    except Exception as ex:
+        raise RuntimeError(_keys.redact(str(ex) or type(ex).__name__, key)) from None
 
 
 async def _next_releases(session, series_ids: list, sem) -> dict:
@@ -498,6 +518,14 @@ def build_events(next_release: dict = None) -> tuple:
             event["macro"] = m
             events.append(event)
             derived_placed += 1
+        # an indicator whose input is missing is replaced by an "unavailable" event (no value),
+        # so neither an older value nor a substitute input is shown (user decision 2026-10-02)
+        for key, why in (recent.unavailable.items() if any(full.values()) else ()):   # nothing fetched yet: no cards
+            label = macro_derived.DERIVED[key][0]
+            event = make_event(event_id=f"macro-derived-{key}", category="macro", title=label,
+                               summary=f"{label}: {why}", source="FRED (derived)", url=None)
+            event["macro"] = {"series_id": key, "group": "derived", "label": label, "unavailable": why}
+            events.append(event)
     except Exception as ex:
         errors.append(f"derived: {str(ex) or type(ex).__name__}")
         logger.exception("Derived macro indicators failed")
@@ -524,6 +552,12 @@ def build_events(next_release: dict = None) -> tuple:
                 url=None,
             )
             event["macro"] = {"series_id": "REGIME", "group": "regime", "regime": reg}
+            events.append(event)
+        elif any(full.values()):
+            why = macro_derived.regime_unavailable_reason(full, aux)
+            event = make_event(event_id="macro-regime", category="macro", title="Macro Regime",
+                               summary=f"Macro Regime: {why}", source="FRED (derived)", url=None)
+            event["macro"] = {"series_id": "REGIME", "group": "regime", "regime": None, "unavailable": why}
             events.append(event)
     except Exception as ex:
         errors.append(f"regime: {str(ex) or type(ex).__name__}")
@@ -614,12 +648,10 @@ async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> Non
 
 
 async def run(emit, report_status) -> None:
-    if not FRED_API_KEY:
-        msg = "FRED_API_KEY is not set in HedgeFund/backend/.env (free key: https://fred.stlouisfed.org/docs/api/api_key.html). Collector disabled."
-        logger.error(msg)
-        await report_status(False, msg)
-        return
-    async with aiohttp.ClientSession() as session:
+    from strategy_platform.core import tls          # system roots + certifi, verification on (2026-10-22)
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=tls.client_context())) as session:
         while True:
+            # Credential Manager only (2026-10-02); waits + reports while the key is missing
+            await _keys.wait_for_secret(FRED_SECRET, report_status)
             await _poll_once(session, emit, report_status)
             await asyncio.sleep(FRED_POLL_SECONDS)

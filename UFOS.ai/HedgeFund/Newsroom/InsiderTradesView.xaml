@@ -96,7 +96,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0">
                 <TextBlock Text="Insider Trades" FontSize="16" FontWeight="Bold" Foreground="{StaticResource HighEmphasisForegroundBrush}" />
-                <TextBlock Text="Recent Form 4 filings from SEC EDGAR — proof-of-concept data, not investment advice."
+                <TextBlock Text="Recent Form 4 filings from SEC EDGAR — proof-of-concept data — information, not a recommendation."
                            FontSize="10.5" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
                 <TextBlock x:Name="LastUpdatedText" Text="" FontSize="9.5" Margin="0,3,0,0" FontFamily="Consolas"
                            Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />

@@ -282,13 +282,17 @@ def to_response(web, status: int, payload):
     return web.json_response(payload, status=status, dumps=dumps)
 
 
+MODE_PATHS = frozenset({"/fund/state"})        # sandbox profile: the main state payload carries "mode"
+
+
 def register(app, engine) -> FundApi:
     """Adds the /fund/* routes to an aiohttp app (behind its middlewares)."""
     from aiohttp import web  # lazy: fund/* stays importable without aiohttp
 
     api = FundApi(engine)
+    import sandbox_profile
 
-    def make(name: str, reads_body: bool):
+    def make(name: str, reads_body: bool, path: str = ""):
         handler = getattr(api, name)
 
         async def route(request):
@@ -305,11 +309,13 @@ def register(app, engine) -> FundApi:
                 logger.exception("/fund route %s failed", name)
                 return web.json_response({"error": "internal error in the fund engine (see backend.log)"},
                                          status=500)
+            if path in MODE_PATHS and status == 200 and isinstance(payload, dict):
+                payload = sandbox_profile.stamp(payload)       # "mode": normal | sandbox (SPEC "Sandbox profile")
             return to_response(web, status, payload)
 
         route.__name__ = f"fund_{name}"
         return route
 
     for method, path, name, reads_body in ROUTES:
-        app.router.add_route(method, path, make(name, reads_body))
+        app.router.add_route(method, path, make(name, reads_body, path))
     return api

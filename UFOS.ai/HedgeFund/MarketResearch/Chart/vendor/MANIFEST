@@ -1,0 +1,7 @@
+# UFOS.ai Market Research chart engine - vendored files (SPEC MR3 bridge contract v1).
+# Format: <file> <version> <source_url> <sha256> <fetched_at>   ('#' lines are comments)
+# package klinecharts@10.0.3, npm integrity sha512-phvf5CyS7oGE46nuC+nxQxl9D+8+5w8q3reExh0oNeMV1Jws4X0CMHNkOI9xlNA/XWctNS5whZ3PqIJi8YM2Tw==, licence Apache-2.0
+# extracted members: package/dist/umd/klinecharts.min.js, package/LICENSE, package/NOTICE
+klinecharts.min.js 10.0.3 https://registry.npmjs.org/klinecharts/-/klinecharts-10.0.3.tgz c985a3b4a784ed526a1ab67d6021e385e532c80ae524a33c5a548abc38ab3818 2026-10-24T11:52:34+00:00
+LICENSE 10.0.3 https://registry.npmjs.org/klinecharts/-/klinecharts-10.0.3.tgz ff8311d55ca5766d3888c688b0ecc0f292289a659e45bfee4dfc0870ab74e4ca 2026-10-24T11:52:34+00:00
+NOTICE 10.0.3 https://registry.npmjs.org/klinecharts/-/klinecharts-10.0.3.tgz e2a48226872b013c897676c3ae1b65dbebcbdd8d3fdcc29fed5073c3d6e5e231 2026-10-24T11:52:34+00:00

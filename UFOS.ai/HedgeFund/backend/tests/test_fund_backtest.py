@@ -1,5 +1,6 @@
 """fund/backtest.py — rule-only backtest on synthetic bars (no look-ahead,
-fees, shorts, benchmarks, weekly points) and the macro-history builder.
+fees, shorts, benchmarks, weekly points), the 2016 history start of the
+configured source (Alpaca) and the macro-history builder.
 Offline and deterministic.
 
 Run from HedgeFund/backend:  python -m unittest tests.test_fund_backtest -v
@@ -8,8 +9,8 @@ import random
 import unittest
 from datetime import date, timedelta
 
-from fund.backtest import build_macro_history, macro_context_at, run_backtest
-from fund.types import Bar
+from fund.backtest import HISTORY_ERROR, build_macro_history, check_history_start, macro_context_at, run_backtest
+from strategy_platform.core.types import Bar
 
 
 def gen(seed, n, drift, start=date(2020, 1, 1), vol=0.008):
@@ -27,6 +28,20 @@ def gen(seed, n, drift, start=date(2020, 1, 1), vol=0.008):
 BARS = {"UP": gen(1, 700, 0.0015), "DOWN": gen(2, 700, -0.0015)}
 START = BARS["UP"][300].date
 P_BASE = {"min_confidence": 55, "agent_weights": {"technical": 1.0, "macro": 0.0}}
+
+
+class HistoryStartTest(unittest.TestCase):
+    """Alpaca (the configured source) has equity history only since 2016."""
+
+    def test_start_before_2016_is_an_error(self):
+        early = {"UP": gen(1, 700, 0.0015, start=date(2014, 1, 1))}
+        r = run_backtest(early, [], P_BASE, start="2015-06-01")
+        self.assertEqual(r["error"], HISTORY_ERROR)
+        self.assertEqual(HISTORY_ERROR, "history before 2016 is not available from the configured source")
+        self.assertEqual(check_history_start("2015-12-31"), HISTORY_ERROR)
+        self.assertIsNone(check_history_start(date(2016, 1, 1)))
+        self.assertIsNone(check_history_start(None))
+        self.assertNotIn("error", run_backtest(BARS, [], P_BASE, start=START))
 
 
 class BacktestTest(unittest.TestCase):

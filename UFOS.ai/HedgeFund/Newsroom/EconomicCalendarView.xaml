@@ -100,7 +100,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0">
                 <TextBlock Text="Economic Calendar" FontSize="16" FontWeight="Bold" Foreground="{StaticResource HighEmphasisForegroundBrush}" />
-                <TextBlock Text="Upcoming US data releases and FOMC decisions for the next 45 days. Release dates from FRED; FOMC dates from federalreserve.gov — times are typical, not guaranteed; consensus forecasts are not included (not freely available). Proof-of-concept data, not investment advice."
+                <TextBlock Text="Upcoming US data releases and FOMC decisions for the next 45 days. Release dates from FRED; FOMC dates from federalreserve.gov — times are typical, not guaranteed; consensus forecasts are not included (not freely available). Proof-of-concept data — information, not a recommendation."
                            FontSize="10.5" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
                 <TextBlock x:Name="SourceWarningText" FontSize="10.5" Margin="0,4,0,0" Foreground="{StaticResource HighImportanceBrush}"
                            TextWrapping="Wrap" Visibility="Collapsed" />

@@ -1,6 +1,6 @@
 """Shared fixtures for the fund engine / API / export tests (paper trading
 only): temp SQLite store, FakeFeed with synthetic bars/quotes/headlines, a
-fake OpenRouter transport (fund.llm.TRANSPORT) and a fixed clock.
+fake OpenRouter transport (core.llm.TRANSPORT) and a fixed clock.
 Stdlib only."""
 import json
 import os
@@ -8,13 +8,13 @@ import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 
-from fund import llm as llm_mod
-from fund import params as P
+from strategy_platform.core import llm as llm_mod
+from strategy_platform.core import params as P
 from fund import store
-from fund.broker import PaperBroker
+from strategy_platform.execution.paper_broker import PaperBroker
 from fund.engine import FundEngine
-from fund.market import FakeFeed
-from fund.types import Bar
+from strategy_platform.data.market_feed import FakeFeed
+from strategy_platform.core.types import Bar
 from newsroom import db
 
 FRI = datetime(2026, 10, 2, 14, 0, tzinfo=timezone.utc)      # Friday, session open (10:00 EDT)

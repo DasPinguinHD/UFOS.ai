@@ -37,7 +37,7 @@ namespace UFOS.ai.HedgeFund.Newsroom
     /// - The AI output follows the AI content labelling rules (CLAUDE.md, Shared/AiContent.cs):
     ///   ✦ trigger + tooltip, loading/result badge before the text, caveat after it, violet
     ///   container, AutomationProperties, errors never look like analysis, and Copy / Save
-    ///   keep the label line ("✦ AI-generated analysis (model, time) — not investment advice").
+    ///   keep the label line ("✦ AI-generated analysis (model, time) — information, not a recommendation").
     /// </summary>
     public partial class AnalysisReasoningView : UserControl, INewsroomView
     {
@@ -501,10 +501,10 @@ namespace UFOS.ai.HedgeFund.Newsroom
 
         // ---------------------------------------------------------------- Copy / Save
 
-        /// <summary>"✦ AI-generated analysis (model, 2026-09-25 18:42) — not investment advice" (AI Act rule 8).</summary>
+        /// <summary>"✦ AI-generated analysis (model, 2026-09-25 18:42) — information, not a recommendation" (AI Act rule 8).</summary>
         private static string LabelLine(AnalysisResult r) =>
             $"{AiContent.Glyph} AI-generated analysis ({(string.IsNullOrWhiteSpace(r.Model) ? "unknown model" : r.Model)}, " +
-            $"{r.GeneratedAt.ToLocalTime():yyyy-MM-dd HH:mm}) — not investment advice";
+            $"{r.GeneratedAt.ToLocalTime():yyyy-MM-dd HH:mm}) — information, not a recommendation";
 
         /// <summary>"Cost: $0.0123 · 1,512 in / 874 out tokens (charged by OpenRouter)".</summary>
         private static string CostLine(double? costUsd, long? promptTokens, long? completionTokens)

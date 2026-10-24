@@ -5,7 +5,7 @@ Run from HedgeFund/backend:  python -m unittest tests.test_fund_indicators -v
 import unittest
 
 from fund import indicators as ind
-from fund.types import Bar
+from strategy_platform.core.types import Bar
 
 
 def _bars(closes, spread=1.0):

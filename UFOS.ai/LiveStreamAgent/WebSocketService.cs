@@ -29,6 +29,10 @@ namespace UFOS.ai
         public event Action<string>? OnTranscript;
         public event Action<string>? OnConnectionStatus;
         public event Action<string>? OnRawMessage;
+        // AI budget state (task B, contract UFOS.ai/docs/ai-budgets-spec.md §3/§6.3): the backend skips AI
+        // calls blocked by a daily cap and sends {"type":"ai_budget","payload":{key,label,blocked,reason,message}}
+        // when a key's state changes (and the currently blocked keys on connect). Args: key, label, blocked, message.
+        public event Action<string, string, bool, string?>? OnAiBudget;
 
         // Returns the backend's current API session token (Shared/BackendAuth.cs); read
         // before every connect attempt because it changes on each backend start.
@@ -73,7 +77,7 @@ namespace UFOS.ai
             catch (Exception ex)
             {
                 EmitRaw($"[WS START ERROR] {ex.ToString()}");
-                EmitConnectionStatus("Error");
+                EmitConnectionStatus("Error");  
                 throw;
             }
         }
@@ -309,6 +313,22 @@ namespace UFOS.ai
                             ReadUsage(doc.RootElement, vm);
                         }
                         OnVerdict?.Invoke(vm);
+                        break;
+                    case "ai_budget":
+                        if (doc.RootElement.TryGetProperty("payload", out var bp) && bp.ValueKind == JsonValueKind.Object
+                            && bp.TryGetProperty("key", out var bk) && bk.ValueKind == JsonValueKind.String)
+                        {
+                            var budgetKey = AiBudgetText.Clean(bk.GetString(), AiBudgetRegistry.MaxKeyLength) ?? string.Empty;
+                            var budgetLabel = bp.TryGetProperty("label", out var bl) && bl.ValueKind == JsonValueKind.String
+                                ? AiBudgetText.Clean(bl.GetString()) ?? budgetKey : budgetKey;
+                            var budgetBlocked = bp.TryGetProperty("blocked", out var bb) && bb.ValueKind == JsonValueKind.True;
+                            var budgetMessage = bp.TryGetProperty("message", out var bm) && bm.ValueKind == JsonValueKind.String
+                                ? AiBudgetText.Clean(bm.GetString()) : null;
+                            if (budgetKey.Length > 0)
+                            {
+                                try { OnAiBudget?.Invoke(budgetKey, budgetLabel, budgetBlocked, budgetMessage); } catch { }
+                            }
+                        }
                         break;
                     case "connection":
                         if (doc.RootElement.TryGetProperty("status", out var st))

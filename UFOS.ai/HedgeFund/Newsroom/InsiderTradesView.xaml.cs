@@ -226,7 +226,7 @@ namespace UFOS.ai.HedgeFund.Newsroom
                 var text = st.TryGetProperty("message", out var m) ? m.GetString() : null;
                 if (failed && !string.IsNullOrWhiteSpace(text))
                     return "SEC EDGAR collector: " + text + "\n\nIt retries on its own. If it never loads, check " +
-                           "SEC_EDGAR_USER_AGENT in HedgeFund/backend/.env.";
+                           "the SEC EDGAR user agent (name + e-mail) in ⚙ Keys & data.";
                 if (!ok)
                     message += " The SEC EDGAR collector needs 1–2 minutes for its first fetch after the backend starts.";
             }

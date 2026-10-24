@@ -29,8 +29,8 @@ from __future__ import annotations
 import math
 
 from .. import indicators as ind
-from .. import params as fund_params
-from ..types import AgentSignal
+from strategy_platform.core import params as fund_params
+from strategy_platform.core.types import AgentSignal
 
 AGENT = "technical"
 MIN_BARS = 60

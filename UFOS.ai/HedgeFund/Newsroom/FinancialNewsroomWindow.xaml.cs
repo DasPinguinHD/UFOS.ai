@@ -23,6 +23,12 @@ namespace UFOS.ai.HedgeFund.Newsroom
         public FinancialNewsroomWindow()
         {
             InitializeComponent();
+            // user request 2026-10-23: content window — starts maximized within the monitor's work area (taskbar visible)
+            UFOS.ai.Shared.WindowMaximize.ConstrainToWorkArea(this);
+            UFOS.ai.Shared.WindowMaximize.StartMaximized(this);
+            Window_StateChanged(this, EventArgs.Empty);
+            // retest 2026-10-23: closing this owned borderless window returned focus to the MainWindow — activate the owner instead
+            Closing += (_, e) => { if (!e.Cancel) UFOS.ai.HedgeFund.Fund.FundUi.ActivateOwnerOnClose(this); };
             SectionList.ItemsSource = NewsroomSections.All;
             NewsroomBackend.StatusChanged += OnBackendStatusChanged;
             UpdateBackendStatus();
@@ -147,10 +153,9 @@ namespace UFOS.ai.HedgeFund.Newsroom
         {
             if (WindowState == WindowState.Maximized)
             {
-                var frame = SystemParameters.WindowResizeBorderThickness;
-                const double paddedBorder = 4; // SM_CXPADDEDBORDER, not exposed by SystemParameters
-                RootBorder.Margin = new Thickness(frame.Left + paddedBorder, frame.Top + paddedBorder,
-                                                  frame.Right + paddedBorder, frame.Bottom + paddedBorder);
+                // 2026-10-23: the WM_GETMINMAXINFO hook (Shared/WindowMaximize.cs) fits the maximized window to the work area —
+                // no frame padding (the old padding left a gap and the window covered the taskbar)
+                RootBorder.Margin = new Thickness(0);
                 RootBorder.CornerRadius = new CornerRadius(0);
                 TitleBarBorder.CornerRadius = new CornerRadius(0);
             }

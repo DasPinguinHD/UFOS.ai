@@ -9,6 +9,10 @@
         StateChanged="Window_StateChanged">
     <!-- Financial Newsroom (Hedge Fund module). Sections come from
          NewsroomSections.All — add a section there, not here. -->
+    <!-- One Hedge Fund scroll bar design (Styles/ScrollBars.xaml): implicit for every ScrollBar in this window. -->
+    <Window.Resources>
+        <ResourceDictionary Source="/HedgeFundApp;component/Styles/ScrollBars.xaml" />
+    </Window.Resources>
     <Border x:Name="RootBorder" Background="#111111" CornerRadius="8" SnapsToDevicePixels="True">
         <Grid>
             <Grid.Resources>
@@ -33,89 +37,6 @@
                             </ControlTemplate>
                         </Setter.Value>
                     </Setter>
-                </Style>
-
-                <!-- Scrollbars: local copy of HedgeFundWindow's CompactScrollBarStyle (grayscale). -->
-                <Style x:Key="CompactScrollThumbStyle" TargetType="Thumb">
-                    <Setter Property="Background" Value="#FF4A4A4A" />
-                    <Setter Property="MinHeight" Value="28" />
-                    <Setter Property="Template">
-                        <Setter.Value>
-                            <ControlTemplate TargetType="Thumb">
-                                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" RenderTransformOrigin="0.5,0.5">
-                                    <Border.RenderTransform>
-                                        <ScaleTransform ScaleX="1" ScaleY="1" />
-                                    </Border.RenderTransform>
-                                </Border>
-                                <ControlTemplate.Triggers>
-                                    <Trigger Property="IsDragging" Value="True">
-                                        <Setter TargetName="bd" Property="Background" Value="#FF888888" />
-                                        <Trigger.EnterActions>
-                                            <BeginStoryboard>
-                                                <Storyboard>
-                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" To="0.95" Duration="0:0:0.08" />
-                                                    <DoubleAnimation Storyboard.TargetName="bd" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" To="0.95" Duration="0:0:0.08" />
-                                                </Storyboard>
-                                            </BeginStoryboard>
-                                        </Trigger.EnterActions>
-                                    </Trigger>
-                                </ControlTemplate.Triggers>
-                            </ControlTemplate>
-                        </Setter.Value>
-                    </Setter>
-                </Style>
-                <Style x:Key="CompactScrollBarStyle" TargetType="ScrollBar">
-                    <Setter Property="Background" Value="Transparent" />
-                    <Setter Property="Width" Value="8" />
-                    <Setter Property="Template">
-                        <Setter.Value>
-                            <ControlTemplate TargetType="ScrollBar">
-                                <Grid Background="Transparent">
-                                    <Border Margin="2,0,2,0" Background="#FF242424" CornerRadius="4"/>
-                                    <Track x:Name="PART_Track" IsDirectionReversed="True">
-                                        <Track.DecreaseRepeatButton>
-                                            <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" IsHitTestVisible="False"/>
-                                        </Track.DecreaseRepeatButton>
-                                        <Track.Thumb>
-                                            <Thumb Style="{StaticResource CompactScrollThumbStyle}" />
-                                        </Track.Thumb>
-                                        <Track.IncreaseRepeatButton>
-                                            <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" IsHitTestVisible="False"/>
-                                        </Track.IncreaseRepeatButton>
-                                    </Track>
-                                </Grid>
-                            </ControlTemplate>
-                        </Setter.Value>
-                    </Setter>
-                </Style>
-
-                <!-- Horizontal variant (same look) for any horizontal scrollbar. -->
-                <ControlTemplate x:Key="CompactHorizontalScrollBarTemplate" TargetType="ScrollBar">
-                    <Grid Background="Transparent">
-                        <Border Margin="0,2,0,2" Background="#FF242424" CornerRadius="4"/>
-                        <Track x:Name="PART_Track">
-                            <Track.DecreaseRepeatButton>
-                                <RepeatButton Command="ScrollBar.PageLeftCommand" Opacity="0" IsHitTestVisible="False"/>
-                            </Track.DecreaseRepeatButton>
-                            <Track.Thumb>
-                                <Thumb Style="{StaticResource CompactScrollThumbStyle}" MinHeight="0" MinWidth="28" />
-                            </Track.Thumb>
-                            <Track.IncreaseRepeatButton>
-                                <RepeatButton Command="ScrollBar.PageRightCommand" Opacity="0" IsHitTestVisible="False"/>
-                            </Track.IncreaseRepeatButton>
-                        </Track>
-                    </Grid>
-                </ControlTemplate>
-                <!-- Implicit: every ScrollBar in this window, including those inside the hosted
-                     section views, gets the Hedge Fund window's grayscale compact look. -->
-                <Style TargetType="ScrollBar" BasedOn="{StaticResource CompactScrollBarStyle}">
-                    <Style.Triggers>
-                        <Trigger Property="Orientation" Value="Horizontal">
-                            <Setter Property="Width" Value="Auto" />
-                            <Setter Property="Height" Value="8" />
-                            <Setter Property="Template" Value="{StaticResource CompactHorizontalScrollBarTemplate}" />
-                        </Trigger>
-                    </Style.Triggers>
                 </Style>
 
                 <!-- Navigation entry: glyph + title + subtitle, highlighted when selected. -->
@@ -210,7 +131,7 @@
                             </StackPanel>
                             <TextBlock x:Name="BackendStatusText" Text="not started" FontSize="9.5" Foreground="#FF6A6A6A"
                                        Margin="12,2,0,0" TextWrapping="Wrap" />
-                            <TextBlock Text="Proof of concept · live public data · not investment advice." FontSize="9" Foreground="#FF4A4A4A"
+                            <TextBlock Text="Proof of concept · live public data · information, not a recommendation." FontSize="9" Foreground="#FF4A4A4A"
                                        Margin="0,10,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                     </Grid>

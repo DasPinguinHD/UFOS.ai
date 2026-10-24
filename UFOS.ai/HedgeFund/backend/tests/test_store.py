@@ -339,7 +339,7 @@ class RegimeExtendedTest(unittest.TestCase):
         hicp = monthly([2.0 + 0.3 * i / n for i in range(n)])
 
         ext = derived.regime_extended({"PAYEMS": pay, "INDPRO": ind, "PCEPILFE": pce}, usrec, euro_ip, hicp)
-        self.assertEqual(set(ext), {"trail_long", "recessions", "components", "euro", "phase_behaviour", "note",
+        self.assertEqual(set(ext), {"trail_long", "recessions", "components", "euro", "euro_error", "phase_behaviour", "note",
                                     "episodes", "history", "component_series", "asset_tendencies"})
         self.assertIsInstance(ext["note"], str)
         # trail since 2000, monthly, same method as the card's trail
@@ -377,7 +377,7 @@ class RegimeExtendedTest(unittest.TestCase):
         self.assertIn("eurostat", eu["source_url"])
         # phase behaviour (static)
         pb = ext["phase_behaviour"]
-        self.assertEqual(pb["disclaimer"], "Historical tendencies, not a forecast and not investment advice.")
+        self.assertEqual(pb["disclaimer"], "Historical tendencies, not a forecast — information, not a recommendation.")
         for q in ("goldilocks", "reflation", "stagflation", "slowdown"):
             self.assertIsInstance(pb[q]["summary"], str)
             self.assertEqual([a["asset"] for a in pb[q]["assets"]],
@@ -385,11 +385,11 @@ class RegimeExtendedTest(unittest.TestCase):
             self.assertTrue(all(isinstance(a["tendency"], str) and a["tendency"] for a in pb[q]["assets"]))
         json.dumps(ext)  # JSON-serialisable
 
-    def test_fallbacks(self):
+    def test_missing_inputs_are_not_substituted(self):
         ext = derived.regime_extended({"PAYEMS": [], "INDPRO": [], "CPIAUCSL": monthly([2.0] * 30)}, [], None, None)
         self.assertEqual(ext["trail_long"], [])
         self.assertIsNone(ext["euro"])
-        self.assertEqual([c["name"] for c in ext["components"]], ["CPI inflation (YoY)"])
+        self.assertEqual(ext["components"], [])                       # no CPI instead of core PCE (2026-10-02)
         self.assertEqual(derived.recessions(monthly([0, 1, 1], 2025)), [{"start": "2025-02", "end": "2025-03"}])
         self.assertEqual(derived.recessions(monthly([1, 1, 0], 1999)), [])  # ended before 2000
 

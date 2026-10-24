@@ -6,7 +6,7 @@ This implementation replaces the previous minimal server with a clearer structur
 - preserves the same public API: Broadcaster.start/stop/broadcast
 
 Frontend expectations:
-- listens on WS_HOST:WS_PORT (from config)
+- listens on 127.0.0.1:WS_PORT (from config; loopback only)
 - receives JSON messages of form {"type": "<type>", "payload": { ... }}
 """
 
@@ -18,7 +18,7 @@ from typing import Awaitable, Callable, Optional, Set
 import websockets
 from websockets.legacy.server import WebSocketServerProtocol, WebSocketServer
 
-from config import WS_HOST, WS_PORT, DEFAULT_ALLOWED_ORIGINS
+from config import WS_PORT, DEFAULT_ALLOWED_ORIGINS
 import api_auth
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ class Broadcaster:
         # start the websockets server; allow large messages in case frontend sends bigger data
         self._server = await websockets.serve(
             self._handler,
-            api_auth.bind_host(WS_HOST, "WebSocket server"),
+            api_auth.bind_host("WebSocket server"),
             WS_PORT,
             # Session token + origin check before the handshake (api_auth).
             process_request=api_auth.ws_process_request(api_auth.allowed_origins(DEFAULT_ALLOWED_ORIGINS)),

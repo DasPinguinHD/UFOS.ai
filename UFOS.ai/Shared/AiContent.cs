@@ -21,14 +21,30 @@ namespace UFOS.ai.Shared
         /// <summary>Glyph that marks anything AI-related (trigger buttons, badges).</summary>
         public const string Glyph = "✦";
 
+        // ---- Context-specific notices (Stage 10, SPEC §15 "Stage 10 addition", user 2026-10-17) — replace the former blanket
+        // "not investment advice" line. Own-use tool: the wording states what the output IS, per context. ----
+
+        /// <summary>(a) Analyses, explanations, news / filing summaries, report commentary.</summary>
+        public const string AnalysisNotice =
+            "AI-generated analysis — may be inaccurate; information, not a recommendation.";
+
+        /// <summary>(b) Strategies (Studio drafts, paper → strategy), committee memos, discovery-loop finalists.</summary>
+        public const string ResearchNotice =
+            "AI-generated research output for your own decision. Not a personal recommendation by a licensed advisor; you decide and carry the risk. Backtests are hypothetical.";
+
+        /// <summary>(c) Autonomous execution (the runtime / old engine trading on the user's paper accounts).</summary>
+        public const string PaperExecutionNotice =
+            "Automated trading on your own paper account under the limits you set. Paper only — no real money.";
+
+        // (d) A separate, explicit live-trading notice is defined only if live trading is ever enabled (stage 12) — not in this build.
+
         /// <summary>Tooltip for every button that starts an AI analysis.</summary>
         public const string TriggerTooltip =
             "Generates an AI analysis via a third-party language model (OpenRouter). " +
-            "May contain errors — not investment advice.";
+            "May contain errors — information, not a recommendation.";
 
-        /// <summary>Caveat line shown directly under every AI output.</summary>
-        public const string Caveat =
-            "Automated AI analysis — may be inaccurate or incomplete. Not investment advice. Verify independently.";
+        /// <summary>Caveat line shown directly under every AI analysis (= notice (a)); research outputs use <see cref="ResearchNotice"/>.</summary>
+        public const string Caveat = AnalysisNotice;
 
         /// <summary>
         /// Badge text while the model is still working — already says "AI-GENERATED", so the

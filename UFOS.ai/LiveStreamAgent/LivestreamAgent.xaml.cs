@@ -192,6 +192,8 @@ namespace UFOS.ai
         };
 
         private WebSocketService? _wsService;
+        // AI budget keys currently blocked by the backend (key -> its message), see RenderAiBudgetStatus.
+        private readonly Dictionary<string, string> _blockedAiBudgets = new(StringComparer.Ordinal);
         private CancellationTokenSource? _wsCts;
         private Process? _backendProcess;
         // Python environment hint from run_backend.ps1's "UFOS_ENV: ..." marker lines
@@ -442,6 +444,10 @@ namespace UFOS.ai
         public LivestreamAgent()
         {
             InitializeComponent();
+            // user request 2026-10-23: the main content windows start maximized (within the work area: WM_GETMINMAXINFO hook);
+            // WPF raises no StateChanged for the initial state, so the maximized look (square corners) is applied once here
+            WindowMaximize.StartMaximized(this);
+            Window_StateChanged(this, EventArgs.Empty);
             // bind tickers collection to ItemsControl
             try { TickersItems.ItemsSource = _tickers; } catch { }
             try
@@ -999,6 +1005,7 @@ namespace UFOS.ai
             // start websocket client
             // indicate connection attempt immediately
             try { UpdateConnectionStatus("Connecting"); } catch { }
+            LoadYouTubeUrl();
             try
             {
                 // attempt to start backend helper script (if present) so health endpoint becomes available
@@ -1058,6 +1065,17 @@ namespace UFOS.ai
                     }
                 };
                 _wsService.OnConnectionStatus += s => Dispatcher.Invoke(() => UpdateConnectionStatus(s));
+                // AI budget (task B): blocked caps -> amber line under the verdict. A (re)connected backend
+                // re-sends its currently blocked keys, so the list starts empty on every connect.
+                _wsService.OnAiBudget += (key, label, blocked, message) =>
+                {
+                    try { Dispatcher.Invoke(() => UpdateAiBudgetStatus(key, label, blocked, message)); } catch { }
+                };
+                _wsService.OnConnectionStatus += s =>
+                {
+                    if (!string.Equals(s, "Connected", StringComparison.OrdinalIgnoreCase)) return;
+                    try { Dispatcher.Invoke(() => { _blockedAiBudgets.Clear(); RenderAiBudgetStatus(); }); } catch { }
+                };
                 // also log connection status changes to backend buffer for diagnostics
                 _wsService.OnConnectionStatus += s => { try { AppLog.Info("WebSocket", s); } catch { } };
                 _wsService.OnRawMessage += raw => { if (!string.IsNullOrEmpty(raw)) { try { AppLog.Info("WebSocket", raw); } catch { } } };
@@ -1207,8 +1225,9 @@ namespace UFOS.ai
             {
                 var psi = new ProcessStartInfo
                 {
-                    FileName = "powershell.exe",
-                    Arguments = $"-ExecutionPolicy Bypass -File \"{script}\" -SkipInstall",
+                    // Absolute Windows PowerShell path + why Bypass stays for this .ps1: Shared/WindowsPowerShell.cs (S10-A2 L4).
+                    FileName = WindowsPowerShell.ExePath,
+                    Arguments = WindowsPowerShell.ScriptArguments(script, "-SkipInstall"),
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
@@ -1370,6 +1389,87 @@ namespace UFOS.ai
             catch { }
         }
 
+        // ---- YouTube URL (S10-E, user 2026-10-24: backend\data\settings.json "youtube_url", edited here; no .env) ----
+
+        private static string? LsaSettingsPath()
+            => BackendAuth.FindBackendDir("LiveStreamAgent", "backend") is string dir ? BackendSettingsFile.PathFor(dir) : null;
+
+        private void ShowYouTubeUrlStatus(string? text, bool problem)
+        {
+            YouTubeUrlStatusText.Text = text ?? "";
+            YouTubeUrlStatusText.Foreground = new SolidColorBrush(problem ? Color.FromRgb(0xED, 0x6A, 0x5A) : Color.FromRgb(0x8F, 0x8F, 0x8F));
+            YouTubeUrlStatusText.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        /// <summary>Shows the stored youtube_url (or says why there is none). The backend refuses to start without a valid one.</summary>
+        private void LoadYouTubeUrl()
+        {
+            var path = LsaSettingsPath();
+            if (path == null)
+            {
+                YouTubeUrlBox.IsEnabled = SaveYouTubeUrlButton.IsEnabled = false;
+                ShowYouTubeUrlStatus("LiveStreamAgent\\backend not found next to the app — the URL can't be set here.", true);
+                return;
+            }
+            try
+            {
+                var settings = BackendSettingsFile.Read(path);
+                var url = settings[BackendSettingsFile.YouTubeUrlKey]?.GetValue<string>();
+                YouTubeUrlBox.Text = url ?? "";
+                if (string.IsNullOrWhiteSpace(url))
+                    ShowYouTubeUrlStatus("No YouTube URL set — enter the live stream URL and press Save & restart (the backend needs it to start).", true);
+                else
+                {
+                    var problem = BackendSettingsFile.ValidateYouTubeUrl(url);
+                    ShowYouTubeUrlStatus(problem == null ? null : "The stored URL is not accepted: " + problem, problem != null);
+                }
+            }
+            catch (Exception ex) when (ex is BackendSettingsException || ex is InvalidOperationException || ex is FormatException)
+            {
+                ShowYouTubeUrlStatus(ex is BackendSettingsException ? ex.Message : "youtube_url in data\\settings.json is not a text value — enter it again.", true);
+            }
+        }
+
+        private void SaveYouTubeUrlButton_Click(object sender, RoutedEventArgs e)
+        {
+            var url = (YouTubeUrlBox.Text ?? "").Trim();
+            var problem = BackendSettingsFile.ValidateYouTubeUrl(url);
+            if (problem != null)
+            {
+                ShowYouTubeUrlStatus(problem, true);
+                return;
+            }
+            var path = LsaSettingsPath();
+            if (path == null)
+            {
+                ShowYouTubeUrlStatus("LiveStreamAgent\\backend not found next to the app — nothing saved.", true);
+                return;
+            }
+            try
+            {
+                BackendSettingsFile.SetValues(path, new System.Collections.Generic.Dictionary<string, System.Text.Json.Nodes.JsonNode?>
+                {
+                    [BackendSettingsFile.YouTubeUrlKey] = System.Text.Json.Nodes.JsonValue.Create(url),
+                });
+            }
+            catch (BackendSettingsException ex)
+            {
+                ShowYouTubeUrlStatus(ex.Message + " Nothing was changed.", true);
+                return;
+            }
+            AppLog.Info("LiveStream Agent", "YouTube URL saved to backend\\data\\settings.json; restarting the backend.");
+            ShowYouTubeUrlStatus("Saved — restarting the backend…", false);
+            try
+            {
+                TryStopBackendHelper();
+                TryStartBackendHelper();
+            }
+            catch (Exception ex)
+            {
+                ShowYouTubeUrlStatus("Saved, but the backend could not be restarted: " + ex.Message, true);
+            }
+        }
+
         private void RestartButton_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -1386,13 +1486,15 @@ namespace UFOS.ai
         {
             try
             {
-                var client = new HttpClient();
+                // Explicit per-request timeout (S10-A2): HttpClient's default is 100 s, which would let one hung
+                // health request outlast the whole wait. 2 s like Global Monitoring's health probe.
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 while (sw.Elapsed < timeout)
                 {
                     try
                     {
-                        var resp = await client.GetAsync("http://127.0.0.1:8766/health");
+                        using var resp = await client.GetAsync("http://127.0.0.1:8766/health");
                         if (resp.IsSuccessStatusCode) return true;
                     }
                     catch { }
@@ -1440,6 +1542,39 @@ namespace UFOS.ai
 
 
         // Connection status update
+        // ===================== AI budget status (task B, docs/ai-budgets-spec.md §6.3) =====================
+        // The backend skips AI calls blocked by a daily cap (backend/ai_caps.py) and reports it with
+        // "ai_budget" messages; while any key is blocked its message is shown (plain text) under the
+        // verdict area, cleared on "blocked": false. Caps are edited in MainWindow → Settings → AI budgets.
+
+        private void UpdateAiBudgetStatus(string key, string label, bool blocked, string? message)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+            if (blocked)
+            {
+                _blockedAiBudgets[key] = string.IsNullOrWhiteSpace(message)
+                    ? $"{label}: AI calls are paused by the AI budget (MainWindow → Settings → AI budgets)."
+                    : message;
+            }
+            else
+            {
+                _blockedAiBudgets.Remove(key);
+            }
+            RenderAiBudgetStatus();
+        }
+
+        private void RenderAiBudgetStatus()
+        {
+            if (_blockedAiBudgets.Count == 0)
+            {
+                AiBudgetStatusText.Text = string.Empty;
+                AiBudgetStatusText.Visibility = Visibility.Collapsed;
+                return;
+            }
+            AiBudgetStatusText.Text = string.Join("\n", _blockedAiBudgets.Values);
+            AiBudgetStatusText.Visibility = Visibility.Visible;
+        }
+
         public void UpdateConnectionStatus(string status)
         {
             Dispatcher.Invoke(() =>

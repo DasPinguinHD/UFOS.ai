@@ -39,10 +39,13 @@ cached; each LLM call uses the latest cached snapshot.
 1. Install [ffmpeg](https://ffmpeg.org/) and ensure it's on your `PATH`.
 2. `pip install -r requirements.txt` (or let `run_backend.ps1` do it — see
    "Python environment" below)
-3. Copy `.env.example` to `.env` and fill in:
-   - `DEEPGRAM_API_KEY` — Deepgram streaming transcription API key
-   - `OPENROUTER_API_KEY` — OpenRouter API key (used to call DeepSeek v3)
-   - `YOUTUBE_URL` — URL of the live Fed press conference / FOMC stream
+3. No `.env` any more (stage 10, 2026-10-24). Keys live in the Windows
+   Credential Manager — enter them in the app under ⚙ Keys & data:
+   - `deepgram-api-key` — Deepgram streaming transcription API key
+   - `openrouter-api-key` — OpenRouter API key (ONE key shared by all modules)
+   The YouTube URL of the live Fed press conference / FOMC stream is set in the
+   LiveStream Agent window (stored as `youtube_url` in `data/settings.json`; other
+   tunables there too — keys and defaults: `config.SCHEMA`).
 
 ## Running
 
@@ -51,8 +54,8 @@ python main.py
 ```
 
 - Transcript, market, and analysis events are logged as JSON lines to `data/logs/<date>.jsonl`.
-- The same events are broadcast live over a WebSocket at `ws://<WS_HOST>:<WS_PORT>` (default
-  `ws://0.0.0.0:8765`) for a future frontend to consume.
+- The same events are broadcast live over a WebSocket at `ws://127.0.0.1:8765` (loopback only,
+  session token required) for the LiveStream Agent window.
 
 ## Scenario playbooks
 
@@ -152,3 +155,23 @@ Tests: `python -m unittest discover -s tests -t .` (from `backend/`, stdlib only
 `tests/test_storage.py`). This replaces the earlier `db.py` store
 (`%LOCALAPPDATA%\UFOS.ai\data\livestream.sqlite`) and the first `storage.py` draft
 (`data/livestreamagent.db`); those files are no longer read and can be deleted if they exist.
+
+## Daily AI caps + `GET/PUT /ai/budgets` (2026-10-17, task B)
+
+Contract: `UFOS.ai/docs/ai-budgets-spec.md`. `ai_caps.py` (identical copy in every backend) keeps a
+daily cap per AI feature in `data/livestream.db` (meta): `analysis` (per transcript segment, default
+$5.00/day) and `verdicts` (default $1.00/day), 0..50, 0 = off. `llm_analyst.py` checks the cap
+BEFORE every call; a blocked call is not made and nothing analysis-like is broadcast. Instead the
+backend sends a WebSocket message `{"type": "ai_budget", "payload": {key, label, blocked, reason,
+message}}` when a key's state changes (and the currently blocked keys to a new client). Fail closed
+(unreadable spend, failed spend write, in-memory stand-in DB). `GET /ai/budgets` (schema-1 payload),
+`PUT /ai/budgets {key, limit_usd}` (token; 403 with an `Origin` header; changes are logged) on port
+8766 — the MainWindow "AI budgets" window is the UI. Tests: `tests/test_ai_caps.py`.
+
+Review fixes (2026-10-17): **Deepgram transcription** has its own daily cap `transcription`
+(default $3.00/day, estimate = audio minutes × `TRANSCRIPTION_USD_PER_MINUTE` = $0.0100/min in
+`main.py`, conservative): reserved before the stream opens and before every further 5 minutes;
+each interval writes an estimated cost-log line (`provider: "Deepgram"`, `status: "estimated"`).
+When the cap blocks, no more audio is sent, the Deepgram stream and ffmpeg are closed cleanly, the
+window gets `ai_budget`, and the backend re-checks every 30 s and resumes once allowed. After every
+successful `PUT /ai/budgets` all caps are re-checked and changed states are broadcast at once.

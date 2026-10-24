@@ -8,6 +8,10 @@ The line shape is identical in every UFOS.ai module so a single viewer can sum t
    "cost_usd", "prompt_tokens", "completion_tokens", "status"}
 
 cost_usd is OpenRouter's usage.cost (credits; 1 credit = 1 USD). Writing never raises.
+
+2026-10-17 (task B, review L5): Deepgram live transcription is paid too but returns no cost, so
+main.py writes ESTIMATED lines (audio minutes x price): feature "transcription",
+provider "Deepgram", status "estimated" (``record(..., provider=...)``).
 """
 import json
 import logging
@@ -22,6 +26,7 @@ PROVIDER = "OpenRouter"
 FEATURE_LABELS = {
     "verdict": "LiveStream Agent · AI verdict",
     "analysis": "LiveStream Agent · AI analysis",
+    "transcription": "LiveStream Agent · Live transcription (Deepgram, estimated)",
 }
 
 
@@ -67,7 +72,7 @@ def usage_info(response) -> dict:
     }
 
 
-def record(feature: str, model, usage: "dict | None", status: str = "ok") -> None:
+def record(feature: str, model, usage: "dict | None", status: str = "ok", provider: str = PROVIDER) -> None:
     """Append one ledger line. Never raises - failures are logged as warnings."""
     try:
         usage = usage or {}
@@ -76,7 +81,7 @@ def record(feature: str, model, usage: "dict | None", status: str = "ok") -> Non
             "module": MODULE,
             "feature": feature,
             "feature_label": FEATURE_LABELS.get(feature, f"LiveStream Agent · {feature}"),
-            "provider": PROVIDER,
+            "provider": provider or PROVIDER,
             "model": model or "",
             "cost_usd": _num(usage.get("cost_usd")),
             "prompt_tokens": _int(usage.get("prompt_tokens")),

@@ -1,0 +1,7 @@
+{
+  "label": "budgetfix0",
+  "approved": "user, 2026-10-18 14:51 ('friere den status jetzt ein'): re-freeze AiBudgetsWindow.xaml.cs after the compile fix (fully qualified System.Windows.Input.Key in the row's PreviewKeyDown; the row class has a string property named Key that shadowed the enum). budget0 stays closed; this label records only the fixed file.",
+  "files": [
+    "UFOS.ai/AiBudgetsWindow.xaml.cs"
+  ]
+}

@@ -8,7 +8,7 @@ until 2026-09-24; they moved to the Hedge Fund module's Financial Newsroom
 Architecture (see docs/global-monitoring-system-plan.md, Section 2/3):
 - Each collector in collectors/ is an independent async poller.
 - New events go through EventStore (dedup + ring buffer) and are broadcast
-  to every connected frontend over WebSocket (ws://<WS_HOST>:<WS_PORT>).
+  to every connected frontend over WebSocket (ws://127.0.0.1:<WS_PORT>).
 - Every poll cycle (success or failure) also broadcasts a "source_status"
   message, which drives the "Ampel pro Feed" traffic-light list in the
   frontend's left sidebar.
@@ -27,6 +27,10 @@ Architecture (see docs/global-monitoring-system-plan.md, Section 2/3):
                                  EU AI Act Art. 50) — the "Assess"/
                                  "Sentiment" button on a marker, via OpenRouter
                                  (see assess.py)
+    GET/PUT /ai/budgets       -> daily AI caps of this module (task B, 2026-10-17,
+                                 contract UFOS.ai/docs/ai-budgets-spec.md; ai_caps.py).
+                                 /assess and /localnews-summary check their cap BEFORE
+                                 the OpenRouter call: 402 {error, code: "budget"}.
 
 Local SQLite storage (2026-09-25, storage.py + persistence.py, data/gms.db):
 cache first, then reconcile. At start, expired rows are pruned and the cached
@@ -52,6 +56,7 @@ from logging_setup import configure_logging
 
 configure_logging()
 
+import ai_caps
 import assess
 import localnews
 import persistence
@@ -59,11 +64,12 @@ import refresh
 import storage
 from broadcast import Broadcaster
 import api_auth
-from config import HEALTH_PORT, HTTP_HOST, ASSESS_REUSE_SECONDS, REFRESH_MIN_SECONDS, DEFAULT_ALLOWED_ORIGINS
+from config import HEALTH_PORT, ASSESS_REUSE_SECONDS, REFRESH_MIN_SECONDS, DEFAULT_ALLOWED_ORIGINS
 
 API_ORIGINS = api_auth.allowed_origins(DEFAULT_ALLOWED_ORIGINS)
 from events import EventStore
 from logger import log_event
+import logger as event_logs
 from localnews import fetch_local_news, SUMMARY_MAX_RECORDS
 import assess_context
 
@@ -117,10 +123,35 @@ CORS_HEADERS: dict = {}
 
 DB_PRUNE_INTERVAL_SECONDS = 24 * 3600
 
+# Daily AI caps (task B, user 2026-10-17; contract UFOS.ai/docs/ai-budgets-spec.md §3). Defaults are
+# generous for the default model (~$0.0003 per Assess): $1/day ≈ 3,000 clicks. Persisted in gms.db
+# meta (ai_caps.LIMIT_PREFIX / SPEND_PREFIX), edited via PUT /ai/budgets (MainWindow → AI budgets).
+MODULE_ID = "global-monitoring"
+MODULE_LABEL = "Global Monitoring"
+AI_CAPS = (
+    ai_caps.CapDef("assess", "Globe · AI Assess / Sentiment", 1.0, 0.005, max_usd=50.0, group="Globe",
+                   cost_log=(("Global Monitoring", "assess"),),
+                   notes="Checked before every Assess/Sentiment click; a reused answer (30 min) costs nothing."),
+    ai_caps.CapDef("localnews_summary", "Globe · AI Sum up local news", 1.0, 0.005, max_usd=50.0, group="Globe",
+                   cost_log=(("Global Monitoring", "localnews-summary"),),
+                   notes="Checked before every \"Sum up local news\" click in the city panel."),
+)
+
+
+def build_ai_caps(db_store) -> "ai_caps.DailyCaps":
+    """The module's daily AI caps over gms.db (an in-memory stand-in DB refuses every AI call)."""
+    kv_get, kv_set, kv_add, available = ai_caps.storage_kv(db_store)
+    return ai_caps.DailyCaps(MODULE_ID, MODULE_LABEL, AI_CAPS, kv_get, kv_set, kv_add=kv_add,
+                             available=available, logger=logger)
+
 
 async def main() -> None:
     # Fresh session token for this start (published to data/api-token after binding).
     api_auth.init_token()
+    # Event logs (data/logs/<date>.jsonl) older than LOG_RETENTION_DAYS are removed (stage 10 security audit L6).
+    removed_logs = event_logs.prune_old_logs()
+    if removed_logs:
+        logger.info("Removed %d event log file(s) older than %d days", len(removed_logs), event_logs.LOG_RETENTION_DAYS)
     # --- Local SQLite storage: retention, then cache first (before any collector starts) ---
     # Storage never raises: a corrupt file is moved aside, an unusable one
     # falls back to an in-memory database.
@@ -130,6 +161,7 @@ async def main() -> None:
     cached_events = persistence.warm_start_events(db_store)
     seeded = store.seed(cached_events)
     localnews_loaded = localnews.attach_storage(db_store)
+    budgets = build_ai_caps(db_store)
     # Incremental news polling: articles already stored are skipped.
     news_collector.is_known = lambda event_id: db_store.has_item("news", event_id)
     logger.info("Local storage%s: pruned %s, restored %d event(s) and %d local news lookup(s)",
@@ -175,12 +207,11 @@ async def main() -> None:
     localnews_session = aiohttp.ClientSession()
 
     async def _version(request):
-        return web.json_response({"code_mtime": CODE_MTIME, "started_at": STARTED_AT, "pid": os.getpid()},
-                                 headers=CORS_HEADERS)
+        # public: the app's stale-backend check only (code_mtime) — no pid since stage 10 (security audit L2)
+        return web.json_response({"code_mtime": CODE_MTIME, "started_at": STARTED_AT}, headers=CORS_HEADERS)
 
     async def _shutdown(request):
-        # Token-protected (api_auth) and additionally loopback only: even with
-        # ALLOW_REMOTE_ACCESS=true nobody on the LAN may stop it.
+        # Token-protected (api_auth) and additionally loopback only (the server binds 127.0.0.1 anyway).
         if request.remote not in ("127.0.0.1", "::1"):
             return web.json_response({"error": "forbidden"}, status=403, headers=CORS_HEADERS)
         logger.warning("Shutdown requested by the app (backend code on disk is newer than this process).")
@@ -210,14 +241,14 @@ async def main() -> None:
             return web.json_response({"city": city, "country": country, **result}, headers=CORS_HEADERS)
         except Exception as ex:
             logger.warning("Local news lookup failed for %s, %s: %s", city, country, ex)
-            return web.json_response({"error": str(ex)}, status=502, headers=CORS_HEADERS)
+            return web.json_response({"error": "Local news could not be loaded right now (details in backend.log)."},
+                                     status=502, headers=CORS_HEADERS)
 
     async def _assess(request):
-        if not assess.is_configured():
-            return web.json_response(
-                {"error": "OPENROUTER_API_KEY is not set in backend/.env — see .env.example."},
-                status=503, headers=CORS_HEADERS,
-            )
+        missing = assess.key_problem()          # stage 10 S10-E: Credential Manager, ⚙ Keys & data
+        if missing:
+            return web.json_response({"error": missing[1], "code": missing[0], "key": assess.KEY_NAME},
+                                     status=503, headers=CORS_HEADERS)
         try:
             body = await request.json()
         except json.JSONDecodeError:
@@ -255,6 +286,14 @@ async def main() -> None:
                     "cached_at": cached["ts"],
                 }, headers=CORS_HEADERS)
 
+        # Daily AI cap (task B): checked before the context is gathered, and again (reserve) right
+        # before the OpenRouter call — fail closed, readable message (globe shows "error").
+        blocked = budgets.status("assess")
+        if blocked:
+            logger.info("Assess request for %r refused by the daily AI cap: %s", title, blocked[1])
+            return web.json_response({"error": blocked[1], "code": "budget", "budget_key": "assess",
+                                      "reason": blocked[0]}, status=402, headers=CORS_HEADERS)
+
         context, context_used = "", []
         if event is not None:
             source = event.get("source") or source
@@ -267,7 +306,8 @@ async def main() -> None:
 
         logger.info("Assess request: category=%r title=%r context=%s (%d chars)", category, title, context_used, len(context))
         try:
-            text, model, usage = await assess.assess_marker(category, title, summary, source, context)
+            text, model, usage = await ai_caps.guarded_call(
+                budgets, "assess", None, lambda: assess.assess_marker(category, title, summary, source, context))
             if not text:
                 return web.json_response({"error": "The model returned an empty response."}, status=502, headers=CORS_HEADERS)
             logger.info("Assess request succeeded for %r (model=%s)", title, model)
@@ -281,20 +321,22 @@ async def main() -> None:
                  "usage": usage, "cached": False},  # usage = assess.usage_info(): cost_usd/prompt_tokens/completion_tokens
                 headers=CORS_HEADERS,
             )
+        except ai_caps.BudgetBlocked as ex:
+            return web.json_response(ex.payload(), status=402, headers=CORS_HEADERS)
         except Exception as ex:
             logger.warning("AI assessment failed for %r: %s", title, ex)
-            return web.json_response({"error": str(ex)}, status=502, headers=CORS_HEADERS)
+            return web.json_response({"error": "The AI assessment failed (details in backend.log)."}, status=502,
+                                     headers=CORS_HEADERS)
 
     async def _localnews_summary(request):
         """POST /localnews-summary {city, country} — the city panel's
         "✦ AI Sum up local news" button. Reuses the (cached) /localnews
         lookup, with up to SUMMARY_MAX_RECORDS headlines instead of the 8
         shown in the panel."""
-        if not assess.is_configured():
-            return web.json_response(
-                {"error": "OPENROUTER_API_KEY is not set in backend/.env — see .env.example."},
-                status=503, headers=CORS_HEADERS,
-            )
+        missing = assess.key_problem()          # stage 10 S10-E: Credential Manager, ⚙ Keys & data
+        if missing:
+            return web.json_response({"error": missing[1], "code": missing[0], "key": assess.KEY_NAME},
+                                     status=503, headers=CORS_HEADERS)
         try:
             body = await request.json()
         except json.JSONDecodeError:
@@ -303,16 +345,23 @@ async def main() -> None:
         country = str(body.get("country", "")).strip()
         if not city:
             return web.json_response({"error": "missing 'city' in body"}, status=400, headers=CORS_HEADERS)
+        blocked = budgets.status("localnews_summary")   # daily AI cap (task B), fail closed
+        if blocked:
+            return web.json_response({"error": blocked[1], "code": "budget", "budget_key": "localnews_summary",
+                                      "reason": blocked[0]}, status=402, headers=CORS_HEADERS)
         try:
             news = await fetch_local_news(localnews_session, city, country, limit=SUMMARY_MAX_RECORDS)
         except Exception as ex:
-            return web.json_response({"error": f"No local news to summarize: {ex}"}, status=502, headers=CORS_HEADERS)
+            logger.warning("Local news for the summary of %s, %s failed: %s", city, country, ex)
+            return web.json_response({"error": "No local news to summarize right now (details in backend.log)."},
+                                     status=502, headers=CORS_HEADERS)
         articles = news.get("articles") or []
         if not articles:
             return web.json_response({"error": "No local news to summarize."}, status=409, headers=CORS_HEADERS)
         logger.info("Local news summary request: %s, %s (%d headlines)", city, country, len(articles))
         try:
-            text, model, usage = await assess.summarize_local_news(city, country, articles)
+            text, model, usage = await ai_caps.guarded_call(
+                budgets, "localnews_summary", None, lambda: assess.summarize_local_news(city, country, articles))
             if not text:
                 return web.json_response({"error": "The model returned an empty response."}, status=502, headers=CORS_HEADERS)
             prov = assess.provenance("localnews-summary", model)
@@ -325,9 +374,27 @@ async def main() -> None:
                 "headlines": len(articles),
                 "usage": usage,  # assess.usage_info(): cost_usd/prompt_tokens/completion_tokens
             }, headers=CORS_HEADERS)
+        except ai_caps.BudgetBlocked as ex:
+            return web.json_response(ex.payload(), status=402, headers=CORS_HEADERS)
         except Exception as ex:
             logger.warning("Local news summary failed for %s: %s", city, ex)
-            return web.json_response({"error": str(ex)}, status=502, headers=CORS_HEADERS)
+            return web.json_response({"error": "The local news summary failed (details in backend.log)."},
+                                     status=502, headers=CORS_HEADERS)
+
+    async def _ai_budgets_get(request):
+        status, payload = budgets.handle_get(dict(request.query))
+        return web.json_response(payload, status=status, headers=CORS_HEADERS)
+
+    async def _ai_budgets_put(request):
+        # Only the native app may change budgets: a request from a web page (Origin header) is refused.
+        origin = request.headers.get("Origin")
+        if origin is not None:
+            return web.json_response({"error": ai_caps.ORIGIN_REFUSED}, status=403, headers=CORS_HEADERS)
+        body, refused = await ai_caps.read_json_body(request)
+        if refused:
+            return web.json_response(refused[1], status=refused[0], headers=CORS_HEADERS)
+        status, payload = budgets.handle_put(body, origin, dict(request.query))
+        return web.json_response(payload, status=status, headers=CORS_HEADERS)
 
     health_app = web.Application(middlewares=[api_auth.http_middleware(API_ORIGINS)])
     health_app.router.add_get("/health", _health)
@@ -337,6 +404,8 @@ async def main() -> None:
     health_app.router.add_get("/localnews", _localnews)
     health_app.router.add_post("/assess", _assess)
     health_app.router.add_post("/localnews-summary", _localnews_summary)
+    health_app.router.add_get("/ai/budgets", _ai_budgets_get)
+    health_app.router.add_put("/ai/budgets", _ai_budgets_put)
     # OPTIONS preflights are answered by the api_auth middleware; this route only makes them routable.
     health_app.router.add_route("OPTIONS", "/{tail:.*}", lambda request: web.Response())
     # access_log_class default already logs one line per request (method,
@@ -347,10 +416,10 @@ async def main() -> None:
     # too, not just the console.
     health_runner = web.AppRunner(health_app, access_log=logging.getLogger("aiohttp.access"))
     await health_runner.setup()
-    health_site = web.TCPSite(health_runner, api_auth.bind_host(HTTP_HOST, "HTTP API"), HEALTH_PORT)
+    health_site = web.TCPSite(health_runner, api_auth.bind_host("HTTP API"), HEALTH_PORT)
     await health_site.start()
     api_auth.publish_token()  # only now: the port is ours (see api_auth.init_token)
-    logger.info("HTTP API listening on %s (/health, /events, /localnews, /assess, /localnews-summary; "
+    logger.info("HTTP API listening on %s (/health, /events, /localnews, /assess, /localnews-summary, /ai/budgets; "
                 "token required except /health, /version)", health_site.name)
 
     # --- Collectors ---

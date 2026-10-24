@@ -18,7 +18,7 @@ DERIVED = {
         "Real Policy Rate", "pp", "Fed funds rate − core PCE inflation (YoY)",
         "How hard the Fed is braking after inflation, measured with the Fed's own inflation gauge. "
         "Above ~2 pp = clearly restrictive (growth risk); below 0 = policy still stimulates "
-        "(inflation risk). Falls back to CPI if core PCE is unavailable. Monthly."),
+        "(inflation risk). Not shown when core PCE is missing (no CPI substitute, 2026-10-02). Monthly."),
     "CURVE_UNINVERSION": (
         "Yield-Curve Un-inversion", "pp", "10Y − 2Y spread, monthly average, vs. its 24-month low",
         "Recessions historically tended to start around the time an inverted curve turns positive again — "
@@ -41,14 +41,17 @@ OK_REASON = "Within its usual range."
 
 class DerivedSeries(dict):
     """key -> derived history, plus .formulas: key -> formula text that differs
-    from DERIVED (e.g. the Sahm fallback). Returned per compute() call instead of
+    from DERIVED, and .unavailable: key -> "unavailable: <input> missing" for
+    indicators that could not be computed (no substitute input — user
+    decision 2026-10-02). Returned per compute() call instead of
     the former module-level _formula_override dict, whose content depended on
     which of the two compute() calls ran last (Copilot review 2026-09-25,
     "SAHM ... initialization order")."""
 
-    def __init__(self, *args, formulas: dict = None, **kwargs):
+    def __init__(self, *args, formulas: dict = None, unavailable: dict = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.formulas = dict(formulas or {})
+        self.unavailable = dict(unavailable or {})
 
 
 def _by_date(points: list) -> dict:
@@ -94,27 +97,37 @@ def compute(full: dict, curve_monthly: list, sahm_official: list = None) -> dict
     """full: series_id -> monthly history (oldest first). Returns key -> derived history.
     Called twice per poll: with the recent histories (cards, signals) and with the
     long monthly histories since 2000 (range switcher, percentiles)."""
-    out, formulas = {}, {}
-    inflation = full.get("PCEPILFE") or full.get("CPIAUCSL")
-    if full.get("FEDFUNDS") and inflation:
+    out, formulas, missing = {}, {}, {}
+    # No substitute inputs (user decision 2026-10-02): core PCE is required for the real
+    # policy rate (no CPI stand-in), the official SAHMREALTIME for the Sahm rule (no own
+    # reconstruction). A missing input -> the indicator is "unavailable: <input> missing".
+    if full.get("FEDFUNDS") and full.get("PCEPILFE"):
         # Core PCE lags a month behind Fed funds: _combine keeps the common dates.
-        out["REAL_POLICY_RATE"] = _combine(full["FEDFUNDS"], inflation, lambda a, b: a - b)
-        if not full.get("PCEPILFE"):
-            formulas["REAL_POLICY_RATE"] = "Fed funds rate − CPI inflation (YoY) — core PCE unavailable"
+        out["REAL_POLICY_RATE"] = _combine(full["FEDFUNDS"], full["PCEPILFE"], lambda a, b: a - b)
+    else:
+        missing["REAL_POLICY_RATE"] = _missing(("FEDFUNDS", "fed funds rate"), ("PCEPILFE", "core PCE"), src=full)
     if curve_monthly:
         out["CURVE_UNINVERSION"] = curve_monthly
+    else:
+        missing["CURVE_UNINVERSION"] = "unavailable: monthly 10Y−2Y spread (T10Y2Y) missing"
     if sahm_official:
-        # FRED's official real-time Sahm indicator (SAHMREALTIME, Claudia Sahm) —
-        # preferred over our own reconstruction, which is only the fallback.
-        out["SAHM_RULE"] = sahm_official
-    elif full.get("UNRATE"):
-        out["SAHM_RULE"] = _sahm_series(full["UNRATE"])
-        formulas["SAHM_RULE"] = ("3-month avg. unemployment − its low of the previous 12 months "
-                                 "(own calculation; official SAHMREALTIME unavailable)")
+        out["SAHM_RULE"] = sahm_official      # FRED's official real-time Sahm indicator (Claudia Sahm)
+    else:
+        missing["SAHM_RULE"] = "unavailable: official Sahm indicator (SAHMREALTIME) missing"
     if full.get("UNRATE") and full.get("CPIAUCSL"):
         out["MISERY_INDEX"] = _combine(full["UNRATE"], full["CPIAUCSL"], lambda a, b: a + b)
+    else:
+        missing["MISERY_INDEX"] = _missing(("UNRATE", "unemployment rate"), ("CPIAUCSL", "CPI"), src=full)
     kept = {k: v for k, v in out.items() if len(v) >= 2}
-    return DerivedSeries(kept, formulas={k: f for k, f in formulas.items() if k in kept})
+    for k in out:
+        if k not in kept:
+            missing[k] = "unavailable: not enough history of its inputs"
+    return DerivedSeries(kept, formulas={k: f for k, f in formulas.items() if k in kept}, unavailable=missing)
+
+
+def _missing(*inputs, src: dict) -> str:
+    gone = [f"{label} ({sid})" for sid, label in inputs if not src.get(sid)]
+    return "unavailable: " + " and ".join(gone) + " missing"
 
 
 def to_macro(key: str, full: list, long_history: list = None, formula: str = None) -> dict:
@@ -210,8 +223,8 @@ def regime(full: dict, aux: dict):
     """full: raw monthly series; aux: {"PAYEMS": [...], "INDPRO": [...]} as YoY %.
     Returns the regime dict or None when inputs are missing."""
     payems, indpro = aux.get("PAYEMS"), aux.get("INDPRO")
-    inflation = full.get("PCEPILFE") or full.get("CPIAUCSL")
-    inflation_name = "core PCE" if full.get("PCEPILFE") else "CPI"
+    inflation = full.get("PCEPILFE")          # core PCE only — no CPI stand-in (2026-10-02)
+    inflation_name = "core PCE"
     if not (payems and indpro and inflation):
         return None
     gx, iy = _axes(payems, indpro, inflation)
@@ -322,7 +335,7 @@ _PHASES = {
 PHASE_BEHAVIOUR = {q: {"summary": summary,
                        "assets": [{"asset": a, "tendency": t} for a, t in zip(_ASSETS, tendencies)]}
                    for q, (summary, tendencies) in _PHASES.items()}
-PHASE_BEHAVIOUR["disclaimer"] = "Historical tendencies, not a forecast and not investment advice."
+PHASE_BEHAVIOUR["disclaimer"] = "Historical tendencies, not a forecast — information, not a recommendation."
 
 
 def recessions(usrec: list, since: str = EXTENDED_SINCE) -> list:
@@ -366,13 +379,22 @@ def euro_point(ip_yoy: list, hicp_yoy: list):
             "date": now["date"], "trail": trail, "inputs": EURO_INPUTS, "source_url": EURO_SOURCE_URL}
 
 
+def regime_unavailable_reason(full: dict, aux: dict) -> str:
+    """Why regime() returned None: "unavailable: <inputs> missing"."""
+    src = {"PAYEMS": aux.get("PAYEMS"), "INDPRO": aux.get("INDPRO"), "PCEPILFE": full.get("PCEPILFE")}
+    if all(src.values()):
+        return "unavailable: no common months of its inputs"
+    return _missing(("PAYEMS", "nonfarm payrolls"), ("INDPRO", "industrial production"), ("PCEPILFE", "core PCE"),
+                    src=src)
+
+
 def regime_extended(long_inputs: dict, usrec: list = None, euro_ip: list = None, euro_hicp: list = None) -> dict:
     """long_inputs: monthly YoY histories since 2000 — "PAYEMS", "INDPRO",
-    "PCEPILFE" (core PCE; "CPIAUCSL" as fallback). Contract: see README
-    "Macro regime — extended view"."""
+    "PCEPILFE" (core PCE; no CPI substitute since 2026-10-02 — missing → no
+    trail). Contract: see README "Macro regime — extended view"."""
     payems, indpro = long_inputs.get("PAYEMS") or [], long_inputs.get("INDPRO") or []
     core = long_inputs.get("PCEPILFE")
-    inflation = core or long_inputs.get("CPIAUCSL") or []
+    inflation = core or []
     trail_long = []
     if payems and indpro and inflation:
         trail_long = _trail(*_axes(payems, indpro, inflation), since=EXTENDED_SINCE)
@@ -381,13 +403,13 @@ def regime_extended(long_inputs: dict, usrec: list = None, euro_ip: list = None,
         _component("Industrial production (YoY)", "growth", indpro),
         _component("Core PCE inflation (YoY)" if core else "CPI inflation (YoY)", "inflation", inflation),
     ) if c]
-    euro = None
+    euro, euro_error = None, None
     try:
         euro = euro_point(euro_ip, euro_hicp)
-    except Exception:
-        euro = None
+    except Exception as ex:          # said so, not silently "no euro point"
+        euro_error = f"unavailable: euro-area point could not be computed ({type(ex).__name__})"
     return {"trail_long": trail_long, "recessions": recessions(usrec), "components": components,
-            "euro": euro, "phase_behaviour": PHASE_BEHAVIOUR, "note": EXTENDED_NOTE,
+            "euro": euro, "euro_error": euro_error, "phase_behaviour": PHASE_BEHAVIOUR, "note": EXTENDED_NOTE,
             # Added for the expanded map (2026-09-25, second pass):
             "episodes": episodes(trail_long),
             "history": [{"date": p["date"], "quadrant": p["quadrant"]} for p in trail_long],
@@ -467,5 +489,5 @@ ASSET_TENDENCIES = {
                          "text": _TENDENCY_TEXT[d] + (f" ({note})" if note else "")}
                         for a, (d, note) in zip(_TENDENCY_ASSETS, cells)]}
              for q, label, cells in _TENDENCY_ROWS],
-    "disclaimer": "Historical tendencies, simplified; not a forecast, not investment advice.",
+    "disclaimer": "Historical tendencies, simplified; not a forecast — information, not a recommendation.",
 }

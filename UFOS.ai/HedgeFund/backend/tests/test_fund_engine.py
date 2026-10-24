@@ -1,7 +1,8 @@
 """fund/engine.py FundEngine (paper trading only): a full cycle with fake
 market data and a fake LLM transport, autopilot gating, params versioning
 (a running cycle keeps its version), drawdown stop, kill switch / resume,
-autopilot forced off at start, AI budget -> rule fallback, closed market ->
+autopilot forced off at start, AI budget -> no recommendation (no rule
+stand-in, D9 2026-10-02), closed market ->
 pending orders filled at the open, flips, outside position changes,
 manual accept, reset, equity benchmark, error handling and the /fund/state
 shape (SPEC §11) without NaN.
@@ -14,13 +15,15 @@ import unittest
 from datetime import timedelta
 
 try:
-    from fund_testkit import FRI, MON, SAT, SYMS, EngineCase
+    from fund_testkit import FRI, MON, SAT, SYMS, EngineCase, make_bars
 except ImportError:  # pragma: no cover - run as package
-    from tests.fund_testkit import FRI, MON, SAT, SYMS, EngineCase
+    from tests.fund_testkit import FRI, MON, SAT, SYMS, EngineCase, make_bars
 
 from fund import store
 from fund.engine import EngineError, FundEngine, json_safe
-from fund.types import Quote
+from strategy_platform.core.types import Quote
+
+BUDGET_MSG = "AI budget reached — raise the limit in Settings to continue."
 
 
 class CycleTest(EngineCase):
@@ -155,28 +158,64 @@ class CycleTest(EngineCase):
 class BudgetTest(EngineCase):
     extra_params = {"ai_daily_budget_usd": 0.01}
 
-    def test_budget_exhausted_falls_back_to_rules(self):
+    def test_budget_exhausted_gives_no_recommendation(self):
+        """D9 (2026-10-02): no rule-based stand-in — no recommendation row, no
+        autopilot order, the reason per symbol in the run summary and state."""
         store.add_ai_spend(0.02)
+        self.engine.set_autopilot(True)
         out = self.cycle()
         self.assertEqual(self.fake.calls, [])
+        self.assertEqual(out["status"], "partial")
         run = store.get_run(out["run_id"])
-        self.assertEqual(run["run"]["judge_mode"], "rules")
-        for r in run["recommendations"]:
-            self.assertEqual(r["source"], "rules")
-            self.assertTrue(r["rationale"].startswith("Rule-based (AI budget reached)"), r["rationale"])
-            self.assertIsNone(r["provenance"])
+        self.assertEqual(run["run"]["judge_mode"], "unavailable")
+        self.assertEqual(run["recommendations"], [])
+        self.assertEqual(store.list_orders(), [])
+        self.assertEqual(run["run"]["summary"]["judge_unavailable"], {s: BUDGET_MSG for s in SYMS})
+        self.assertIn(BUDGET_MSG, run["run"]["error"])
         sent = [a for a in run["agents"] if a["agent"] == "sentiment"]
-        self.assertTrue(all(a["source"] == "unavailable" for a in sent))
+        self.assertTrue(sent and all(a["source"] == "unavailable" and a["summary"] == BUDGET_MSG for a in sent))
         st = self.engine.state()
         self.assertTrue(st["ai_budget"]["exhausted"])
         self.assertEqual(st["ai_budget"]["limit_usd"], 0.01)
+        for row in st["symbols"]:
+            self.assertEqual((row["judge_unavailable"], row["data_unavailable"]), (BUDGET_MSG, None))
+            self.assertIsNone(row["recommendation"])
+
+    def test_previous_recommendation_keeps_its_time_and_is_marked(self):
+        self.cycle()                                          # AI judged (within the 0.01 budget)
+        old = store.latest_recommendations()
+        store.add_ai_spend(0.02)                              # budget used up
+        self.engine.set_autopilot(True)
+        self.engine.update_params({"min_confidence": 76})     # forces a re-judgement
+        self.fake.calls.clear()
+        out = self.cycle()
+        self.assertEqual(self.fake.calls, [])
+        self.assertEqual(store.get_run(out["run_id"])["recommendations"], [])   # nothing new, nothing carried
+        self.assertEqual(store.list_orders(), [])
+        self.assertEqual({s: r["id"] for s, r in store.latest_recommendations().items()},
+                         {s: r["id"] for s, r in old.items()})
+        st = self.engine.state()
+        for row in st["symbols"]:
+            rec = row["recommendation"]
+            self.assertEqual(rec["ts"], old[row["symbol"]]["ts"])              # original time
+            self.assertEqual(rec["not_updated"], "not updated: " + BUDGET_MSG)
+            self.assertEqual(row["judge_unavailable"], BUDGET_MSG)
+        # budget raised: the failed symbols are judged again (never carried) and the marks clear
+        self.engine.update_params({"ai_daily_budget_usd": 5.0})
+        out = self.cycle()
+        self.assertIn("judge", self.fake.calls)
+        self.assertEqual({r["source"] for r in store.get_run(out["run_id"])["recommendations"]}, {"llm"})
+        st = self.engine.state()
+        self.assertTrue(all(r["judge_unavailable"] is None and r["recommendation"]["not_updated"] is None
+                            for r in st["symbols"]))
 
     def test_budget_zero_never_calls_llm(self):
         self.engine.update_params({"ai_daily_budget_usd": 0.0})
-        self.cycle()
+        out = self.cycle()
         self.assertEqual(self.fake.calls, [])
-        recs = store.latest_recommendations()
-        self.assertTrue(all(r["rationale"].startswith("Rule-based (AI disabled") for r in recs.values()))
+        self.assertEqual(store.latest_recommendations(), {})
+        msgs = store.get_run(out["run_id"])["run"]["summary"]["judge_unavailable"]
+        self.assertTrue(all("raise the limit in Settings" in m for m in msgs.values()))
 
 
 class HaltTest(EngineCase):
@@ -323,6 +362,20 @@ class ClosedMarketTest(EngineCase):
 
 
 class ManualAndResetTest(EngineCase):
+    def test_execute_with_failing_quote_source_is_503(self):
+        from strategy_platform.core.errors import DataSourceUnavailable
+        self.cycle()
+        rec = store.latest_recommendations()["SPY"]
+
+        def down(sym):
+            raise DataSourceUnavailable("alpaca", "quotes", "HTTP 503")
+        self.feed.quote = down
+        with self.assertRaises(EngineError) as cm:
+            asyncio.run(self.engine.execute_recommendation(rec["id"]))
+        self.assertEqual(cm.exception.status, 503)
+        self.assertTrue(cm.exception.message.startswith("alpaca is unavailable for quotes: HTTP 503"))
+        self.assertEqual(store.list_orders(), [])
+
     def test_execute_recommendation_manual_accept(self):
         self.cycle()
         rec = store.latest_recommendations()["SPY"]
@@ -379,6 +432,39 @@ class ErrorHandlingTest(EngineCase):
         self.assertEqual(out["status"], "partial")
         self.assertIn("NODATA", out["error"])
         self.assertEqual(sorted(r["symbol"] for r in store.get_run(out["run_id"])["recommendations"]), sorted(SYMS))
+
+    def test_symbol_without_quote_is_not_analysed(self):
+        """Bars but no quote (or a quote but no bars) -> not analysed this run."""
+        del self.feed.quotes["QQQ"]
+        self.feed.bars["SPY"] = []
+        self.feed.quotes["SPY"] = 500.0
+        out = self.cycle()
+        self.assertEqual(out["status"], "skipped")             # neither symbol is usable
+        self.assertEqual(self.fake.calls, [])
+        du = store.get_run(out["run_id"])["run"]["summary"]["data_unavailable"]
+        self.assertIn("quote missing", du["QQQ"])
+        self.assertIn("daily bars missing", du["SPY"])
+        st = {r["symbol"]: r for r in self.engine.state()["symbols"]}
+        self.assertIn("not analysed this run", st["QQQ"]["data_unavailable"])
+        self.feed.bars["SPY"] = make_bars(500.0)
+        out = self.cycle()
+        self.assertEqual(out["status"], "partial")
+        self.assertIn("QQQ", out["error"])
+        self.assertEqual([r["symbol"] for r in store.get_run(out["run_id"])["recommendations"]], ["SPY"])
+
+    def test_news_failure_is_reported_without_llm_reading(self):
+        from strategy_platform.core.errors import DataSourceUnavailable
+
+        def news(sym, limit=8):
+            raise DataSourceUnavailable("alpaca", "news", "HTTP 503")
+        self.feed.news = news
+        out = self.cycle()
+        sent = [a for a in store.get_run(out["run_id"])["agents"] if a["agent"] == "sentiment"]
+        self.assertEqual(len(sent), len(SYMS))
+        for a in sent:
+            self.assertEqual((a["source"], a["confidence"]), ("unavailable", 0.0))
+            self.assertTrue(a["summary"].startswith("News could not be loaded: alpaca is unavailable for news"))
+        self.assertNotIn("sentiment", self.fake.calls)
 
     def test_no_market_data_at_all_is_skipped(self):
         self.feed.bars.clear()
@@ -458,6 +544,9 @@ class StateTest(EngineCase):
         self.assertTrue(sym["agents"][2]["provenance"]["ai_generated"])
         self.assertTrue(self.SPEC_REC <= set(sym["recommendation"]))
         self.assertAlmostEqual(sym["recommendation"]["current_weight"], st["positions"][1]["weight"])
+        # D9 (2026-10-02) fields: null when the last cycle judged the symbol
+        self.assertEqual((sym["judge_unavailable"], sym["data_unavailable"], sym["recommendation"]["not_updated"]),
+                         (None, None, None))
         self.assertEqual(st["engine"]["interval_minutes"], 5)
         self.assertTrue(st["autopilot"])
 
@@ -502,7 +591,12 @@ class ReviewBudgetAndStateTest(EngineCase):
             self.assertTrue(self.engine.state()["ai_budget"]["spend_unreadable"])
             self.assertTrue(self.engine.state()["ai_budget"]["exhausted"])
         self.assertEqual(self.fake.calls, [])
-        self.assertEqual(store.get_run(out["run_id"])["run"]["judge_mode"], "rules")
+        run = store.get_run(out["run_id"])
+        self.assertEqual(run["run"]["judge_mode"], "unavailable")
+        self.assertEqual(run["recommendations"], [])
+        self.assertEqual(set(run["run"]["summary"]["judge_unavailable"].values()),
+                         {"Today's AI spend could not be read — AI calls are paused until it can be read "
+                          "again (see backend.log)."})
 
     def test_unreadable_account_never_liquidates(self):
         asyncio.run(self.engine.manual_order({"symbol": "SPY", "side": "buy", "qty": 150}))
@@ -778,7 +872,10 @@ class ReviewExecuteAndLimitsTest(EngineCase):
         self.assertEqual((cm.exception.status, list(cm.exception.errors)), (400, ["symbols"]))
         with self.assertRaises(EngineError) as cm:
             asyncio.run(self.engine.backtest({"symbols": ["SPY"], "start": "2000-01-01", "end": "2026-10-01"}))
-        self.assertIn("at most 20 years", cm.exception.errors["start"])
+        self.assertEqual(cm.exception.status, 400)
+        self.assertEqual(cm.exception.errors["start"], "history before 2016 is not available from the configured source")
+        syms, start, _e = self.engine._validate_backtest({"symbols": ["SPY"], "start": "2016-01-01"}, {})
+        self.assertEqual(start, "2016-01-01")
         wl = [f"X{i}" for i in range(12)]
         syms, _s, _e = self.engine._validate_backtest({}, {"watchlist": wl})
         self.assertEqual(syms, wl[:10])

@@ -1,6 +1,8 @@
-"""fund/judge.py — rule score, hysteresis, change detection and the batch LLM
-judge with a fake LLM (valid / garbage JSON, unknown symbol, vetoed short,
-budget, model modes, carried decisions). Offline, no network.
+"""fund/judge.py — rule score (input only), hysteresis, change detection and
+the batch LLM judge with a fake LLM (valid / garbage JSON, unknown symbol,
+vetoed short, budget, model modes, carried decisions). Since 2026-10-02 (user
+decision D9) an AI failure / budget stop gives ``JudgeUnavailable`` — never a
+rule-based decision. Offline, no network.
 
 Run from HedgeFund/backend:  python -m unittest tests.test_fund_judge -v
 """
@@ -9,10 +11,12 @@ import json
 import unittest
 
 from fund import judge as J
-from fund import llm as llm_mod
-from fund import params as P
-from fund.llm import Budget, LlmUnavailable
-from fund.types import AgentSignal, MarketContext, PositionView, RiskAssessment
+from strategy_platform.core import llm as llm_mod
+from strategy_platform.core import params as P
+from strategy_platform.core.llm import Budget, LlmUnavailable
+from strategy_platform.core.types import AgentSignal, JudgeDecision, JudgeUnavailable, MarketContext, PositionView, RiskAssessment
+
+BUDGET_MSG = "AI budget reached — raise the limit in Settings to continue."
 
 NOW = "2026-09-28T15:00:00+00:00"
 
@@ -96,9 +100,11 @@ class RuleTest(unittest.TestCase):
         self.assertAlmostEqual(J.rule_confidence(0.5, 1.0), 0.8)
         self.assertAlmostEqual(J.rule_confidence(0.5, 0.0), 0.4)
         self.assertEqual(J.rule_confidence(0.9, 1.0), 1.0)
-        d = J.rule_decision("SPY", sigs((-0.8, 1), (-0.8, 1)), RiskAssessment("SPY", veto_short=True), None, params())
-        self.assertEqual((d.rule_action, d.action, d.source), ("SHORT", "FLAT", "rules"))
-        self.assertTrue(d.rationale.startswith("Rule-based:"))
+        sug = J.rule_suggestion(sigs((-0.8, 1), (-0.8, 1)), None, params())
+        self.assertEqual((sug["action"], sug["score"]), ("SHORT", -0.8))
+        self.assertEqual(J.apply_veto(sug["action"], RiskAssessment("SPY", veto_short=True)),
+                         ("FLAT", "short vetoed by risk"))
+        self.assertFalse(hasattr(J, "rule_decision"))          # no rule-based stand-in judge (D9)
 
     def test_is_flip(self):
         self.assertTrue(J.is_flip("LONG", "SHORT", True))
@@ -131,9 +137,13 @@ class ChangeDetectionTest(unittest.TestCase):
         self.assertIn("outside the loop", self.check(prev={**self.prev, "position_changed": True})[1])
         self.assertIn("parameters", self.check(prev={**self.prev, "params_changed": True})[1])
         self.assertIn("vetoes", self.check(risk=RiskAssessment("SPY", veto=True))[1])
+        # a legacy rule-based judgement is never carried (D9, 2026-10-02)
         rules_prev = J.previous_state({**self.judged, "source": "rules"}, agent_scores={"technical": 0.6, "macro": 0.4})
-        self.assertFalse(self.check(prev=rules_prev)[0])
-        self.assertTrue(self.check(prev=rules_prev, llm_possible=True)[0])
+        self.assertTrue(self.check(prev=rules_prev)[0])
+        self.assertIn("legacy", self.check(prev=rules_prev)[1])
+        # a failed judgement attempt is retried, never carried
+        retry = J.previous_state(self.judged, agent_scores={"technical": 0.6, "macro": 0.4}, judge_retry=True)
+        self.assertEqual(self.check(prev=retry), (True, "the last judgement attempt failed"))
 
     def test_decision_params_changed(self):
         a = params()
@@ -170,18 +180,20 @@ class JudgeTest(unittest.TestCase):
         self.assertEqual(summary["judge_mode"], "llm")
         self.assertAlmostEqual(summary["cost_usd"], 0.01)
 
-    def test_garbage_json_falls_back_to_rules(self):
+    def test_garbage_json_gives_no_decision(self):
         b = Budget(1.0)
         out = run(J.judge(ctx(), self.signals, self.risk, {}, params(), b, llm=FakeJudgeLlm(raw="Sorry, no.")))
         for d in out.values():
-            self.assertEqual(d.source, "rules")
-            self.assertTrue(d.rationale.startswith("Rule-based (AI answer invalid)"))
-            self.assertIsNone(d.provenance)
-        self.assertEqual(out["SPY"].action, "LONG")
-        self.assertEqual(out["TLT"].action, "SHORT")
+            self.assertIsInstance(d, JudgeUnavailable)          # no rule-based stand-in
+            self.assertEqual((d.source, d.reason), ("unavailable", "bad_json"))
+            self.assertIn("AI judge answer was invalid", d.message)
+            self.assertFalse(hasattr(d, "action"))
+        self.assertEqual(out["SPY"].rule_action, "LONG")          # inputs kept for the next change detection
         self.assertAlmostEqual(b.run_spent, 0.01)
-        self.assertAlmostEqual(J.summarize(out)["cost_usd"], 0.01)
-        self.assertEqual(J.summarize(out)["judge_mode"], "rules")
+        summary = J.summarize(out)
+        self.assertAlmostEqual(summary["cost_usd"], 0.01)        # the failed call still cost money
+        self.assertEqual(summary["judge_mode"], "unavailable")
+        self.assertEqual(sorted(summary["unavailable"]), ["SPY", "TLT"])
 
     def test_unknown_symbol_and_bad_action(self):
         raw = json.dumps([{"symbol": "SPY", "action": "BUY", "confidence": 0.9, "rationale": "x"},
@@ -189,8 +201,10 @@ class JudgeTest(unittest.TestCase):
                           {"symbol": "TLT", "action": "flat", "confidence": 0.7, "rationale": "z " * 100}])
         out = run(J.judge(ctx(), self.signals, self.risk, {}, params(), Budget(1.0), llm=FakeJudgeLlm(raw=raw)))
         self.assertNotIn("EVIL", out)
-        self.assertEqual(out["SPY"].source, "rules")
-        self.assertTrue(out["SPY"].rationale.startswith("Rule-based (AI answer invalid for this symbol)"))
+        self.assertIsInstance(out["SPY"], JudgeUnavailable)
+        self.assertEqual(out["SPY"].reason, "invalid_item")
+        self.assertIn("no valid result for this symbol", out["SPY"].message)
+        self.assertIsNotNone(out["SPY"].usage)                    # its share of the call's cost
         self.assertEqual((out["TLT"].source, out["TLT"].action), ("llm", "FLAT"))
         self.assertLessEqual(len(out["TLT"].rationale.split()), 61)
         self.assertEqual(J.summarize(out)["judge_mode"], "mixed")
@@ -210,20 +224,23 @@ class JudgeTest(unittest.TestCase):
         b.add(0.05)
         out = run(J.judge(ctx(), self.signals, self.risk, {}, params(ai_daily_budget_usd=0.05), b, llm=fake))
         self.assertEqual(fake.calls, [])
-        self.assertTrue(all(d.rationale.startswith("Rule-based (AI budget reached)") for d in out.values()))
+        self.assertTrue(all(isinstance(d, JudgeUnavailable) and d.message == BUDGET_MSG for d in out.values()))
         out = run(J.judge(ctx(), self.signals, self.risk, {}, params(ai_daily_budget_usd=0.0), Budget(0), llm=fake))
         self.assertEqual(fake.calls, [])
-        self.assertTrue(all(d.rationale.startswith("Rule-based (AI disabled") for d in out.values()))
+        self.assertTrue(all(isinstance(d, JudgeUnavailable) and d.reason == "disabled"
+                            and "raise the limit in Settings" in d.message for d in out.values()))
         # estimate does not fit the remaining budget -> no call either
         tiny = Budget(1e-7)
         out = run(J.judge(ctx(), self.signals, self.risk, {}, params(), tiny, llm=fake))
         self.assertEqual(fake.calls, [])
-        self.assertTrue(out["SPY"].rationale.startswith("Rule-based (AI budget reached)"))
+        self.assertEqual((out["SPY"].reason, out["SPY"].message), ("budget", BUDGET_MSG))
 
     def test_no_key(self):
-        fake = FakeJudgeLlm(exc=LlmUnavailable("no_key", "OPENROUTER_API_KEY is not set"))
+        key_msg = "OpenRouter API key is not set — enter it in Hedge Fund → Settings → Keys."
+        fake = FakeJudgeLlm(exc=LlmUnavailable("no_key", key_msg))
         out = run(J.judge(ctx(), self.signals, self.risk, {}, params(), Budget(1.0), llm=fake))
-        self.assertTrue(out["SPY"].rationale.startswith("Rule-based (AI not configured)"))
+        self.assertIsInstance(out["SPY"], JudgeUnavailable)
+        self.assertEqual((out["SPY"].reason, out["SPY"].message), ("no_key", key_msg))
 
     def test_premium_mode(self):
         fake = FakeJudgeLlm()
@@ -272,13 +289,13 @@ class JudgeTest(unittest.TestCase):
         self.assertEqual(fake2.calls, [])
         self.assertEqual(J.summarize(out2)["judge_mode"], "none")
 
-    def test_hysteresis_uses_previous_action_in_fallback(self):
+    def test_legacy_rule_judgement_is_not_carried_without_ai(self):
         weak = {"SPY": sigs((0.12, 1.0), (0.12, 1.0))}
-        previous = {"SPY": J.previous_state({"id": 1, "ts": "2026-09-27T10:00:00+00:00", "action": "LONG",
+        previous = {"SPY": J.previous_state({"id": 1, "ts": "2026-09-28T14:55:00+00:00", "action": "LONG",
                                              "confidence": 0.7, "source": "rules"})}
         out = run(J.judge(ctx(), weak, {}, previous, params(ai_daily_budget_usd=0), Budget(0)))
-        self.assertEqual(out["SPY"].action, "LONG")
-        self.assertEqual(out["SPY"].rule_action, "LONG")
+        self.assertIsInstance(out["SPY"], JudgeUnavailable)       # no decision, not carried
+        self.assertEqual(out["SPY"].rule_action, "LONG")          # hysteresis input still computed
 
 
 class ReviewFixesJudgeTest(unittest.TestCase):
@@ -344,25 +361,26 @@ class ReviewFixesJudgeTest(unittest.TestCase):
             self.assertNotIn(s, out)
         res = run(J.judge(ctx(), self.signals, self.risk, {}, params(), Budget(1.0),
                           llm=FakeJudgeLlm({"*": {"SPY": ("LONG", 250)}})))
-        self.assertEqual(res["SPY"].source, "rules")
-        self.assertTrue(res["SPY"].rationale.startswith("Rule-based (AI answer invalid for this symbol)"))
+        self.assertEqual((res["SPY"].source, res["SPY"].reason), ("unavailable", "invalid_item"))
 
     def test_timeout_charges_the_estimate(self):
         b = Budget(1.0)
         fake = FakeJudgeLlm(exc=LlmUnavailable("error", "timeout", attempted=True))
         out = run(J.judge(ctx(), self.signals, self.risk, {}, params(), b, llm=fake))
-        self.assertEqual(out["SPY"].source, "rules")
+        self.assertEqual((out["SPY"].source, out["SPY"].reason), ("unavailable", "error"))
+        self.assertIn("AI judge request failed", out["SPY"].message)
         self.assertGreater(b.run_spent, 0.0)
         b2 = Budget(1.0)
         run(J.judge(ctx(), self.signals, self.risk, {}, params(), b2,
                     llm=FakeJudgeLlm(exc=LlmUnavailable("no_key", "no key"))))
         self.assertEqual(b2.run_spent, 0.0)                  # never sent -> nothing charged
 
-    def test_unreadable_budget_means_rules(self):
+    def test_unreadable_budget_means_no_judgement(self):
         fake = FakeJudgeLlm()
         out = run(J.judge(ctx(), self.signals, self.risk, {}, params(), Budget(1.0, spent_fn=lambda: None), llm=fake))
         self.assertEqual(fake.calls, [])
-        self.assertTrue(out["SPY"].rationale.startswith("Rule-based (AI budget reached)"))
+        self.assertIsInstance(out["SPY"], JudgeUnavailable)
+        self.assertEqual(out["SPY"].message, llm_mod.SPEND_UNREADABLE_MESSAGE)
 
     def test_premium_model_only_when_selected(self):
         std, prem = self.models["standard"], self.models["premium"]

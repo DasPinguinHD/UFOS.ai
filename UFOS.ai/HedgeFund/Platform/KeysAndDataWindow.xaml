@@ -1,0 +1,245 @@
+<Window x:Class="UFOS.ai.HedgeFund.Platform.KeysAndDataWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Keys, data sources &amp; brokers" Height="760" Width="1000"
+        MinHeight="460" MinWidth="760"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ResizeMode="CanResizeWithGrip"
+        WindowStartupLocation="CenterOwner"
+        Loaded="Window_Loaded"
+        StateChanged="Window_StateChanged">
+    <!-- Hedge Fund → "⚙ Keys & data" (Strategy Platform stage 1, backend/strategy_platform/SPEC.md §2/§4).
+         Keys live in the Windows Credential Manager (Platform/CredentialStore.cs); the data-source
+         table and the connection test come from the backend's /v2 API (Platform/PlatformClient.cs).
+         Chrome and colours: local copies of HedgeFundWindow.xaml (module design, no DesignSystem access). -->
+    <!-- One Hedge Fund scroll bar design (Styles/ScrollBars.xaml): implicit for every ScrollBar in this window. -->
+    <Window.Resources>
+        <ResourceDictionary Source="/HedgeFundApp;component/Styles/ScrollBars.xaml" />
+    </Window.Resources>
+    <Border x:Name="RootBorder" Background="#111111" CornerRadius="8" SnapsToDevicePixels="True">
+        <Grid>
+            <Grid.Resources>
+                <SolidColorBrush x:Key="LongBrush" Color="#FF6FA98A" />
+                <SolidColorBrush x:Key="NeutralBrush" Color="#FF9A9A9A" />
+                <SolidColorBrush x:Key="RiskBrush" Color="#FFD9A54B" />
+                <SolidColorBrush x:Key="FocusBrush" Color="#FF7C8CF8" />
+                <SolidColorBrush x:Key="PanelBrush" Color="#FF1A1A1A" />
+                <SolidColorBrush x:Key="PanelBorderBrush" Color="#FF2A2A2A" />
+                <SolidColorBrush x:Key="HairlineBrush" Color="#FF242424" />
+                <SolidColorBrush x:Key="KillBrush" Color="#FFED6A5A" />
+
+                <Style x:Key="RoundButtonStyle" TargetType="Button">
+                    <Setter Property="Width" Value="14" />
+                    <Setter Property="Height" Value="14" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="999" Width="{TemplateBinding Width}" Height="{TemplateBinding Height}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+                <Style x:Key="RoundedDarkButtonStyle" TargetType="Button">
+                    <Setter Property="Padding" Value="10,4" />
+                    <Setter Property="MinHeight" Value="22" />
+                    <Setter Property="FontSize" Value="11.5" />
+                    <Setter Property="Background" Value="#FF242424" />
+                    <Setter Property="BorderBrush" Value="#FF333333" />
+                    <Setter Property="Foreground" Value="#FFBFBFBF" />
+                    <Setter Property="BorderThickness" Value="1" />
+                    <Setter Property="Cursor" Value="Hand" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" SnapsToDevicePixels="True">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Opacity" Value="0.88" />
+                                    </Trigger>
+                                    <Trigger Property="IsEnabled" Value="False">
+                                        <Setter TargetName="bd" Property="Opacity" Value="0.45" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+                <Style x:Key="RunButtonStyle" TargetType="Button" BasedOn="{StaticResource RoundedDarkButtonStyle}">
+                    <Setter Property="Background" Value="#267C8CF8" />
+                    <Setter Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                    <Setter Property="Foreground" Value="#FFD5DAFB" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </Style>
+                <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
+                    <Setter Property="FontSize" Value="13" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                    <Setter Property="Foreground" Value="#FFBFBFBF" />
+                    <Setter Property="VerticalAlignment" Value="Center" />
+                </Style>
+                <Style x:Key="NoteStyle" TargetType="TextBlock">
+                    <Setter Property="FontSize" Value="10.5" />
+                    <Setter Property="Foreground" Value="#FF6A6A6A" />
+                    <Setter Property="TextWrapping" Value="Wrap" />
+                </Style>
+            </Grid.Resources>
+
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- ===== Title bar: black, rounded, drag (restores out of full screen), double-click maximizes ===== -->
+            <Border x:Name="TitleBarBorder" Grid.Row="0" Background="Black" CornerRadius="8,8,0,0" Height="18"
+                    MouseLeftButtonDown="TitleBar_MouseLeftButtonDown" MouseMove="TitleBar_MouseMove" MouseLeftButtonUp="TitleBar_MouseLeftButtonUp"
+                    ToolTip="Drag to move · double-click to maximize or restore">
+                <Grid>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="8,0,0,0">
+                        <Ellipse Width="5" Height="5" Fill="{StaticResource NeutralBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="Hedge Fund · Settings · Keys, data sources &amp; brokers" Foreground="#FF9A9A9A" FontSize="10" Margin="6,0,0,0" VerticalAlignment="Center" />
+                        <TextBlock Text="·  Paper trading only · proof of concept" Foreground="#FF5A5A5A" FontSize="10" Margin="4,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0">
+                        <Button x:Name="MinimizeButton" Click="MinimizeButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFEDB400"
+                                ToolTip="Minimize" AutomationProperties.Name="Minimize">
+                            <TextBlock Text="—" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Button>
+                        <Button x:Name="CloseButton" Click="CloseButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFED6A5A"
+                                ToolTip="Close" AutomationProperties.Name="Close">
+                            <TextBlock Text="✕" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <ScrollViewer x:Name="MainScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" PreviewMouseWheel="MainScroll_PreviewMouseWheel">
+                <StackPanel Margin="20,16,20,20">
+
+                    <TextBlock Text="Keys, data sources &amp; brokers" FontSize="16" FontWeight="SemiBold" Foreground="#FFEDEDED" />
+                    <TextBlock Style="{StaticResource NoteStyle}" Margin="0,4,0,14" FontSize="11.5" Foreground="#FF9A9A9A"
+                               Text="API keys of all UFOS.ai modules (kept only in the Windows Credential Manager), the status of the Hedge Fund data sources and the paper / demo broker accounts. Key values are never shown, logged or sent to a backend — only whether a key is set." />
+
+                    <!-- ===================== Keys ===================== -->
+                    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Text="Keys" Style="{StaticResource SectionTitleStyle}" HorizontalAlignment="Left" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button x:Name="ImportEnvButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="Import from old .env files…"
+                                            Click="ImportEnvButton_Click" AutomationProperties.Name="Import keys and settings from the old .env files, then remove the files"
+                                            ToolTip="One-time migration: finds the old .env files of all modules, shows the names it found (never values), stores the keys in the Windows Credential Manager, moves known settings to the modules' settings files, then removes the .env files. Nothing reads .env any more." />
+                                    <Button x:Name="RefreshKeysButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="↻ Refresh" Margin="8,0,0,0"
+                                            Click="RefreshKeysButton_Click" AutomationProperties.Name="Refresh key status" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock x:Name="KeysBackendText" Style="{StaticResource NoteStyle}" Margin="0,6,0,8" Text="Backend: checking…" />
+                            <Border BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" />
+                            <StackPanel x:Name="KeysRowsPanel" />
+                            <!-- Stage 9d (SPEC §20.11): EODHD daily call counter from GET /v2/shadow/price-sources (status only) -->
+                            <TextBlock x:Name="EodhdBudgetText" Style="{StaticResource NoteStyle}" Margin="0,8,0,0" Text="EODHD calls today: checking…"
+                                       AutomationProperties.LiveSetting="Polite" />
+                            <Border x:Name="KeysMessageBorder" Visibility="Collapsed" Background="#14FFFFFF" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="12,7" Margin="0,10,0,0">
+                                <TextBlock x:Name="KeysMessageText" FontSize="11.5" Foreground="#FFBFBFBF" TextWrapping="Wrap" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ===================== Brokers (Strategy Platform stage 8, SPEC §18 / §18.12; KeysAndDataWindow.Brokers.cs) =====================
+                         = "Settings → Brokers": internal paper / Alpaca paper / Binance Spot demo (Kraken demo retired) — status, test, connect, reconciliation +
+                         Resolve…, routing, per-broker kill, live guard (read only, OFF). Content is built in code. Paper / demo only. -->
+                    <Border x:Name="BrokersPanel" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,10"
+                            AutomationProperties.Name="Brokers: paper and demo broker accounts">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Text="Brokers (paper / demo)" Style="{StaticResource SectionTitleStyle}" HorizontalAlignment="Left" />
+                                <Button x:Name="BrokersRefreshButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="↻ Refresh" HorizontalAlignment="Right"
+                                        Click="BrokersRefreshButton_Click" AutomationProperties.Name="Refresh the broker status (Ctrl+B jumps here, F5 refreshes everything)"
+                                        ToolTip="Reload the broker accounts, routing and live guard (F5 refreshes the whole window, Ctrl+B jumps here)" />
+                            </Grid>
+                            <TextBlock Style="{StaticResource NoteStyle}" Margin="0,6,0,6"
+                                       Text="Where the platform's orders go: the internal paper broker (simulated in the backend), your Alpaca PAPER account (US stocks/ETFs) and your Binance Spot DEMO account (crypto spot, long only, USDT; the Kraken Futures demo is retired). Simulated money only — this build has no live endpoint and no control that could enable live trading." />
+                            <TextBlock x:Name="BrokersStatusText" FontSize="11" Foreground="#FF6A6A6A" TextWrapping="Wrap" Margin="0,0,0,6" Text="Loading…"
+                                       AutomationProperties.LiveSetting="Polite" />
+                            <StackPanel x:Name="BrokersHost" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ===================== Data sources ===================== -->
+                    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Text="Data sources" Style="{StaticResource SectionTitleStyle}" HorizontalAlignment="Left" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button x:Name="TestAlpacaButton" Style="{StaticResource RunButtonStyle}" Content="Test Alpaca connection"
+                                            Click="TestAlpacaButton_Click" AutomationProperties.Name="Test the Alpaca connection"
+                                            ToolTip="Asks the backend to fetch one daily bar for SPY and BTC/USD and the latest SPY quote from Alpaca (paper keys)." />
+                                    <Button x:Name="RefreshSourcesButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="↻ Refresh" Margin="8,0,0,0"
+                                            Click="RefreshSourcesButton_Click" AutomationProperties.Name="Refresh data source status" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Style="{StaticResource NoteStyle}" Margin="0,6,0,8"
+                                       Text="One configured source per data type — no fallback to another source. A failing source stops the functions that need it and says so." />
+                            <TextBlock x:Name="SourcesStatusText" FontSize="11.5" Foreground="#FF9A9A9A" TextWrapping="Wrap" Margin="0,0,0,8" Text="Loading…" />
+                            <Grid x:Name="SourcesGrid" />
+                            <StackPanel x:Name="TestResultsPanel" Margin="0,10,0,0" Visibility="Collapsed" />
+                            <!-- OS1 (SPEC §21): "Options archive (SPY/QQQ)" card, built in KeysAndDataWindow.OptionsArchive.cs -->
+                            <StackPanel x:Name="OptionsArchiveHost" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ===================== Network (SPEC §10.1/§10.4; KeysAndDataWindow.Network.cs) ===================== -->
+                    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Text="Network" Style="{StaticResource SectionTitleStyle}" HorizontalAlignment="Left" />
+                                <Button x:Name="RefreshNetworkButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="↻ Refresh" HorizontalAlignment="Right"
+                                        Click="RefreshNetworkButton_Click" AutomationProperties.Name="Refresh the network settings and the current concurrency" />
+                            </Grid>
+                            <TextBlock Style="{StaticResource NoteStyle}" Margin="0,6,0,10"
+                                       Text="How many data requests the backend sends in parallel while a backtest or validation loads data. The rate limits stay as they are (Alpaca 150 per minute + a burst of 10, plus the options archive's own 30 per minute; Tiingo 20 per minute, 40 per hour, 800 per day) — parallel requests never bypass them. Changes apply to the next requests and are written to the audit log." />
+                            <Border x:Name="NetworkRepairBorder" Visibility="Collapsed" Background="#1AD9A54B" BorderBrush="{StaticResource RiskBrush}" BorderThickness="1" CornerRadius="6" Padding="12,7" Margin="0,0,0,10">
+                                <TextBlock x:Name="NetworkRepairText" FontSize="11.5" Foreground="{StaticResource RiskBrush}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" />
+                            </Border>
+                            <CheckBox x:Name="AdaptiveCheckBox" Content="Adaptive (recommended for Wi-Fi)" Foreground="#FFBFBFBF" FontSize="12" IsEnabled="False"
+                                      Click="AdaptiveCheckBox_Click"
+                                      AutomationProperties.Name="Adaptive concurrency, recommended for Wi-Fi"
+                                      ToolTip="Starts at 4 parallel requests per source; a timeout or connection error halves it (minimum 1), 20 successes in a row raise it by 1 (maximum 8). Off: a fixed number." />
+                            <StackPanel x:Name="FixedPanel" Orientation="Horizontal" Margin="22,8,0,0" Visibility="Collapsed">
+                                <TextBlock x:Name="FixedLabelText" Text="Fixed number of parallel requests (1–8)" FontSize="11.5" Foreground="#FFBFBFBF" VerticalAlignment="Center" />
+                                <TextBox x:Name="FixedBox" Width="52" Margin="10,0,0,0" FontSize="12" FontFamily="Consolas" Padding="8,3,8,3"
+                                         Foreground="#FFBFBFBF" Background="#FF111111" BorderBrush="#FF242424" BorderThickness="1" CaretBrush="#FFBFBFBF"
+                                         MaxLength="2" TextChanged="FixedBox_TextChanged" KeyDown="FixedBox_KeyDown"
+                                         AutomationProperties.Name="Fixed number of parallel data requests, 1 to 8" />
+                                <Button x:Name="ApplyFixedButton" Style="{StaticResource RunButtonStyle}" Content="Apply" Margin="8,0,0,0" IsEnabled="False"
+                                        Click="ApplyFixedButton_Click" AutomationProperties.Name="Apply the fixed number of parallel data requests" />
+                            </StackPanel>
+                            <TextBlock x:Name="FixedErrorText" Margin="22,6,0,0" FontSize="11" Foreground="{StaticResource KillBrush}" TextWrapping="Wrap" Visibility="Collapsed"
+                                       AutomationProperties.LiveSetting="Assertive" />
+                            <TextBlock x:Name="NetworkCurrentText" Margin="0,10,0,0" FontSize="11.5" FontFamily="Consolas" Foreground="#FF9A9A9A" TextWrapping="Wrap" Text="Loading…" />
+                            <Border x:Name="NetworkMessageBorder" Visibility="Collapsed" Background="#14FFFFFF" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="12,7" Margin="0,10,0,0">
+                                <TextBlock x:Name="NetworkMessageText" FontSize="11.5" Foreground="#FFBFBFBF" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ===================== Footer ===================== -->
+                    <TextBlock Style="{StaticResource NoteStyle}" Margin="2,6,2,0"
+                               Text="Keys are stored encrypted in the Windows Credential Manager for your Windows user. Programs running under your user account could read them. Paper trading only." />
+                    <TextBlock Style="{StaticResource NoteStyle}" Margin="2,4,2,0" Foreground="#FF4A4A4A"
+                               Text="UFOS.ai is a proof-of-concept portfolio project — simulated paper trading for your own research — no real money, no live trading." />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</Window>

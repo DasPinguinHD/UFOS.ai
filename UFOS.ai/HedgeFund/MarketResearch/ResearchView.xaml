@@ -1,0 +1,951 @@
+<UserControl x:Class="UFOS.ai.HedgeFund.MarketResearch.ResearchView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:UFOS.ai.HedgeFund.MarketResearch"
+             PreviewKeyDown="UserControl_PreviewKeyDown"
+             AutomationProperties.Name="Market Research">
+    <!-- Hedge Fund → navigation rail → "Research" (Market Research MR1 — section shell;
+         concept docs/market-research-plan.md §2.2, contract backend/market_research/SPEC.md §1).
+         ONE instance per Hedge Fund window: HedgeFundWindow moves it between the rail section and
+         MarketResearch/ResearchPopoutWindow, so there is never a second client or polling loop.
+         MR4 (SPEC "MR4 backend notes"): symbol workspace — header (§7.4), key stats, performance tiles, 52-week
+         range, watchlists in the sidebar, tabs + session restore, the Ctrl+K command palette, live status strip.
+         Parts that are not built yet (news, alerts, overview) are honest empty states. Texts from the backend
+         (asset names, watchlist names, reasons) are plain text (TextBlock).
+         Colours: local copies of the DesignSystem.xaml tokens named in plan §2.3 (values identical;
+         the module has no DesignSystem access, and a UserControl's StaticResources resolve before it
+         joins the window's tree). -->
+    <UserControl.Resources>
+        <!-- Tokens (plan §2.3; values = Styles/DesignSystem.xaml) -->
+        <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#FF111111" />
+        <SolidColorBrush x:Key="ModulePanelBackgroundBrush" Color="#FF16171A" />
+        <SolidColorBrush x:Key="SubtleBorderBrush" Color="#FF202020" />
+        <SolidColorBrush x:Key="AccentBorderBrush" Color="#FF2A2A2A" />
+        <SolidColorBrush x:Key="PrimaryForegroundBrush" Color="#FFBFBFBF" />
+        <SolidColorBrush x:Key="SecondaryForegroundBrush" Color="#FF9A9A9A" />
+        <SolidColorBrush x:Key="MutedForegroundBrush" Color="#FF6F6F6F" />
+        <SolidColorBrush x:Key="QuietForegroundBrush" Color="#FF5A5A5A" />
+        <SolidColorBrush x:Key="PositiveGreenBrush" Color="#FF4ADE80" />
+        <SolidColorBrush x:Key="AccentRedBrush" Color="#FFED6A5A" />
+        <SolidColorBrush x:Key="CautionBrush" Color="#FFF0B429" />
+        <SolidColorBrush x:Key="AccentBlueBrush" Color="#FF5AC8FA" />
+        <!-- Hedge Fund window local tokens (HedgeFundWindow.xaml) -->
+        <SolidColorBrush x:Key="FocusBrush" Color="#FF7C8CF8" />
+        <SolidColorBrush x:Key="HairlineBrush" Color="#FF242424" />
+
+        <Style x:Key="RoundedDarkButtonStyle" TargetType="Button">
+            <Setter Property="Padding" Value="10,4" />
+            <Setter Property="MinHeight" Value="22" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Background" Value="#FF242424" />
+            <Setter Property="BorderBrush" Value="#FF333333" />
+            <Setter Property="Foreground" Value="#FFBFBFBF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.88" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.97" ScaleY="0.97" />
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Sidebar entry (OVERVIEW / SYMBOL / ALERTS): Consolas caps, accent bar when selected. -->
+        <Style x:Key="SidebarNavStyle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="#FF9A9A9A" />
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Margin" Value="0,0,0,2" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Grid>
+                            <Border x:Name="bd" CornerRadius="6" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Padding="12,6,8,6">
+                                <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+                            </Border>
+                            <Border x:Name="accent" Width="2" HorizontalAlignment="Left" Margin="0,6,0,6" CornerRadius="1" Background="{StaticResource FocusBrush}" Visibility="Collapsed" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#FFBFBFBF" />
+                                <Setter TargetName="bd" Property="Background" Value="#FF1C1C1C" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF1F1F1F" />
+                                <Setter TargetName="accent" Property="Visibility" Value="Visible" />
+                                <Setter Property="Foreground" Value="#FFE6E6E6" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Section captions: Consolas caps (terminal look, plan §2.3). -->
+        <Style x:Key="CaptionStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#FF6F6F6F" />
+        </Style>
+        <Style x:Key="EmptyTitleStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Foreground" Value="#FF9A9A9A" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="EmptyHintStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="#FF6F6F6F" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,4,0,0" />
+        </Style>
+        <Style x:Key="CardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource ModulePanelBackgroundBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="14,12" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+        </Style>
+
+        <!-- MR3: timeframe / chart-type / session segment buttons (Consolas, accent when selected). -->
+        <Style x:Key="SegmentRadioStyle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="#FF9A9A9A" />
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Margin" Value="0,0,2,0" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="bd" CornerRadius="5" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Padding="7,2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF1C1C1C" />
+                                <Setter Property="Foreground" Value="#FFBFBFBF" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF15242C" />
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#995AC8FA" />
+                                <Setter Property="Foreground" Value="#FF5AC8FA" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SegmentToggleStyle" TargetType="ToggleButton">
+            <Setter Property="Foreground" Value="#FF9A9A9A" />
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="bd" CornerRadius="5" Background="Transparent" BorderBrush="#FF333333" BorderThickness="1" Padding="7,2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF1C1C1C" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF2A2410" />
+                                <Setter TargetName="bd" Property="BorderBrush" Value="#99F0B429" />
+                                <Setter Property="Foreground" Value="#FFF0B429" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- Small status / feed chips (text always carries the meaning; colour only supports it). -->
+        <Style x:Key="ChipBorderStyle" TargetType="Border">
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="#FF333333" />
+            <Setter Property="Background" Value="#FF1A1A1A" />
+            <Setter Property="Padding" Value="6,1" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="ChipTextStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="9.5" />
+            <Setter Property="Foreground" Value="#FF9A9A9A" />
+        </Style>
+
+        <!-- MR4: list rows (watchlist items, palette results, star menu) — transparent, left-aligned, hover/selected
+             backgrounds and the keyboard focus border with the colours already used above. -->
+        <Style x:Key="ListRowButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="#FFBFBFBF" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="6,3" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="5" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF1C1C1C" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- MR4: small icon buttons (+, ✎, ▲, ▼, ×, ☆) next to list headers / rows / in the tab bar. -->
+        <Style x:Key="IconButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="#FF9A9A9A" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="5,1" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="MinWidth" Value="20" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="5" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="#FF242424" />
+                                <Setter Property="Foreground" Value="#FFE6E6E6" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- MR4: single-line text inputs (palette query, list names). -->
+        <Style x:Key="InputBoxStyle" TargetType="TextBox">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="#FFE6E6E6" />
+            <Setter Property="CaretBrush" Value="#FFE6E6E6" />
+            <Setter Property="SelectionBrush" Value="{StaticResource AccentBlueBrush}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Padding" Value="0,1" />
+        </Style>
+        <Style x:Key="InputBorderStyle" TargetType="Border">
+            <Setter Property="Background" Value="#FF1A1A1A" />
+            <Setter Property="BorderBrush" Value="#FF2A2A2A" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="6,3" />
+        </Style>
+        <!-- MR4: header / key-stats labels and numbers (numbers Consolas, plan §2.3). -->
+        <Style x:Key="StatLabelStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Foreground" Value="#FF9A9A9A" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="StatValueStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="#FFE6E6E6" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style x:Key="SmallNumberStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Foreground" Value="#FF9A9A9A" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
+    </UserControl.Resources>
+
+    <Grid x:Name="RootGrid">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="SidebarColumn" Width="240" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- ===================== Sidebar: search · navigation · watchlists · feed status ===================== -->
+        <Border x:Name="SidebarBorder" Grid.Column="0" Background="{StaticResource ModulePanelBackgroundBrush}" BorderBrush="{StaticResource AccentBorderBrush}"
+                BorderThickness="1" CornerRadius="8" SnapsToDevicePixels="True" AutomationProperties.Name="Market Research sidebar">
+            <Grid Margin="10,12,10,10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- MR4: the Ctrl+K command palette (replaces MR3's exact-ticker box). -->
+                <Button x:Name="SearchButton" Grid.Row="0" Style="{StaticResource ListRowButtonStyle}" Background="#FF1A1A1A" BorderBrush="#FF2A2A2A"
+                        Padding="8,4" Click="SearchButton_Click" ToolTip="Search symbols by ticker or company name (Alpaca's asset list) — Ctrl+K"
+                        AutomationProperties.Name="Search symbols" AutomationProperties.AcceleratorKey="Ctrl+K">
+                    <Grid>
+                        <TextBlock Text="⌕ Search" FontSize="11.5" Foreground="{StaticResource MutedForegroundBrush}" HorizontalAlignment="Left" />
+                        <TextBlock Text="Ctrl+K" FontFamily="Consolas" FontSize="10" Foreground="{StaticResource QuietForegroundBrush}" HorizontalAlignment="Right"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+                </Button>
+
+                <!-- Navigation inside the section (plan Q7: Overview + Symbol + Alerts in MR1–MR7). -->
+                <StackPanel Grid.Row="1" Margin="0,12,0,0" KeyboardNavigation.DirectionalNavigation="Cycle" KeyboardNavigation.TabNavigation="Once"
+                            AutomationProperties.Name="Market Research navigation">
+                    <RadioButton x:Name="NavOverview" GroupName="ResearchNav" Style="{StaticResource SidebarNavStyle}" Content="OVERVIEW"
+                                 Checked="Nav_Checked" AutomationProperties.Name="Overview" ToolTip="Market overview" />
+                    <RadioButton x:Name="NavSymbol" GroupName="ResearchNav" Style="{StaticResource SidebarNavStyle}" Content="SYMBOL"
+                                 Checked="Nav_Checked" AutomationProperties.Name="Symbol" ToolTip="Symbol workspace — header, chart, key stats, news" />
+                    <RadioButton x:Name="NavAlerts" GroupName="ResearchNav" Style="{StaticResource SidebarNavStyle}" Content="ALERTS"
+                                 Checked="Nav_Checked" AutomationProperties.Name="Alerts" ToolTip="Price alerts" />
+                    <RadioButton x:Name="NavPortfolio" GroupName="ResearchNav" Style="{StaticResource SidebarNavStyle}" Content="PORTFOLIO"
+                                 Checked="Nav_Checked" AutomationProperties.Name="Portfolio, paper account, read-only"
+                                 ToolTip="HedgeFund paper account — read-only (orders only through the Hedge Fund order panel)" />
+                    <RadioButton x:Name="NavMacro" GroupName="ResearchNav" Style="{StaticResource SidebarNavStyle}" Content="MACRO"
+                                 Checked="Nav_Checked" AutomationProperties.Name="Macro" ToolTip="Macro indicators and economic calendar (Financial Newsroom)" />
+                </StackPanel>
+
+                <Border Grid.Row="2" Height="1" Background="{StaticResource HairlineBrush}" Margin="2,10,2,8" />
+
+                <!-- MR4 watchlists (backend /research/watchlists): several lists, collapsible, counts, live price + % with
+                     arrows. Rows are built in code (ResearchView.Watchlists.cs). -->
+                <Grid Grid.Row="3" Margin="0,0,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="2,0,0,0">
+                        <TextBlock Text="WATCHLISTS" Style="{StaticResource CaptionStyle}" VerticalAlignment="Center" />
+                        <Button x:Name="NewListButton" Style="{StaticResource IconButtonStyle}" Content="+" HorizontalAlignment="Right"
+                                Click="NewListButton_Click" ToolTip="New watchlist" AutomationProperties.Name="New watchlist" />
+                    </Grid>
+                    <!-- New list: name + Enter (Esc cancels). -->
+                    <Border x:Name="NewListPanel" Grid.Row="1" Style="{StaticResource InputBorderStyle}" Margin="0,6,0,0" Visibility="Collapsed">
+                        <Grid>
+                            <TextBlock x:Name="NewListHint" Text="List name + Enter" FontSize="11.5" Foreground="{StaticResource QuietForegroundBrush}"
+                                       VerticalAlignment="Center" Margin="2,0,0,0" IsHitTestVisible="False" />
+                            <TextBox x:Name="NewListNameBox" Style="{StaticResource InputBoxStyle}" MaxLength="40"
+                                     KeyDown="NewListNameBox_KeyDown" TextChanged="NewListNameBox_TextChanged" LostKeyboardFocus="NewListNameBox_LostKeyboardFocus"
+                                     AutomationProperties.Name="Name of the new watchlist (Enter creates it, Escape cancels)" />
+                        </Grid>
+                    </Border>
+                    <!-- Load / save errors (the backend's reason verbatim) + Retry; also the "not live" note. -->
+                    <StackPanel Grid.Row="2" Margin="2,4,2,0">
+                        <TextBlock x:Name="WatchlistMessageText" Visibility="Collapsed" FontSize="10.5" Foreground="{StaticResource SecondaryForegroundBrush}"
+                                   TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                        <Button x:Name="WatchlistRetryButton" Style="{StaticResource RoundedDarkButtonStyle}" Padding="8,2" Margin="0,4,0,0" HorizontalAlignment="Left"
+                                Content="Retry" Click="WatchlistRetryButton_Click" Visibility="Collapsed"
+                                AutomationProperties.Name="Retry loading the watchlists" />
+                        <TextBlock x:Name="WatchlistLiveNoteText" Visibility="Collapsed" FontSize="10" Foreground="{StaticResource MutedForegroundBrush}"
+                                   TextWrapping="Wrap" Margin="0,2,0,0" />
+                    </StackPanel>
+                    <ScrollViewer x:Name="WatchlistScroll" Grid.Row="3" Margin="0,4,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                  Focusable="False">
+                        <StackPanel x:Name="WatchlistPanel" AutomationProperties.Name="Watchlists" />
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- Live status strip (SPEC §1.5 / §4.3.1): one dot per feed + "LIVE · n/m" / "WAITING · attempt n" …; the
+                     state word and the backend's message are in each dot's tooltip (never colour alone). -->
+                <StackPanel Grid.Row="4" Margin="2,10,2,0">
+                    <Border Height="1" Background="{StaticResource HairlineBrush}" Margin="0,0,0,8" />
+                    <StackPanel x:Name="FeedStatusRow" Orientation="Horizontal" Background="Transparent">
+                        <StackPanel x:Name="FeedDots" Orientation="Horizontal" VerticalAlignment="Center" />
+                        <TextBlock x:Name="FeedSummaryText" Text="CHECKING…" FontFamily="Consolas" FontSize="10.5" FontWeight="SemiBold"
+                                   Foreground="{StaticResource MutedForegroundBrush}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                        <TextBlock Text="feeds" FontFamily="Consolas" FontSize="10" Foreground="{StaticResource QuietForegroundBrush}"
+                                   Margin="6,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <!-- Reasons of feeds that are waiting or unavailable, verbatim from the backend. -->
+                    <TextBlock x:Name="FeedReasonsText" Visibility="Collapsed" FontSize="10" Foreground="{StaticResource SecondaryForegroundBrush}"
+                               TextWrapping="Wrap" Margin="0,6,0,0" />
+                    <!-- §8: "Waiting for Alpaca rate limit (n s)" from budget.waiting_seconds. -->
+                    <TextBlock x:Name="BudgetText" Visibility="Collapsed" FontSize="10" Foreground="{StaticResource CautionBrush}"
+                               TextWrapping="Wrap" Margin="0,6,0,0" />
+                    <!-- Q3: the UI states when streams run (demand.note from the backend). -->
+                    <TextBlock x:Name="DemandNoteText" Visibility="Collapsed" FontSize="9.5" Foreground="{StaticResource QuietForegroundBrush}"
+                               TextWrapping="Wrap" Margin="0,6,0,0" />
+                    <!-- MR6: Research settings ("Show news thumbnails" + the backend's privacy note, logo plan state). -->
+                    <Button x:Name="SettingsButton" Style="{StaticResource IconButtonStyle}" Content="⚙ Settings" FontSize="10" HorizontalAlignment="Left"
+                            Margin="-4,6,0,0" Click="SettingsButton_Click" ToolTip="Research settings (news thumbnails, logos)"
+                            AutomationProperties.Name="Research settings" />
+                    <Popup x:Name="SettingsPopup" PlacementTarget="{Binding ElementName=SettingsButton}" Placement="Top" StaysOpen="False"
+                           AllowsTransparency="True" PopupAnimation="None">
+                        <Border Background="{StaticResource ModulePanelBackgroundBrush}" BorderBrush="{StaticResource AccentBorderBrush}" BorderThickness="1"
+                                CornerRadius="8" Padding="10" Width="320" KeyboardNavigation.TabNavigation="Cycle" PreviewKeyDown="SettingsPopup_PreviewKeyDown"
+                                AutomationProperties.Name="Research settings">
+                            <StackPanel>
+                                <TextBlock Text="RESEARCH SETTINGS" Style="{StaticResource CaptionStyle}" Margin="2,0,0,8" />
+                                <Button x:Name="ThumbnailsToggle" Style="{StaticResource ListRowButtonStyle}" Padding="6,3" Click="ThumbnailsToggle_Click"
+                                        AutomationProperties.Name="Show news thumbnails">
+                                    <TextBlock x:Name="ThumbnailsToggleText" Text="☐ Show news thumbnails" FontSize="11.5" Foreground="{StaticResource PrimaryForegroundBrush}" />
+                                </Button>
+                                <!-- Privacy note verbatim from GET /research/news/settings. -->
+                                <TextBlock x:Name="ThumbnailsNoteText" FontSize="10" Foreground="{StaticResource MutedForegroundBrush}" TextWrapping="Wrap" Margin="6,4,2,0" />
+                                <TextBlock x:Name="LogosStateText" FontSize="10" Foreground="{StaticResource MutedForegroundBrush}" TextWrapping="Wrap" Margin="6,8,2,0"
+                                           Visibility="Collapsed" />
+                                <TextBlock x:Name="SettingsMessageText" FontSize="10.5" Foreground="{StaticResource SecondaryForegroundBrush}" TextWrapping="Wrap"
+                                           Margin="6,8,2,0" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
+                            </StackPanel>
+                        </Border>
+                    </Popup>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ===================== Main area: tab bar · banner · page ===================== -->
+        <Grid Grid.Column="1" x:Name="MainArea" Margin="12,0,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Tab bar (MR4): sidebar toggle · open symbols (≤ 12, restored from /research/session) · + · ☆ · pop-out. -->
+            <Border Grid.Row="0" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,8">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="SidebarToggleButton" Grid.Column="0" Style="{StaticResource IconButtonStyle}" Content="◧" Margin="0,0,8,0"
+                            VerticalAlignment="Center" Click="SidebarToggleButton_Click" ToolTip="Hide the sidebar"
+                            AutomationProperties.Name="Hide the sidebar" />
+                    <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="0,0,10,0" Focusable="False">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="TabsEmptyText" Text="No symbol open" FontSize="11.5" Foreground="{StaticResource MutedForegroundBrush}"
+                                       VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <StackPanel x:Name="TabsPanel" Orientation="Horizontal" AutomationProperties.Name="Open symbols" />
+                            <Button x:Name="NewTabButton" Style="{StaticResource IconButtonStyle}" Content="+" FontSize="13" VerticalAlignment="Center"
+                                    Click="NewTabButton_Click" ToolTip="Open a symbol in a new tab (Ctrl+K)"
+                                    AutomationProperties.Name="Open a symbol in a new tab" AutomationProperties.AcceleratorKey="Ctrl+K" />
+                        </StackPanel>
+                    </ScrollViewer>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <!-- MR7: alerts for the open symbol (editor popup built in ResearchView.Alerts.cs). -->
+                        <Button x:Name="BellButton" Style="{StaticResource IconButtonStyle}" Content="🔔" FontSize="12" Margin="0,0,4,0" IsEnabled="False"
+                                Click="BellButton_Click" ToolTip="Alerts for the open symbol — price crosses, move today, news"
+                                AutomationProperties.Name="Alerts for the open symbol" />
+                        <Button x:Name="StarButton" Style="{StaticResource IconButtonStyle}" Content="☆" FontSize="13" Margin="0,0,8,0" IsEnabled="False"
+                                Click="StarButton_Click" ToolTip="Add the open symbol to a watchlist"
+                                AutomationProperties.Name="Add the open symbol to a watchlist" />
+                        <Button x:Name="PopOutButton" Style="{StaticResource RoundedDarkButtonStyle}" Padding="10,3"
+                                Content="⧉ Pop out" Click="PopOutButton_Click"
+                                ToolTip="Open Market Research in its own window (e.g. on a second monitor)"
+                                AutomationProperties.Name="Pop out Market Research into its own window" />
+                    </StackPanel>
+                    <!-- ☆ menu: one toggle per watchlist (✓ = contains the symbol) + a new list with the symbol. -->
+                    <Popup x:Name="StarPopup" PlacementTarget="{Binding ElementName=StarButton}" Placement="Bottom" StaysOpen="False"
+                           AllowsTransparency="True" PopupAnimation="None" Closed="StarPopup_Closed">
+                        <Border Background="{StaticResource ModulePanelBackgroundBrush}" BorderBrush="{StaticResource AccentBorderBrush}" BorderThickness="1"
+                                CornerRadius="8" Padding="8" MinWidth="220" MaxWidth="300" KeyboardNavigation.TabNavigation="Cycle"
+                                KeyboardNavigation.DirectionalNavigation="Cycle" PreviewKeyDown="StarPopup_PreviewKeyDown"
+                                AutomationProperties.Name="Add to watchlist">
+                            <StackPanel>
+                                <TextBlock x:Name="StarPopupTitle" Text="ADD TO WATCHLIST" Style="{StaticResource CaptionStyle}" Margin="2,0,0,6" />
+                                <StackPanel x:Name="StarPopupLists" />
+                                <Border Style="{StaticResource InputBorderStyle}" Margin="0,6,0,0">
+                                    <Grid>
+                                        <TextBlock x:Name="StarNewListHint" Text="New list name + Enter" FontSize="11.5" Foreground="{StaticResource QuietForegroundBrush}"
+                                                   VerticalAlignment="Center" Margin="2,0,0,0" IsHitTestVisible="False" />
+                                        <TextBox x:Name="StarNewListBox" Style="{StaticResource InputBoxStyle}" MaxLength="40"
+                                                 KeyDown="StarNewListBox_KeyDown" TextChanged="StarNewListBox_TextChanged"
+                                                 AutomationProperties.Name="Create a new watchlist with this symbol: type a name and press Enter" />
+                                    </Grid>
+                                </Border>
+                                <TextBlock x:Name="StarPopupMessage" Visibility="Collapsed" FontSize="10.5" Foreground="{StaticResource SecondaryForegroundBrush}"
+                                           TextWrapping="Wrap" Margin="2,6,2,0" AutomationProperties.LiveSetting="Polite" />
+                            </StackPanel>
+                        </Border>
+                    </Popup>
+                </Grid>
+            </Border>
+
+            <!-- Research unavailable / starting / backend not reachable (SPEC §1.3). Polling continues. -->
+            <Border x:Name="StatusBanner" Grid.Row="1" Visibility="Collapsed" Margin="0,10,0,0" CornerRadius="6" BorderThickness="1"
+                    Background="#14ED6A5A" BorderBrush="#66ED6A5A" Padding="10,7">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="StatusBannerText" Grid.Column="0" FontSize="11.5" Foreground="#FFE6E6E6" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <Button x:Name="RetryButton" Grid.Column="1" Style="{StaticResource RoundedDarkButtonStyle}" Padding="10,3" Margin="10,0,0,0"
+                            Content="Retry" Click="RetryButton_Click" Visibility="Collapsed" VerticalAlignment="Center"
+                            AutomationProperties.Name="Retry loading the Market Research status" />
+                </Grid>
+            </Border>
+
+            <!-- Workspace messages (tab limit, session not restored / not saved): plain text. -->
+            <TextBlock x:Name="WorkspaceMessageText" Grid.Row="2" Visibility="Collapsed" Margin="2,8,2,0" FontSize="11" Foreground="{StaticResource SecondaryForegroundBrush}"
+                       TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+
+            <!-- ===== Page: SYMBOL — header · chart card + key stats · news strip ===== -->
+            <!-- Live retest 2026-10-18: embedded in the Hedge Fund window (760 px) the chart was squeezed to ~90 px. The page now fills
+                 the view (Height = viewport) but never gets smaller than header + chart card (min 420 px, chart area >= 320 px) + news
+                 (min 110 px) — below that it scrolls vertically (SymbolPageGrid.MinHeight is set in code from the header height). The
+                 chart is a WebView2 composition control, so it clips correctly inside the ScrollViewer. -->
+            <ScrollViewer x:Name="SymbolPage" Grid.Row="3" Margin="0,10,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                          Focusable="False">
+            <Grid x:Name="SymbolPageGrid" MinHeight="680"
+                  Height="{Binding ViewportHeight, RelativeSource={RelativeSource AncestorType=ScrollViewer}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="3*" MinHeight="430" />
+                    <RowDefinition Height="*" MinHeight="120" MaxHeight="290" />
+                </Grid.RowDefinitions>
+
+                <!-- Symbol header (MR4, plan §1.2 D / §2.2, SPEC §7.4): identity, market status (local time; exchange time in
+                     the tooltip), live state, last price, change vs previous close (sign + arrow, never colour alone), day
+                     range, volume (feed label), previous close. Every number has its feed in the tooltip. -->
+                <Border x:Name="SymbolHeaderCard" Grid.Row="0" Style="{StaticResource CardStyle}" AutomationProperties.Name="Symbol header">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <!-- MR6 logo: GET /research/symbols/{s}/logo through the backend (PNG, size-checked, frozen); the ticker's
+                             initials as plain text are the normal empty state (LogosNotOnPlan / NoLogo / any failure). -->
+                        <Border x:Name="LogoBox" Grid.Column="0" Width="40" Height="40" CornerRadius="8" Background="#FF1A1A1A" BorderBrush="#FF2A2A2A"
+                                BorderThickness="1" Margin="0,0,12,0" VerticalAlignment="Top" Visibility="Collapsed" ClipToBounds="True"
+                                ToolTip="Logo placeholder (ticker initials).">
+                            <Grid>
+                                <TextBlock x:Name="LogoText" FontFamily="Consolas" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryForegroundBrush}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <Image x:Name="LogoImage" Stretch="Uniform" Margin="3" Visibility="Collapsed" />
+                            </Grid>
+                        </Border>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Top">
+                            <WrapPanel Orientation="Horizontal">
+                                <TextBlock x:Name="HeaderCaptionText" Text="SYMBOL" Style="{StaticResource CaptionStyle}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <Border x:Name="KindChip" Style="{StaticResource ChipBorderStyle}" Visibility="Collapsed">
+                                    <TextBlock x:Name="KindChipText" Style="{StaticResource ChipTextStyle}" />
+                                </Border>
+                                <Border x:Name="MarketChip" Style="{StaticResource ChipBorderStyle}" Visibility="Collapsed">
+                                    <TextBlock x:Name="MarketChipText" Style="{StaticResource ChipTextStyle}" />
+                                </Border>
+                                <Border x:Name="LiveChip" Style="{StaticResource ChipBorderStyle}" Visibility="Collapsed">
+                                    <TextBlock x:Name="LiveChipText" Style="{StaticResource ChipTextStyle}" />
+                                </Border>
+                            </WrapPanel>
+                            <TextBlock x:Name="HeaderTitleText" Text="No symbol open" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource SecondaryForegroundBrush}"
+                                       Margin="0,6,0,0" TextTrimming="CharacterEllipsis" />
+                            <WrapPanel x:Name="PriceRow" Orientation="Horizontal" Margin="0,4,0,0" Visibility="Collapsed">
+                                <TextBlock x:Name="LastPriceText" FontFamily="Consolas" FontSize="22" FontWeight="SemiBold" Foreground="#FFE6E6E6"
+                                           VerticalAlignment="Bottom" Margin="0,0,12,0" Background="Transparent" />
+                                <TextBlock x:Name="ChangeText" FontFamily="Consolas" FontSize="13" VerticalAlignment="Bottom" Margin="0,0,8,3" Background="Transparent" />
+                                <TextBlock x:Name="ChangePctText" FontFamily="Consolas" FontSize="13" VerticalAlignment="Bottom" Margin="0,0,8,3" Background="Transparent" />
+                                <TextBlock x:Name="ChangeSuffixText" FontSize="11" Foreground="{StaticResource MutedForegroundBrush}" VerticalAlignment="Bottom" Margin="0,0,0,4" />
+                            </WrapPanel>
+                            <TextBlock x:Name="HeaderHintText" Text="Press Ctrl+K (or ⌕ Search) to open a symbol." Style="{StaticResource EmptyHintStyle}" />
+                            <!-- MR8 (Q4): hand-over to the Hedge Fund window's manual PAPER order panel, pre-filled with symbol + side.
+                                 Research never places an order; the panel keeps its validation, confirmations and audit. -->
+                            <WrapPanel x:Name="OrderButtonsPanel" Orientation="Horizontal" Margin="0,8,0,0" Visibility="Collapsed"
+                                       AutomationProperties.Name="Paper order hand-over">
+                                <Button x:Name="OrderBuyButton" Tag="buy" Style="{StaticResource RoundedDarkButtonStyle}" Content="Buy" Padding="12,2" Margin="0,0,6,0"
+                                        Click="OrderButton_Click" />
+                                <Button x:Name="OrderSellButton" Tag="sell" Style="{StaticResource RoundedDarkButtonStyle}" Content="Sell" Padding="12,2" Margin="0,0,6,0"
+                                        Click="OrderButton_Click" />
+                                <Button x:Name="OrderShortButton" Tag="short" Style="{StaticResource RoundedDarkButtonStyle}" Content="Short" Padding="10,2" Margin="0,0,6,0"
+                                        Click="OrderButton_Click" />
+                                <Button x:Name="OrderCoverButton" Tag="cover" Style="{StaticResource RoundedDarkButtonStyle}" Content="Cover" Padding="10,2" Margin="0,0,10,0"
+                                        Click="OrderButton_Click" />
+                                <TextBlock x:Name="OrderNoteText" FontSize="10" Foreground="{StaticResource QuietForegroundBrush}" VerticalAlignment="Center"
+                                           TextWrapping="Wrap" MaxWidth="420" />
+                            </WrapPanel>
+                        </StackPanel>
+                        <!-- Day range · volume · previous close -->
+                        <StackPanel x:Name="HeaderStatsPanel" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top" Margin="16,0,0,0" Visibility="Collapsed">
+                            <StackPanel Width="150" Margin="0,0,16,0">
+                                <TextBlock Text="DAY RANGE" Style="{StaticResource CaptionStyle}" />
+                                <local:RangeBar x:Name="DayRangeBar" Margin="0,8,0,0" />
+                                <Grid Margin="0,3,0,0">
+                                    <TextBlock x:Name="DayLowText" Style="{StaticResource SmallNumberStyle}" HorizontalAlignment="Left" />
+                                    <TextBlock x:Name="DayHighText" Style="{StaticResource SmallNumberStyle}" HorizontalAlignment="Right" />
+                                </Grid>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,16,0" MinWidth="90">
+                                <TextBlock Text="VOLUME" Style="{StaticResource CaptionStyle}" />
+                                <TextBlock x:Name="VolumeText" FontFamily="Consolas" FontSize="13" Foreground="#FFE6E6E6" Margin="0,5,0,0" Background="Transparent" />
+                                <TextBlock x:Name="VolumeFeedText" FontFamily="Consolas" FontSize="9" Foreground="{StaticResource QuietForegroundBrush}" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <StackPanel MinWidth="80">
+                                <TextBlock Text="PREV CLOSE" Style="{StaticResource CaptionStyle}" />
+                                <TextBlock x:Name="PrevCloseText" FontFamily="Consolas" FontSize="13" Foreground="#FFE6E6E6" Margin="0,5,0,0" Background="Transparent" />
+                                <TextBlock x:Name="PrevCloseDateText" FontFamily="Consolas" FontSize="9" Foreground="{StaticResource QuietForegroundBrush}" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Row="1" Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="260" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Chart card (MR3): toolbar (timeframe · type · RTH/extended) · feed chips · ChartHost (WebView2). -->
+                    <Border Grid.Column="0" Style="{StaticResource CardStyle}" MinHeight="420" Padding="10,10,10,10" AutomationProperties.Name="Chart">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <WrapPanel x:Name="ChartToolbar" Grid.Row="0" Orientation="Horizontal" IsEnabled="False">
+                                <TextBlock Text="CHART" Style="{StaticResource CaptionStyle}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <StackPanel Orientation="Horizontal" Margin="0,0,12,0" AutomationProperties.Name="Timeframe"
+                                            KeyboardNavigation.DirectionalNavigation="Cycle" KeyboardNavigation.TabNavigation="Once">
+                                    <RadioButton x:Name="Tf1m" GroupName="ChartTf" Style="{StaticResource SegmentRadioStyle}" Content="1m" Tag="1m" Checked="Timeframe_Checked" AutomationProperties.Name="1 minute" />
+                                    <RadioButton x:Name="Tf5m" GroupName="ChartTf" Style="{StaticResource SegmentRadioStyle}" Content="5m" Tag="5m" Checked="Timeframe_Checked" AutomationProperties.Name="5 minutes" />
+                                    <RadioButton x:Name="Tf15m" GroupName="ChartTf" Style="{StaticResource SegmentRadioStyle}" Content="15m" Tag="15m" Checked="Timeframe_Checked" AutomationProperties.Name="15 minutes" />
+                                    <RadioButton x:Name="Tf1H" GroupName="ChartTf" Style="{StaticResource SegmentRadioStyle}" Content="1H" Tag="1H" Checked="Timeframe_Checked" AutomationProperties.Name="1 hour" />
+                                    <RadioButton x:Name="Tf4H" GroupName="ChartTf" Style="{StaticResource SegmentRadioStyle}" Content="4H" Tag="4H" Checked="Timeframe_Checked" AutomationProperties.Name="4 hours" />
+                                    <RadioButton x:Name="Tf1D" GroupName="ChartTf" Style="{StaticResource SegmentRadioStyle}" Content="1D" Tag="1D" Checked="Timeframe_Checked" AutomationProperties.Name="1 day" />
+                                    <RadioButton x:Name="Tf1W" GroupName="ChartTf" Style="{StaticResource SegmentRadioStyle}" Content="1W" Tag="1W" Checked="Timeframe_Checked" AutomationProperties.Name="1 week" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,12,0" AutomationProperties.Name="Chart type"
+                                            KeyboardNavigation.DirectionalNavigation="Cycle" KeyboardNavigation.TabNavigation="Once">
+                                    <RadioButton x:Name="TypeCandles" GroupName="ChartType" Style="{StaticResource SegmentRadioStyle}" Content="Candles" Tag="candles" Checked="ChartType_Checked" AutomationProperties.Name="Candles" />
+                                    <RadioButton x:Name="TypeLine" GroupName="ChartType" Style="{StaticResource SegmentRadioStyle}" Content="Line" Tag="line" Checked="ChartType_Checked" AutomationProperties.Name="Line" />
+                                    <RadioButton x:Name="TypeArea" GroupName="ChartType" Style="{StaticResource SegmentRadioStyle}" Content="Area" Tag="area" Checked="ChartType_Checked" AutomationProperties.Name="Area" />
+                                </StackPanel>
+                                <ToggleButton x:Name="ExtendedHoursToggle" Style="{StaticResource SegmentToggleStyle}" Content="RTH" Visibility="Collapsed"
+                                              Checked="ExtendedHours_Changed" Unchecked="ExtendedHours_Changed"
+                                              ToolTip="Regular trading hours only (09:30–16:00 ET). Click for extended hours (04:00–20:00 ET)."
+                                              AutomationProperties.Name="Extended hours" />
+                                <!-- MR5: indicators menu (backend /indicators, plan §4.3) and the drawing object list. -->
+                                <Button x:Name="IndicatorsButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="INDICATORS ▾" FontFamily="Consolas"
+                                        FontSize="10.5" Padding="8,2" Margin="12,0,0,0" Click="IndicatorsButton_Click"
+                                        ToolTip="Add or remove indicators (SMA, EMA, VWAP, Bollinger, RSI, MACD, compare) — computed by the backend"
+                                        AutomationProperties.Name="Indicators menu" />
+                                <Button x:Name="ObjectsButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="OBJECTS" FontFamily="Consolas"
+                                        FontSize="10.5" Padding="8,2" Margin="6,0,0,0" Click="ObjectsButton_Click"
+                                        ToolTip="Show or hide the list of drawings (rename, show/hide, lock, delete, jump to, timeframes, export/import)"
+                                        AutomationProperties.Name="Drawing objects panel" />
+                                <!-- MR8: chart markers (insider buys/sells, FOMC / release dates; backtest entries/exits + periods/drawdowns). -->
+                                <ToggleButton x:Name="MarkersToggle" Style="{StaticResource SegmentToggleStyle}" Content="MARKERS" Margin="6,0,0,0"
+                                              Checked="MarkersToggle_Changed" Unchecked="MarkersToggle_Changed"
+                                              ToolTip="Show markers: insider buys/sells (SEC Form 4), FOMC decisions and economic releases (Financial Newsroom); for a symbol opened from a backtest also its entries/exits, best/worst periods and drawdowns. Earnings dates: unavailable (no source)."
+                                              AutomationProperties.Name="Chart markers" />
+                            </WrapPanel>
+                            <!-- Feed labels: where the candles come from (plan Q2 / SPEC §7.1); never colour alone. -->
+                            <WrapPanel x:Name="ChartChips" Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,0" Visibility="Collapsed">
+                                <Border x:Name="SipChip" Style="{StaticResource ChipBorderStyle}" Visibility="Collapsed">
+                                    <TextBlock x:Name="SipChipText" Style="{StaticResource ChipTextStyle}" />
+                                </Border>
+                                <Border x:Name="TailChip" Style="{StaticResource ChipBorderStyle}" Visibility="Collapsed" BorderBrush="#66F0B429">
+                                    <TextBlock x:Name="TailChipText" Style="{StaticResource ChipTextStyle}" Foreground="#FFF0B429" />
+                                </Border>
+                                <TextBlock x:Name="ChartNoteText" FontSize="10.5" Foreground="{StaticResource SecondaryForegroundBrush}" TextWrapping="Wrap"
+                                           VerticalAlignment="Center" Visibility="Collapsed" MaxWidth="640" />
+                                <TextBlock x:Name="MarkersNoteText" FontSize="10.5" Foreground="{StaticResource SecondaryForegroundBrush}" TextWrapping="Wrap"
+                                           VerticalAlignment="Center" Visibility="Collapsed" MaxWidth="640" Margin="8,0,0,0" Background="Transparent"
+                                           AutomationProperties.LiveSetting="Polite" />
+                            </WrapPanel>
+                            <!-- MR5: drawing persistence / indicator state (saving, paused + retry, backend messages verbatim). -->
+                            <Grid x:Name="DrawingStatusRow" Grid.Row="2" Margin="0,6,0,0" Visibility="Collapsed">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="DrawingStatusText" Grid.Column="0" FontSize="10.5" Foreground="{StaticResource SecondaryForegroundBrush}"
+                                           TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
+                                <Button x:Name="DrawingStatusDismiss" Grid.Column="1" Style="{StaticResource IconButtonStyle}" Content="×" Margin="6,0,0,0"
+                                        Click="DrawingStatusDismiss_Click" ToolTip="Dismiss this message" AutomationProperties.Name="Dismiss the drawing message" />
+                            </Grid>
+                            <Grid Grid.Row="3" Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <!-- MR5: vertical tool rail (built in ResearchView.Drawings.cs, plan §4.1). -->
+                                <Border x:Name="ToolRail" Grid.Column="0" Margin="0,0,6,0" Visibility="Collapsed" Background="#FF141518"
+                                        BorderBrush="{StaticResource SubtleBorderBrush}" BorderThickness="1" CornerRadius="6"
+                                        AutomationProperties.Name="Drawing tools">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                                        <StackPanel x:Name="ToolRailPanel" Margin="3" KeyboardNavigation.TabNavigation="Continue" />
+                                    </ScrollViewer>
+                                </Border>
+                                <!-- ChartHost is created in code (ResearchView.xaml.cs) and placed here. -->
+                                <Border x:Name="ChartSlot" Grid.Column="1" />
+                                <!-- MR5: drawing object list (built in ResearchView.Drawings.cs). -->
+                                <Border x:Name="ObjectsPanel" Grid.Column="2" Width="236" Margin="6,0,0,0" Visibility="Collapsed" Background="#FF141518"
+                                        BorderBrush="{StaticResource SubtleBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="8,8,6,8"
+                                        AutomationProperties.Name="Drawing objects">
+                                    <DockPanel x:Name="ObjectsDock" LastChildFill="True" />
+                                </Border>
+                                <StackPanel x:Name="ChartEmptyPanel" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <TextBlock Text="No symbol open" Style="{StaticResource EmptyTitleStyle}" HorizontalAlignment="Center" TextAlignment="Center" />
+                                    <TextBlock Text="Press Ctrl+K (or ⌕ Search, or + in the tab bar) to search by ticker or company name — or pick a symbol from a watchlist."
+                                               Style="{StaticResource EmptyHintStyle}" HorizontalAlignment="Center" TextAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <!-- Key stats column (MR4, SPEC §7.4 / /stats): Open · VWAP · Avg vol (30d) · Exchange, performance tiles
+                         1W 1M 3M 6M YTD 1Y, 52-week range. Every number has its feed in the tooltip. -->
+                    <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="10,0,0,0" AutomationProperties.Name="Key stats">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                            <StackPanel>
+                                <TextBlock Text="KEY STATS" Style="{StaticResource CaptionStyle}" />
+                                <StackPanel x:Name="StatsEmptyPanel">
+                                    <TextBlock x:Name="StatsEmptyTitle" Text="No symbol open" Style="{StaticResource EmptyTitleStyle}" Margin="0,8,0,0" />
+                                    <TextBlock x:Name="StatsEmptyHint" Text="Open a symbol to see its key stats." Style="{StaticResource EmptyHintStyle}" />
+                                </StackPanel>
+                                <StackPanel x:Name="StatsContent" Visibility="Collapsed">
+                                    <Grid Margin="0,8,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="22" />
+                                            <RowDefinition Height="22" />
+                                            <RowDefinition Height="22" />
+                                            <RowDefinition Height="22" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Grid.Row="0" Text="Open" Style="{StaticResource StatLabelStyle}" />
+                                        <TextBlock x:Name="StatOpenText" Grid.Row="0" Grid.Column="1" Style="{StaticResource StatValueStyle}" />
+                                        <TextBlock Grid.Row="1" Text="VWAP" Style="{StaticResource StatLabelStyle}" />
+                                        <TextBlock x:Name="StatVwapText" Grid.Row="1" Grid.Column="1" Style="{StaticResource StatValueStyle}" />
+                                        <TextBlock Grid.Row="2" Text="Avg volume (30d)" Style="{StaticResource StatLabelStyle}" />
+                                        <TextBlock x:Name="StatAvgVolText" Grid.Row="2" Grid.Column="1" Style="{StaticResource StatValueStyle}" />
+                                        <TextBlock Grid.Row="3" Text="Exchange" Style="{StaticResource StatLabelStyle}" />
+                                        <TextBlock x:Name="StatExchangeText" Grid.Row="3" Grid.Column="1" Style="{StaticResource StatValueStyle}" />
+                                    </Grid>
+                                    <TextBlock Text="PERFORMANCE" Style="{StaticResource CaptionStyle}" Margin="0,14,0,6" />
+                                    <UniformGrid x:Name="PerfGrid" Columns="3" AutomationProperties.Name="Performance" />
+                                    <TextBlock x:Name="PerfNoteText" Style="{StaticResource EmptyHintStyle}" FontSize="10" Visibility="Collapsed" />
+                                    <TextBlock Text="52-WEEK RANGE" Style="{StaticResource CaptionStyle}" Margin="0,14,0,0" />
+                                    <local:RangeBar x:Name="Range52Bar" Margin="0,8,0,0" />
+                                    <Grid Margin="0,3,0,0">
+                                        <TextBlock x:Name="Range52LowText" Style="{StaticResource SmallNumberStyle}" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="Range52HighText" Style="{StaticResource SmallNumberStyle}" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <TextBlock x:Name="Range52DatesText" FontFamily="Consolas" FontSize="9" Foreground="{StaticResource QuietForegroundBrush}" Margin="0,2,0,0" />
+                                </StackPanel>
+                                <TextBlock x:Name="StatsMessageText" Style="{StaticResource EmptyHintStyle}" Visibility="Collapsed" Margin="0,8,0,0" />
+                                <Button x:Name="StatsRetryButton" Style="{StaticResource RoundedDarkButtonStyle}" Padding="8,2" Margin="0,6,0,0" HorizontalAlignment="Left"
+                                        Content="Retry" Click="StatsRetryButton_Click" Visibility="Collapsed" AutomationProperties.Name="Retry loading the key stats" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+
+                <!-- News card (MR6, SPEC "MR6 backend notes"): the active symbol's news (REST + live news:<SYM>); headline / summary /
+                     publisher as plain text, link → default browser (http/https only), ticker chips open the symbol, thumbnails only via
+                     the backend proxy. Built in code (ResearchView.News.cs). -->
+                <Border Grid.Row="2" Style="{StaticResource CardStyle}" Margin="0,10,0,0" MinHeight="72" Padding="14,10,8,8" AutomationProperties.Name="News">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <WrapPanel Grid.Row="0" Orientation="Horizontal">
+                            <TextBlock x:Name="NewsCaptionText" Text="NEWS" Style="{StaticResource CaptionStyle}" VerticalAlignment="Center" Margin="0,0,10,0"
+                                       Background="Transparent" />
+                            <Border x:Name="NewsLiveChip" Style="{StaticResource ChipBorderStyle}" Visibility="Collapsed">
+                                <TextBlock x:Name="NewsLiveChipText" Style="{StaticResource ChipTextStyle}" />
+                            </Border>
+                        </WrapPanel>
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,0">
+                            <TextBlock x:Name="NewsMessageText" Visibility="Collapsed" FontSize="11" Foreground="{StaticResource SecondaryForegroundBrush}"
+                                       TextWrapping="Wrap" MaxWidth="900" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
+                            <Button x:Name="NewsRetryButton" Style="{StaticResource RoundedDarkButtonStyle}" Padding="8,2" Margin="10,0,0,0" Content="Retry"
+                                    Click="NewsRetryButton_Click" Visibility="Collapsed" VerticalAlignment="Center"
+                                    AutomationProperties.Name="Retry loading the news" />
+                        </StackPanel>
+                        <ScrollViewer x:Name="NewsScroll" ScrollChanged="NewsScroll_ScrollChanged" Grid.Row="2" Margin="0,6,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                      Focusable="False">
+                            <StackPanel>
+                                <StackPanel x:Name="NewsItemsPanel" AutomationProperties.Name="News items" />
+                                <Button x:Name="NewsMoreButton" Style="{StaticResource RoundedDarkButtonStyle}" Padding="8,2" Margin="2,2,0,4" HorizontalAlignment="Left"
+                                        Content="Older news" Click="NewsMoreButton_Click" Visibility="Collapsed"
+                                        AutomationProperties.Name="Load older news" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+            </Grid>
+            </ScrollViewer>
+
+            <!-- ===== Page: OVERVIEW ===== -->
+            <Border x:Name="OverviewPage" Grid.Row="3" Visibility="Collapsed" Margin="0,10,0,0" Style="{StaticResource CardStyle}"
+                    VerticalAlignment="Top" AutomationProperties.Name="Market overview">
+                <StackPanel>
+                    <TextBlock Text="MARKET OVERVIEW" Style="{StaticResource CaptionStyle}" />
+                    <TextBlock Text="The market overview is not available yet." Style="{StaticResource EmptyTitleStyle}" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- ===== Page: ALERTS ===== -->
+            <!-- MR7: alerts (list + log), built in ResearchView.Alerts.cs from GET /research/alerts and /alerts/log. -->
+            <Border x:Name="AlertsPage" Grid.Row="3" Visibility="Collapsed" Margin="0,10,0,0" Style="{StaticResource CardStyle}"
+                    AutomationProperties.Name="Alerts">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                    <StackPanel x:Name="AlertsPanel" />
+                </ScrollViewer>
+            </Border>
+
+            <!-- ===== Page: PORTFOLIO (MR8) — GET /research/portfolio, HedgeFund paper account, read-only ===== -->
+            <Border x:Name="PortfolioPage" Grid.Row="3" Visibility="Collapsed" Margin="0,10,0,0" Style="{StaticResource CardStyle}"
+                    AutomationProperties.Name="Portfolio, paper account, read-only">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Focusable="False">
+                    <StackPanel>
+                        <Grid>
+                            <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="PORTFOLIO" Style="{StaticResource CaptionStyle}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <Border Style="{StaticResource ChipBorderStyle}">
+                                    <TextBlock Text="PAPER ACCOUNT · READ-ONLY" Style="{StaticResource ChipTextStyle}" Foreground="{StaticResource CautionBrush}" />
+                                </Border>
+                            </WrapPanel>
+                            <Button x:Name="PortfolioRefreshButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="Refresh" Padding="10,2" HorizontalAlignment="Right"
+                                    Click="PortfolioRefreshButton_Click" AutomationProperties.Name="Refresh the paper account" />
+                        </Grid>
+                        <TextBlock x:Name="PortfolioSummaryText" FontFamily="Consolas" FontSize="11.5" Foreground="#FFE6E6E6" Margin="0,10,0,6" TextWrapping="Wrap" />
+                        <TextBlock x:Name="PortfolioMessageText" Visibility="Collapsed" FontSize="11.5" Foreground="{StaticResource SecondaryForegroundBrush}"
+                                   TextWrapping="Wrap" Margin="0,4,0,4" AutomationProperties.LiveSetting="Polite" />
+                        <StackPanel x:Name="PortfolioRows" AutomationProperties.Name="Paper positions" />
+                        <TextBlock x:Name="PortfolioNoteText" FontSize="10" Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <!-- ===== Page: MACRO (MR8) — the Financial Newsroom's own views (/newsroom/macro, /newsroom/calendar), reused ===== -->
+            <Grid x:Name="MacroPage" Grid.Row="3" Visibility="Collapsed" Margin="0,10,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8" KeyboardNavigation.DirectionalNavigation="Cycle"
+                           KeyboardNavigation.TabNavigation="Once" AutomationProperties.Name="Macro views">
+                    <RadioButton x:Name="MacroIndicatorsTab" GroupName="MacroTabs" Style="{StaticResource SegmentRadioStyle}" Content="MACRO INDICATORS"
+                                 IsChecked="True" Checked="MacroTab_Checked" AutomationProperties.Name="Macro indicators" />
+                    <RadioButton x:Name="MacroCalendarTab" GroupName="MacroTabs" Style="{StaticResource SegmentRadioStyle}" Content="ECONOMIC CALENDAR"
+                                 Checked="MacroTab_Checked" AutomationProperties.Name="Economic calendar" />
+                    <TextBlock Text="Financial Newsroom data (same views as the Newsroom window)" FontSize="10.5" Foreground="{StaticResource QuietForegroundBrush}"
+                               VerticalAlignment="Center" Margin="10,0,0,0" />
+                </WrapPanel>
+                <ContentControl x:Name="MacroHost" Grid.Row="1" Focusable="False" AutomationProperties.Name="Macro content" />
+            </Grid>
+        </Grid>
+
+        <!-- ===================== Ctrl+K command palette (MR4) =====================
+             Keyboard-only: the query box keeps the focus; ↑/↓ move the selection, Enter opens (or adds to the list the palette
+             was opened for), Esc closes; Tab stays inside the overlay. Results from GET /research/assets (ranked by the
+             backend: exact symbol, symbol prefix, name word prefix, name substring); an empty query shows recent symbols.
+             Asset names are untrusted text → TextBlocks only. -->
+        <Grid x:Name="PaletteOverlay" Grid.ColumnSpan="2" Visibility="Collapsed" KeyboardNavigation.TabNavigation="Cycle"
+              KeyboardNavigation.ControlTabNavigation="Cycle" PreviewKeyDown="PaletteOverlay_PreviewKeyDown">
+            <Border Background="{StaticResource WindowBackgroundBrush}" Opacity="0.78" MouseLeftButtonDown="PaletteBackdrop_MouseLeftButtonDown" />
+            <Border Style="{StaticResource CardStyle}" Width="560" MaxWidth="560" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="16,48,16,16"
+                    Padding="12,10" AutomationProperties.Name="Command palette">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="2,0,0,8">
+                        <TextBlock x:Name="PaletteTitleText" Text="OPEN SYMBOL" Style="{StaticResource CaptionStyle}" VerticalAlignment="Center" />
+                        <Button x:Name="PaletteCloseButton" Style="{StaticResource IconButtonStyle}" Content="Esc ×" FontSize="10" HorizontalAlignment="Right"
+                                Click="PaletteCloseButton_Click" Focusable="False" ToolTip="Close (Esc)" AutomationProperties.Name="Close the command palette" />
+                    </Grid>
+                    <Border Grid.Row="1" Style="{StaticResource InputBorderStyle}" Padding="8,5">
+                        <Grid>
+                            <TextBlock x:Name="PaletteHint" Text="⌕ Ticker or company name (e.g. NVDA, Apple, BTC-USD)" FontSize="12"
+                                       Foreground="{StaticResource QuietForegroundBrush}" VerticalAlignment="Center" Margin="2,0,0,0" IsHitTestVisible="False" />
+                            <TextBox x:Name="PaletteBox" Style="{StaticResource InputBoxStyle}" FontSize="13" MaxLength="32"
+                                     TextChanged="PaletteBox_TextChanged"
+                                     AutomationProperties.Name="Search symbols: type a ticker or company name, arrow keys choose, Enter opens, Escape closes" />
+                        </Grid>
+                    </Border>
+                    <TextBlock x:Name="PaletteMessageText" Grid.Row="2" Visibility="Collapsed" FontSize="11" Foreground="{StaticResource SecondaryForegroundBrush}"
+                               TextWrapping="Wrap" Margin="2,8,2,0" />
+                    <ScrollViewer x:Name="PaletteScroll" Grid.Row="3" Margin="0,8,0,0" MaxHeight="360" VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                        <StackPanel x:Name="PaletteResults" AutomationProperties.Name="Search results" />
+                    </ScrollViewer>
+                    <Grid Grid.Row="4" Margin="2,8,2,0">
+                        <TextBlock Text="↑↓ choose · Enter open · Esc close" FontFamily="Consolas" FontSize="9.5" Foreground="{StaticResource QuietForegroundBrush}" />
+                        <!-- Announces the selected result to screen readers (live region). -->
+                        <TextBlock x:Name="PaletteStatusText" FontSize="9.5" Foreground="{StaticResource QuietForegroundBrush}" HorizontalAlignment="Right"
+                                   AutomationProperties.LiveSetting="Polite" TextTrimming="CharacterEllipsis" MaxWidth="300" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

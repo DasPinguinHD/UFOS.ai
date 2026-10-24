@@ -29,7 +29,17 @@ namespace UFOS.ai
 
         private readonly MarketQuoteService _marketQuoteService = new(OverviewHttpClient);
         private readonly NewsFeedService _newsFeedService = new(OverviewHttpClient);
-        private readonly IPortfolioInsightProvider _portfolioInsightProvider = new PlaceholderPortfolioInsightProvider();
+        // Portfolio Insight card (HedgeFund stage 9b, SPEC §20.3): the HedgeFund backend's insights over the user's imported
+        // broker statements; reached like the AI-budget window (BackendAuth token, port 8867). Refreshed by the 5-min overview
+        // timer and on window activation (at most once a minute), never while the window is hidden or minimized.
+        private readonly IPortfolioInsightProvider _portfolioInsightProvider = new HedgeFundPortfolioInsightProvider();
+        private bool _portfolioInsightBusy;
+        private DateTime _portfolioInsightLastRefreshUtc = DateTime.MinValue;
+        // §20.8: the card starts the backend when it is not running (no window); the last card state decides what a click does.
+        private PortfolioInsightState? _portfolioInsightLastState;
+        private bool _hedgeFundStartRequested;
+        private bool _portfolioInsightRefreshPending;   // the backend came online while a refresh was running
+        private string? _hedgeFundLastFailure;           // §20.8: why the last start from the card ended — kept until a start succeeds
 
         // Kept from the last successful refresh so a card click can open the popup
         // with real data without re-fetching.
@@ -42,11 +52,16 @@ namespace UFOS.ai
         private DispatcherTimer? _launchCaptionTimer;
         private DispatcherTimer? _overviewRefreshTimer;
         private bool _ufoFlightStarted;
+        private AiBudgetsWindow? _aiBudgetsWindow;
 
         public MainWindow()
         {
             InitializeComponent();
             ApplyScreenSizeSafeguards();
+            // user request 2026-10-23: the main content windows start maximized (within the work area: WM_GETMINMAXINFO hook);
+            // WPF raises no StateChanged for the initial state, so the maximized look (square corners) is applied once here
+            WindowMaximize.StartMaximized(this);
+            Window_StateChanged(this, EventArgs.Empty);
         }
 
         // MinWidth/MinHeight (and the default Width/Height) are declared in XAML as
@@ -191,6 +206,15 @@ namespace UFOS.ai
             _overviewRefreshTimer.Tick += (_, __) => _ = RefreshOverviewCardsAsync();
             _overviewRefreshTimer.Start();
             _ = RefreshOverviewCardsAsync();
+            Activated += MainWindow_Activated;   // Portfolio Insight card: refresh on activation (throttled)
+            // §20.8: Hedge Fund backend status → the card (raised on any thread, marshalled below); optional start with the app
+            HedgeFundBackendHost.StatusChanged += OnHedgeFundBackendStatusChanged;
+            if (HedgeFundBackendHost.StartWithApp)
+            {
+                // in the background, never awaited: the UI does not wait for the backend (same start as the Hedge Fund window)
+                _hedgeFundStartRequested = true;
+                Dispatcher.BeginInvoke(new Action(() => _ = HedgeFundBackendHost.EnsureStartedAsync()), DispatcherPriority.ApplicationIdle);
+            }
 
             // Prepare the module backends' Python environments once, in the background
             // (Shared/PythonEnvironment.cs): create missing venvs, pip install only when a
@@ -215,6 +239,9 @@ namespace UFOS.ai
             _settingsCloseTimer?.Stop();
             _launchCaptionTimer?.Stop();
             _overviewRefreshTimer?.Stop();
+            Activated -= MainWindow_Activated;
+            HedgeFundBackendHost.StatusChanged -= OnHedgeFundBackendStatusChanged;
+            _aiBudgetsWindow?.Close();
         }
 
         private void UpdateClock()
@@ -294,34 +321,295 @@ namespace UFOS.ai
 
         private async Task RefreshPortfolioInsightCardAsync()
         {
+            // Low frequency (5-min overview timer + activation ≥ 60 s apart); nothing while the window is hidden or minimized.
+            if (_portfolioInsightBusy) { _portfolioInsightRefreshPending = true; return; }
+            if (!IsVisible || WindowState == WindowState.Minimized) return;
+            _portfolioInsightBusy = true;
+            _portfolioInsightLastRefreshUtc = DateTime.UtcNow;
             try
             {
-                // Stays illustrative (existing static text left untouched) until a real
-                // portfolio/broker microservice implements IPortfolioInsightProvider.
-                var insight = await _portfolioInsightProvider.TryGetLatestAsync();
-                if (insight is null) return;
-
-                PortfolioInsightHeadlineText.Text = insight.Headline;
-                if (insight.AiModel is not null)
-                {
-                    // AI-written insight -> "✦ AI-GENERATED · model · time" (EU AI Act Art. 50,
-                    // see Shared/AiContent.cs). A real provider MUST set AiModel whenever an
-                    // LLM wrote the headline/detail.
-                    PortfolioInsightDetailText.Text = $"{AiContent.Badge(insight.AiModel, insight.GeneratedAt)} · {insight.Detail}";
-                    PortfolioInsightDetailText.Foreground = TryFindResource("AiAccentBrush") as Brush ?? PortfolioInsightDetailText.Foreground;
-                    PortfolioInsightDetailText.ToolTip = AiContent.Caveat;
-                    System.Windows.Automation.AutomationProperties.SetName(PortfolioInsightDetailText,
-                        AiContent.AutomationName(insight.AiModel, insight.GeneratedAt));
-                }
-                else
-                {
-                    PortfolioInsightDetailText.Text = $"{insight.Detail} · {FormatRelativeAgo(insight.GeneratedAt)}";
-                }
+                var card = await _portfolioInsightProvider.GetCardAsync();
+                ApplyPortfolioInsightCard(card);
             }
             catch (Exception ex)
             {
                 try { AppLog.Warn("Overview", "Failed to refresh Portfolio Insight card", ex); } catch { }
+                ApplyPortfolioInsightCard(new PortfolioInsightCard(PortfolioInsightState.Unavailable, Array.Empty<string>(), 0, null, null, null,
+                    "not available (" + ex.GetType().Name + ")", Array.Empty<string>()));
             }
+            finally
+            {
+                _portfolioInsightBusy = false;
+            }
+            if (_portfolioInsightRefreshPending)
+            {
+                _portfolioInsightRefreshPending = false;
+                _ = RefreshPortfolioInsightCardAsync();
+            }
+        }
+
+        /// <summary>
+        /// Shows the card from what the provider built from GET /v2/insights/summary — no stand-in numbers: not running /
+        /// no imports / not available (reason) are short texts only. Compact layout (user feedback 2026-10-19): per currency one
+        /// "Realised" and one "Unrealised" row (number left, coloured by sign; label right, muted), never summed across currencies,
+        /// at most 2 currencies (+N more); an amber row only when incomplete; one short label line. Depot count, price dates,
+        /// computed time, the full label and the per-depot reasons are in the ToolTip. The figures are the provider's own texts
+        /// (structured fields filled from the summary JSON, formatted with Signed) — nothing is recomputed or parsed from text.
+        /// </summary>
+        private void ApplyPortfolioInsightCard(PortfolioInsightCard card)
+        {
+            _portfolioInsightLastState = card.State;
+            PortfolioInsightSandboxChip.Visibility = card.Sandbox ? Visibility.Visible : Visibility.Collapsed;   // sandbox profile (GET /health mode)
+            if (card.State != PortfolioInsightState.BackendNotRunning && card.State != PortfolioInsightState.Unavailable) _hedgeFundLastFailure = null;   // the backend answers again
+            // §20.8: while the backend this app is starting is not answering yet, the card keeps showing the start progress
+            if (card.State == PortfolioInsightState.BackendNotRunning && _hedgeFundStartRequested && HedgeFundBackendHost.IsStarting)
+            {
+                ShowHedgeFundStarting();
+                return;
+            }
+            if (card.State != PortfolioInsightState.Ok && card.State != PortfolioInsightState.Incomplete)
+            {
+                var second = card.State == PortfolioInsightState.BackendNotRunning && _hedgeFundLastFailure != null ? "Hedge Fund backend: " + _hedgeFundLastFailure : null;
+                ShowPortfolioInsightText(card.Message ?? "not available", second,
+                    card.State == PortfolioInsightState.BackendNotRunning ? ". Press to start the backend." : ". Press to open Hedge Fund, Monitoring, Portfolio insights.");
+                return;
+            }
+
+            // ----- structured fields only (provider: straight from the summary JSON; review 2026-10-19 — no text parsing) -----
+            var year = card.Year?.ToString(CultureInfo.InvariantCulture);
+            var realised = card.Realised ?? Array.Empty<PortfolioRealised>();
+            var unrealised = card.Unrealised ?? Array.Empty<PortfolioUnrealised>();
+            var currencies = realised.Select(x => x.Currency).Concat(unrealised.Select(x => x.Currency)).Distinct(StringComparer.Ordinal).ToList();
+            var shown = currencies.Take(2).ToList();
+            var more = currencies.Count - shown.Count;
+
+            _portfolioInsightDefaultToolTip ??= PortfolioInsightCardButton.ToolTip as string;
+            PortfolioInsightCaptionText.Text = "PORTFOLIO INSIGHT" + (year != null ? " · " + year : "");
+            var rows = PortfolioInsightRowsPanel;
+            rows.Children.Clear();
+            var spoken = new List<string>();
+            var realisedShown = 0;
+            foreach (var cur in shown)
+            {
+                var r = realised.FirstOrDefault(x => string.Equals(x.Currency, cur, StringComparison.Ordinal));
+                if (r == null) continue;
+                var amount = HedgeFundPortfolioInsightProvider.Signed(r.Amount, r.Currency);
+                rows.Children.Add(InsightFigureRow(amount, Math.Round(r.Amount, 2), "Realised", 17, true));
+                spoken.Add("Realised " + amount);
+                realisedShown++;
+            }
+            if (realisedShown == 0)
+            {
+                var text = "Realised" + (year != null ? " " + year : "") + " — nothing realised yet";
+                rows.Children.Add(InsightTextRow(text));
+                spoken.Add(text);
+            }
+            foreach (var cur in shown)
+            {
+                var u = unrealised.FirstOrDefault(x => string.Equals(x.Currency, cur, StringComparison.Ordinal));
+                if (u != null && !u.NothingValued && u.Amount is double ua && u.CoveragePct is int cov && cov > 0)
+                {
+                    var amount = HedgeFundPortfolioInsightProvider.Signed(ua, u.Currency);
+                    var label = "Unrealised · " + cov.ToString(CultureInfo.InvariantCulture) + " % priced";
+                    rows.Children.Add(InsightFigureRow(amount, Math.Round(ua, 2), label, 13, false));
+                    spoken.Add(label + " " + amount);
+                }
+                else
+                {
+                    var text = "Unrealised" + (currencies.Count > 1 ? " " + cur : "") + " — not available";
+                    rows.Children.Add(InsightTextRow(text));
+                    spoken.Add(text);
+                }
+            }
+            if (shown.Count == 0)
+            {
+                const string text = "Unrealised — not available";
+                rows.Children.Add(InsightTextRow(text));
+                spoken.Add(text);
+            }
+            if (more > 0)
+            {
+                var text = "+" + more.ToString(CultureInfo.InvariantCulture) + " more currenc" + (more == 1 ? "y" : "ies") + " — open insights";
+                rows.Children.Add(InsightTextRow(text));
+                spoken.Add(text);
+            }
+            rows.Visibility = Visibility.Visible;
+            PortfolioInsightHeadlineText.Visibility = Visibility.Collapsed;
+            PortfolioInsightDetailText.Visibility = Visibility.Collapsed;
+
+            // ----- amber row: only when incomplete — the backend's position counts (positions − valued, summed over currencies) -----
+            if (card.State == PortfolioInsightState.Incomplete)
+            {
+                var unpriced = card.UnpricedCount ?? 0;
+                PortfolioInsightWarningText.Text = unpriced > 0
+                    ? "⚠ " + unpriced.ToString(CultureInfo.InvariantCulture) + " position" + (unpriced == 1 ? "" : "s") + " without a price"
+                    : "⚠ Incomplete — hover for the reasons";
+                PortfolioInsightWarningText.Visibility = Visibility.Visible;
+                spoken.Add(PortfolioInsightWarningText.Text.TrimStart('⚠', ' '));
+            }
+            else PortfolioInsightWarningText.Visibility = Visibility.Collapsed;
+            PortfolioInsightLabelText.Visibility = Visibility.Visible;
+
+            // ----- tooltip: everything that left the face -----
+            var tip = new List<string>();
+            if (card.DepotCount is int depots) tip.Add(depots.ToString(CultureInfo.InvariantCulture) + " depot" + (depots == 1 ? "" : "s"));
+            var dates = string.Join(" · ", new[] { card.PricesAsOf, card.ComputedAt }.Where(x => !string.IsNullOrWhiteSpace(x)));
+            if (dates.Length > 0) tip.Add(dates);
+            if (card.Reasons.Count > 0) tip.Add("Incomplete:\n" + string.Join("\n", card.Reasons.Select(x => "• " + x)));
+            var disclaimer = card.Disclaimer ?? card.Label;
+            if (!string.IsNullOrWhiteSpace(disclaimer)) tip.Add(disclaimer);
+            tip.Add("Click for the details in Hedge Fund → Monitoring → Portfolio insights.");
+            PortfolioInsightCardButton.ToolTip = string.Join("\n\n", tip);
+
+            System.Windows.Automation.AutomationProperties.SetName(PortfolioInsightCardButton,
+                "Portfolio Insight" + (year != null ? " " + year : "") + ": " + string.Join(". ", spoken)
+                + (string.IsNullOrWhiteSpace(disclaimer) ? "" : ". " + disclaimer)
+                + ". Press to open Hedge Fund, Monitoring, Portfolio insights.");
+        }
+
+        private string? _portfolioInsightDefaultToolTip;
+
+        /// <summary>A state of the card (not running / starting / no imports / not available): at most two short lines, no figures.</summary>
+        private void ShowPortfolioInsightText(string line1, string? line2, string pressHint)
+        {
+            _portfolioInsightDefaultToolTip ??= PortfolioInsightCardButton.ToolTip as string;
+            PortfolioInsightCaptionText.Text = "PORTFOLIO INSIGHT";
+            PortfolioInsightRowsPanel.Children.Clear();
+            PortfolioInsightRowsPanel.Visibility = Visibility.Collapsed;
+            PortfolioInsightHeadlineText.Text = line1;
+            PortfolioInsightHeadlineText.Visibility = Visibility.Visible;
+            PortfolioInsightDetailText.Text = line2 ?? "";
+            PortfolioInsightDetailText.Visibility = string.IsNullOrWhiteSpace(line2) ? Visibility.Collapsed : Visibility.Visible;
+            PortfolioInsightWarningText.Visibility = Visibility.Collapsed;
+            PortfolioInsightLabelText.Visibility = Visibility.Collapsed;
+            PortfolioInsightCardButton.ToolTip = string.IsNullOrWhiteSpace(line2) ? _portfolioInsightDefaultToolTip : line1 + "\n" + line2 + "\n\n" + _portfolioInsightDefaultToolTip;
+            System.Windows.Automation.AutomationProperties.SetName(PortfolioInsightCardButton,
+                "Portfolio Insight: " + line1 + (string.IsNullOrWhiteSpace(line2) ? "" : ". " + line2) + pressHint);
+        }
+
+        /// <summary>One figure row: the amount (Signed) left — green / red by the value's sign, neutral at 0 — the label right, muted.</summary>
+        private Grid InsightFigureRow(string amount, double rounded, string label, double size, bool bold)
+        {
+            var row = new Grid { Margin = new Thickness(0, 0, 0, 2) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var brushKey = rounded > 0 ? "PositiveGreenBrush" : rounded < 0 ? "AccentRedBrush" : "PrimaryForegroundBrush";
+            var number = new TextBlock
+            {
+                Text = amount,
+                FontSize = size,
+                FontFamily = new FontFamily("Consolas"),
+                FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal,
+                Foreground = (Brush)FindResource(brushKey),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            var caption = new TextBlock
+            {
+                Text = label,
+                FontSize = 10.5,
+                Foreground = (Brush)FindResource("MutedForegroundBrush"),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(10, 0, 0, 0),
+            };
+            Grid.SetColumn(caption, 1);
+            row.Children.Add(number);
+            row.Children.Add(caption);
+            return row;
+        }
+
+        /// <summary>A muted text row (no number): "Unrealised — not available", "+N more currencies — open insights".</summary>
+        private TextBlock InsightTextRow(string text) => new()
+        {
+            Text = text,
+            FontSize = 10.5,
+            Foreground = (Brush)FindResource("MutedForegroundBrush"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 2, 0, 2),
+        };
+
+        private void MainWindow_Activated(object? sender, EventArgs e)
+        {
+            if (DateTime.UtcNow - _portfolioInsightLastRefreshUtc < TimeSpan.FromSeconds(60)) return;
+            _ = RefreshPortfolioInsightCardAsync();
+        }
+
+        // §20.8: backend status → card. Starting (checking / Python environment / installing packages / starting…) shows the
+        // progress verbatim; online refreshes the figures at once; offline after a start shows "not running — click to start"
+        // with the reason. No cached or old numbers.
+        private void OnHedgeFundBackendStatusChanged()
+        {
+            try { Dispatcher.BeginInvoke(new Action(ApplyHedgeFundBackendStatus)); } catch { }
+        }
+
+        private void ApplyHedgeFundBackendStatus()
+        {
+            if (!_hedgeFundStartRequested) return;   // the Hedge Fund window manages its own start; the card refreshes on its timer
+            if (HedgeFundBackendHost.IsStarting)
+            {
+                ShowHedgeFundStarting();
+                return;
+            }
+            if (HedgeFundBackendHost.IsOnline)
+            {
+                _hedgeFundStartRequested = false;
+                _hedgeFundLastFailure = null;
+                _portfolioInsightLastRefreshUtc = DateTime.MinValue;
+                _ = RefreshPortfolioInsightCardAsync();
+                return;
+            }
+            // every other status ends this start: "offline — <reason>", "outdated backend running — …", "not started" (nothing ran)
+            _hedgeFundStartRequested = false;
+            _portfolioInsightLastState = PortfolioInsightState.BackendNotRunning;
+            var status = HedgeFundBackendHost.Status;
+            _hedgeFundLastFailure = status;
+            var offline = status.StartsWith("offline", StringComparison.OrdinalIgnoreCase) || status.StartsWith("not started", StringComparison.OrdinalIgnoreCase);
+            var headline = offline ? HedgeFundPortfolioInsightProvider.NotRunningText : "Hedge Fund backend: " + status;
+            ShowPortfolioInsightText(headline, offline ? "Hedge Fund backend: " + status : null, ". Press to start the backend.");
+        }
+
+        private void ShowHedgeFundStarting()
+        {
+            const string starting = "Starting Hedge Fund backend (also runs the paper engine)…";
+            var status = HedgeFundBackendHost.Status;
+            ShowPortfolioInsightText(starting, "Hedge Fund backend: " + status, "");
+        }
+
+        // Card click (§20.8, user decision 2026-10-18 — no confirmation): backend not running → START it (the window does not
+        // open; the card shows the progress, then the figures); a start already running → nothing; backend running → Hedge Fund
+        // → Monitoring → Portfolio insights: the open Hedge Fund window switches there; otherwise the window is opened through the
+        // same OpenModuleWindow path as the Hedge Fund tile and switches once it is loaded.
+        private async void PortfolioInsightCard_Click(object sender, RoutedEventArgs e)
+        {
+            if (HedgeFundBackendHost.IsStarting) { ShowHedgeFundStarting(); return; }
+            // not known to be running (down, or the first refresh has not finished yet): ask /health first
+            if (!HedgeFundBackendHost.IsOnline
+                && (_portfolioInsightLastState == null || _portfolioInsightLastState == PortfolioInsightState.BackendNotRunning)
+                && !await HedgeFundBackendHost.IsRunningAsync())
+            {
+                if (HedgeFundBackendHost.IsStarting) { ShowHedgeFundStarting(); return; }
+                _hedgeFundStartRequested = true;
+                ShowHedgeFundStarting();
+                await HedgeFundBackendHost.EnsureStartedAsync();   // returns at once when a start runs or the process is alive
+                ApplyHedgeFundBackendStatus();                     // no-op start (e.g. alive but not answering) → its end state, never stuck
+                return;
+            }
+            var open = Application.Current?.Windows.OfType<HedgeFundWindow>().FirstOrDefault(w => w.IsLoaded && !w.IsClosingOrClosed);
+            if (open != null)
+            {
+                open.ShowPortfolioInsights();
+                return;
+            }
+            OpenModuleWindow(HedgeFundTile, () =>
+            {
+                var window = new HedgeFundWindow();
+                window.Show();
+                window.Dispatcher.BeginInvoke(new Action(window.ShowPortfolioInsights), DispatcherPriority.Loaded);
+                return window;
+            });
+            HedgeFundTile.IsEnabled = true;   // the tile stays clickable: a second click brings the window back (OpenHedgeFund_Click)
         }
 
         private static string FormatRelativeAgo(DateTimeOffset timestamp)
@@ -535,6 +823,35 @@ namespace UFOS.ai
             SettingsPopup.IsOpen = false;
             CancelSettingsCloseTimer();
             AiDisclaimerWindow.ShowForReading(this);
+        }
+
+        // Settings popup -> "AI budgets…" (task B, contract UFOS.ai/docs/ai-budgets-spec.md §6): one
+        // instance; a second click brings the open window to the front instead of opening a duplicate.
+        private void AiBudgetsButton_Click(object sender, RoutedEventArgs e)
+        {
+            SettingsPopup.IsOpen = false;
+            CancelSettingsCloseTimer();
+            try
+            {
+                if (_aiBudgetsWindow is { } existing)
+                {
+                    if (existing.WindowState == WindowState.Minimized) existing.WindowState = WindowState.Normal;
+                    existing.Activate();
+                    return;
+                }
+                var window = new AiBudgetsWindow();
+                window.Closed += (_, __) =>
+                {
+                    if (ReferenceEquals(_aiBudgetsWindow, window)) _aiBudgetsWindow = null;
+                };
+                _aiBudgetsWindow = window;
+                window.Show();
+            }
+            catch (Exception ex)
+            {
+                _aiBudgetsWindow = null;
+                (Application.Current as IUiErrorReporter)?.ShowUiException(ex);
+            }
         }
 
         private void SettingsButton_Click(object sender, RoutedEventArgs e)
@@ -942,12 +1259,22 @@ namespace UFOS.ai
 
         private void OpenHedgeFund_Click(object sender, RoutedEventArgs e)
         {
+            // Live click-test 2026-10-22: a second click on the tile brings the open Hedge Fund window back (a minimized window
+            // returns to its last state, then it is activated) — same path as the Portfolio Insight card. The tile stays enabled.
+            // review 2026-10-22: the same filter as the insight card — a closing window is not reused, a new one opens below
+            var open = Application.Current?.Windows.OfType<HedgeFundWindow>().FirstOrDefault(w => w.IsLoaded && !w.IsClosingOrClosed);
+            if (open != null)
+            {
+                open.BringToFront();
+                return;
+            }
             OpenModuleWindow(HedgeFundTile, () =>
             {
                 var window = new HedgeFundWindow();
                 window.Show();
                 return window;
             });
+            HedgeFundTile.IsEnabled = true;
         }
 
         // Beispiel für neue Module: ein Button reicht, um das zentrale, globale Log-Fenster

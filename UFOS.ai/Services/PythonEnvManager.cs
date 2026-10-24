@@ -54,11 +54,13 @@ namespace UFOS.ai.Services
     /// itself - same stamp and .venv.lock protocol); this class only
     /// - checks, offline and fast at app start, whether a module will install on its next
     ///   start (same rules as the scripts: .venv\ufos-requirements.sha256 = SHA-256 of
-    ///   requirements.txt, .venv\ufos-install-pending = last install didn't complete);
+    ///   requirements.lock — of requirements.txt before the first lock — and
+    ///   .venv\ufos-install-pending = last install didn't complete; Stage 10 LOCK_API);
     /// - at most once a day, runs "pip list --outdated" per existing venv (needs network,
     ///   failures are tolerated; state in %LOCALAPPDATA%\UFOS.ai\python-env\check.json);
     /// - runs the MANUAL optional upgrade (Settings -> "Update Python packages"): per module
-    ///   "run_*.ps1 -Upgrade -EnvOnly", which takes the same backend\.venv.lock as a normal
+    ///   "run_*.ps1 -Upgrade -EnvOnly" (Stage 10: regenerates requirements.lock with make_lockfile.py --update, then
+    ///   installs exactly that lock with --require-hashes), which takes the same backend\.venv.lock as a normal
     ///   start, so a backend never starts while its venv is being changed. A running backend
     ///   is asked to stop first (loopback POST /shutdown) because Windows keeps its package
     ///   files locked; it is NOT restarted here - the module starts it again when it next
@@ -187,18 +189,12 @@ namespace UFOS.ai.Services
             string recorded;
             try { recorded = File.ReadAllText(hashFile).Trim(); }
             catch { recorded = ""; }
-            return string.Equals(recorded, RequirementsHash(backendDir), StringComparison.OrdinalIgnoreCase)
-                ? null
-                : "requirements.txt changed";
-        }
-
-        /// <summary>SHA-256 hex (upper case, like PowerShell's Get-FileHash) or "none".</summary>
-        private static string RequirementsHash(string backendDir)
-        {
-            var req = Path.Combine(backendDir, "requirements.txt");
-            if (!File.Exists(req)) return "none";
-            using var fs = new FileStream(req, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            return Convert.ToHexString(SHA256.HashData(fs));
+            if (string.Equals(recorded, PythonEnvironment.RequirementsHash(backendDir), StringComparison.OrdinalIgnoreCase)) return null;
+            // Stage 10 (LOCK_API): an install needs a current requirements.lock — say so instead of "will install".
+            string? lockProblem;
+            try { lockProblem = File.Exists(Path.Combine(backendDir, "requirements.txt")) ? PythonEnvironment.LockProblem(backendDir) : null; }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { lockProblem = "requirements.lock could not be read (" + ex.GetType().Name + ")"; }
+            return lockProblem == null ? "requirements changed" : "requirements changed, but " + lockProblem;
         }
 
         /// <summary>
@@ -349,8 +345,9 @@ namespace UFOS.ai.Services
                     var version = item.TryGetProperty("version", out var v) ? v.GetString() ?? "" : "";
                     var latest = item.TryGetProperty("latest_version", out var l) ? l.GetString() ?? "" : "";
                     if (name.Length == 0) continue;
-                    // "pip install -r requirements.txt --upgrade" only upgrades the listed,
-                    // unpinned packages - report just those, or the dot would never go away.
+                    // "Update Python packages" (make_lockfile.py --update) only moves the packages listed
+                    // in requirements.txt without an exact pin - report just those, or the dot would never go away.
+                    // Informational only: an update is applied solely through --update + the lock install.
                     if (requirements.Count > 0 &&
                         (!requirements.TryGetValue(NormalizeName(name), out var pinned) || pinned)) continue;
                     result.Outdated.Add($"{name} {version} -> {latest}");
@@ -491,8 +488,9 @@ namespace UFOS.ai.Services
             int exit;
             try
             {
-                exit = await RunProcessAsync("powershell.exe",
-                    $"-NoProfile -ExecutionPolicy Bypass -File \"{module.ScriptPath}\" -Upgrade -EnvOnly",
+                // Absolute Windows PowerShell path + why Bypass stays for this .ps1: Shared/WindowsPowerShell.cs (S10-A2 L4).
+                exit = await RunProcessAsync(WindowsPowerShell.ExePath,
+                    WindowsPowerShell.ScriptArguments(module.ScriptPath, "-Upgrade -EnvOnly"),
                     module.BackendDir, TimeSpan.FromMinutes(40),
                     (line, isError) =>
                     {

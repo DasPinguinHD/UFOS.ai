@@ -20,7 +20,7 @@ except ImportError:  # pragma: no cover - run as package
     from tests.crypto_testkit import BTC, ETH, CryptoCase
     from tests.fund_testkit import FRI, MON, SAT, EngineCase
 
-from fund import params as P
+from strategy_platform.core import params as P
 from fund import store
 from fund.engine import FundEngine
 from newsroom import db

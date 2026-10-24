@@ -16,6 +16,14 @@ Sources (FRED API, same free key as the Macro Indicators section):
   3. fred/series/observations  latest value per curated series
 FOMC dates are hardcoded below (FOMC_MEETINGS) from federalreserve.gov.
 
+Key (2026-10-02): the FRED key comes ONLY from the Windows Credential Manager
+(Hedge Fund → Settings → Keys, secret "fred-api-key"), read at use time;
+FRED_API_KEY in .env is ignored. Without it the section shows the FOMC dates
+(hardcoded, need no key) and the status says the key is missing and that only
+FOMC dates are shown — pre-existing behaviour, listed for the user's decision
+under SPEC "Fallbacks found" (it is partial data, clearly labelled, not a
+stand-in for the FRED releases).
+
 Emits ONE dict per poll: {"events": [...], "updated": iso, "window_days": 45,
 "errors": [...]}; main.py keeps the latest (GET /newsroom/calendar).
 Event fields: date, time_hint, kind ("release"|"fomc"), name, series_id,
@@ -28,11 +36,15 @@ from datetime import date, datetime, timedelta, timezone
 
 import aiohttp
 
-from config import FRED_API_KEY, CALENDAR_POLL_SECONDS
+from config import CALENDAR_POLL_SECONDS
+from strategy_platform import secrets as _secrets
+
+from . import keys as _keys
 
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.stlouisfed.org/fred/"
+FRED_SECRET = "fred-api-key"
 CALENDAR_WINDOW_DAYS = 45
 CONCURRENCY = 4            # FRED allows 120 requests/minute; 4 in parallel is gentle
 REQUEST_TIMEOUT_SECONDS = 15
@@ -121,13 +133,18 @@ def release_page(release_id) -> str:
 async def _fetch_json(session, endpoint: str, params: dict) -> dict:
     """GET API_BASE + endpoint with the API key; raises on HTTP errors.
     Tests monkeypatch this function."""
+    key = _secrets.require_secret(FRED_SECRET)   # read at use time; raises SecretMissing
     q = dict(params)
-    q["api_key"] = FRED_API_KEY
+    q["api_key"] = key
     q["file_type"] = "json"
-    async with session.get(API_BASE + endpoint, params=q,
-                           timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)) as resp:
-        resp.raise_for_status()
-        return await resp.json(content_type=None)
+    try:
+        async with session.get(API_BASE + endpoint, params=q,
+                               timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)) as resp:
+            resp.raise_for_status()
+            return await resp.json(content_type=None)
+    except Exception as ex:
+        # aiohttp errors carry the request URL incl. ?api_key=… — never let it reach logs/UI
+        raise RuntimeError(_keys.redact(str(ex) or type(ex).__name__, key)) from None
 
 
 # ---------- pure helpers (unit-tested in tests/test_calendar.py) ----------
@@ -307,6 +324,9 @@ async def _poll_once(session, emit, report_status) -> None:
         errors.append(f"releases/dates: {str(ex) or type(ex).__name__}")
     dates_by_release = select_release_dates(rows, wanted_ids, today, end)
 
+    # FALLBACK (accepted by the user 2026-10-02): a release missing from the bulk
+    # fred/releases/dates answer is requested again per release via fred/release/dates
+    # (same source, other endpoint).
     async def fallback(rid):
         try:
             data = await call("release/dates", {**window, "release_id": str(rid)})
@@ -337,19 +357,26 @@ async def _poll_once(session, emit, report_status) -> None:
 
 
 async def run(emit, report_status) -> None:
-    if not FRED_API_KEY:
+    shown = {}
+
+    # FALLBACK (accepted by the user 2026-10-02): without the FRED key the calendar shows
+    # the hardcoded FOMC dates (FOMC_MEETINGS) and says "… Showing FOMC dates only."
+    def fomc_only(msg):
         # FOMC dates need no key: still show them, and say why the releases are missing.
-        msg = ("FRED_API_KEY is not set in HedgeFund/backend/.env (free key: "
-               "https://fred.stlouisfed.org/docs/api/api_key.html) — showing FOMC dates only.")
-        logger.error(msg)
+        # Emitted once per day/message (the key is re-checked every minute).
+        today = date.today()
+        if shown.get("key") == (today, msg):
+            return
+        shown["key"] = (today, msg)
+        emit({"events": sort_events(fomc_events(today, today + timedelta(days=CALENDAR_WINDOW_DAYS))),
+              "updated": datetime.now(timezone.utc).isoformat(),
+              "window_days": CALENDAR_WINDOW_DAYS, "errors": [msg]})
+
+    from strategy_platform.core import tls          # system roots + certifi, verification on (2026-10-22)
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=tls.client_context())) as session:
         while True:
-            today = date.today()
-            emit({"events": sort_events(fomc_events(today, today + timedelta(days=CALENDAR_WINDOW_DAYS))),
-                  "updated": datetime.now(timezone.utc).isoformat(),
-                  "window_days": CALENDAR_WINDOW_DAYS, "errors": [msg]})
-            await report_status(False, msg)
-            await asyncio.sleep(CALENDAR_POLL_SECONDS)
-    async with aiohttp.ClientSession() as session:
-        while True:
+            # Credential Manager only (2026-10-02); waits + reports while the key is missing
+            await _keys.wait_for_secret(FRED_SECRET, report_status, suffix=" Showing FOMC dates only.",
+                                        on_missing=fomc_only)
             await _poll_once(session, emit, report_status)
             await asyncio.sleep(CALENDAR_POLL_SECONDS)

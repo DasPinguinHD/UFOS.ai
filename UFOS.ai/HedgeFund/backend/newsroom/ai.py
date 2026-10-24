@@ -6,16 +6,19 @@ response that carries model output also carries provenance() — the
 machine-readable AI marking required by the project's "AI content labelling"
 convention (EU AI Act Art. 50); generator ids here are "UFOS.ai/HedgeFund/...".
 
-_current_settings() re-reads .env on every call, so an API key added while
-the backend is running takes effect on the next click without a restart.
+Key (user decision 2026-10-02): the OpenRouter API key comes ONLY from the
+Windows Credential Manager (Hedge Fund → Settings → Keys, secret
+"openrouter-api-key", strategy_platform.secrets), read on every call — a key
+entered while the backend runs applies on the next click. OPENROUTER_API_KEY
+is never read from the environment. A missing key raises SecretMissing (a
+UserFacingError, 503 in main.py). Stage 10, S10-E: no .env — the NON-secret
+settings (base URL, models) come from data/settings.json, re-read per call
+(config.ai_settings()).
 """
-import os
 from datetime import datetime, timezone
 
-from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-from config import OPENROUTER_API_KEY as _DEFAULT_API_KEY
 from config import OPENROUTER_BASE_URL as _DEFAULT_BASE_URL
 from config import OPENROUTER_MODEL as _DEFAULT_MODEL
 from config import OPENROUTER_ANALYSIS_PREMIUM_MODEL as _DEFAULT_PREMIUM_MODEL
@@ -31,7 +34,13 @@ except ImportError:  # pragma: no cover - a stubbed config (tests): same https r
             ok = parts.scheme.lower() == "https" and bool(parts.hostname)
         except ValueError:
             ok = False
+        # FALLBACK (accepted by the user 2026-10-02): non-https URL -> default https URL
         return text if ok else default
+
+from strategy_platform import secrets as _secrets
+from strategy_platform.core.errors import UserFacingError
+
+OPENROUTER_SECRET = "openrouter-api-key"
 
 try:  # shared AI cost ledger (2026-09-25); ai.py is also loaded stand-alone by tests
     from newsroom import cost_ledger as _cost_ledger
@@ -73,7 +82,7 @@ _SAFE_BASE_URLS: dict = {}   # raw OPENROUTER_BASE_URL -> checked URL (warn once
 
 
 def safe_base_url(raw) -> str:
-    """config.safe_openrouter_base_url() for a value re-read from .env: only
+    """config.safe_openrouter_base_url() for a base URL value: only
     an https URL is used (the API key travels with every request), anything
     else falls back to the default https URL. Memoised per raw value so a bad
     setting is logged once, not on every call."""
@@ -85,20 +94,42 @@ def safe_base_url(raw) -> str:
     return _SAFE_BASE_URLS[key]
 
 
+def api_key() -> str:
+    """The OpenRouter key from the Credential Manager, read now. Raises
+    SecretMissing / SecretStoreUnavailable (UserFacingError) — never a default."""
+    return _secrets.require_secret(OPENROUTER_SECRET)
+
+
+def key_error():
+    """None when the key is available, else the UserFacingError saying why not
+    (for a 503 before any work is done)."""
+    try:
+        api_key()
+        return None
+    except UserFacingError as ex:
+        return ex
+
+
+def _settings() -> dict:
+    """config.ai_settings() (data/settings.json, re-read now); a stubbed config (tests) -> its constants."""
+    import config as _config
+    fn = getattr(_config, "ai_settings", None)
+    if callable(fn):
+        return fn()
+    return {"base_url": _DEFAULT_BASE_URL, "model": _DEFAULT_MODEL, "premium_model": _DEFAULT_PREMIUM_MODEL}
+
+
 def _current_settings() -> tuple[str, str, str]:
-    """(api_key, base_url, model) re-read from .env; the base URL is always
-    the https-checked one (a later edit of .env cannot downgrade to http)."""
-    load_dotenv(override=True)
-    return (
-        os.getenv("OPENROUTER_API_KEY", _DEFAULT_API_KEY),
-        safe_base_url(os.getenv("OPENROUTER_BASE_URL", _DEFAULT_BASE_URL)),
-        os.getenv("OPENROUTER_MODEL", _DEFAULT_MODEL),
-    )
+    """(api_key, base_url, model): the key from the Credential Manager (raises
+    when missing), base URL and model from data/settings.json (re-read now; the
+    base URL is the https-checked one)."""
+    key = api_key()
+    s = _settings()
+    return key, safe_base_url(s["base_url"]), s["model"]
 
 
 def is_configured() -> bool:
-    api_key, _, _ = _current_settings()
-    return bool(api_key)
+    return key_error() is None
 
 
 def _short_error(ex: Exception) -> str:
@@ -166,10 +197,8 @@ INSIDER_SUMMARY_MAX_TOKENS = 900
 
 async def summarize_insider_trades(table_text: str) -> tuple[str, str, dict]:
     """Returns (summary text, model id OpenRouter actually used, usage_info())."""
-    api_key, base_url, model = _current_settings()
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not set")
-    client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+    key, base_url, model = _current_settings()   # raises SecretMissing (UserFacingError)
+    client = AsyncOpenAI(base_url=base_url, api_key=key)
     try:
         response = await client.chat.completions.create(
             model=model,
@@ -238,14 +267,12 @@ ANALYSIS_TIMEOUT_SECONDS = 120
 
 
 def analysis_models() -> dict:
-    """Model ids per tier, read fresh from .env like _current_settings():
-    "standard" = OPENROUTER_MODEL (same model as the other AI buttons),
-    "premium"  = OPENROUTER_ANALYSIS_PREMIUM_MODEL (only the Premium switch)."""
-    _, _, standard = _current_settings()
-    return {
-        "standard": standard,
-        "premium": os.getenv("OPENROUTER_ANALYSIS_PREMIUM_MODEL", _DEFAULT_PREMIUM_MODEL) or _DEFAULT_PREMIUM_MODEL,
-    }
+    """Model ids per tier, read fresh from data/settings.json (no key needed):
+    "standard" = openrouter_model (same model as the other AI buttons),
+    "premium"  = openrouter_analysis_premium_model (only the Premium switch);
+    a missing key = config's default (settings_file)."""
+    s = _settings()
+    return {"standard": s["model"], "premium": s["premium_model"]}
 
 
 def usage_info(response) -> dict:
@@ -276,12 +303,10 @@ def usage_info(response) -> dict:
 
 async def analyse_selection(context_text: str, tier: str) -> tuple[str, str, dict]:
     """Returns (analysis text, model id OpenRouter actually used, usage_info())."""
-    api_key, base_url, _ = _current_settings()
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not set")
+    key, base_url, _ = _current_settings()   # raises SecretMissing (UserFacingError)
     models = analysis_models()
     model = models.get(tier) or models["standard"]
-    client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+    client = AsyncOpenAI(base_url=base_url, api_key=key)
     try:
         response = await client.chat.completions.create(
             model=model,
