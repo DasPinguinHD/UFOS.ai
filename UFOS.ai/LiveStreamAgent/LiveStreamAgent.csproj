@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+	<OutputType>WinExe</OutputType>
+	<TargetFramework>net10.0-windows</TargetFramework>
+	<Nullable>enable</Nullable>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+	<ProjectReference Include="..\UFOS.ai.Logging\UFOS.ai.Logging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared AI-content labelling helper + startup AI notice (EU AI Act Art. 50).
+         Linked, not referenced: the types are internal, each assembly gets its own copy.
+         See ..\Shared\AiContent.cs. -->
+    <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

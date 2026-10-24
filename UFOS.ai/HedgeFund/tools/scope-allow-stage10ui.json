@@ -1,0 +1,9 @@
+{
+  "label": "stage10ui",
+  "approved": "lead for the user, 2026-10-24 (Stage 10 batch S10-U, STAGE10_TASK.md): single-instance guard of the main app (a second start brings the running instance's window to the front and exits — a 2nd instance was started on 2026-10-22) and the context-specific AI notices in the shared AiContent (SPEC §15 'Stage 10 addition'; contract with Agent H)",
+  "files": [
+    "UFOS.ai/App.xaml.cs",
+    "UFOS.ai/Shared/AiContent.cs"
+  ],
+  "note": "App.xaml.cs: the guard (named mutex per user session + an activation event; checked before the AI notice dialog). Shared/AiContent.cs: notice texts only. Backups of both in HedgeFund/backend/data/stage10ui-backup/."
+}

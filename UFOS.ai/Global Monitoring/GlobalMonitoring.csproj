@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+	<OutputType>WinExe</OutputType>
+	<TargetFramework>net10.0-windows</TargetFramework>
+	<Nullable>enable</Nullable>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<UseWPF>true</UseWPF>
+	<RootNamespace>UFOS.ai.GlobalMonitoring</RootNamespace>
+	<AssemblyName>GlobalMonitoring</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UFOS.ai.Logging\UFOS.ai.Logging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="globe.html" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Vendored Natural Earth land outlines (world-atlas@2.0.2), written by tools\fetch_world_atlas.py (S10-A2 M4).
+         Embedded only when present (rebuild after running the tool); MainWindow.xaml.cs checks land-110m.json against
+         MANIFEST (sha256). Without them the page loads the pinned CDN file and says so; a rejected copy is never
+         replaced by the CDN. -->
+    <EmbeddedResource Include="vendor\land-110m.json" LogicalName="GlobalMonitoring.vendor.land-110m.json" Condition="Exists('vendor\land-110m.json')" />
+    <EmbeddedResource Include="vendor\MANIFEST" LogicalName="GlobalMonitoring.vendor.MANIFEST" Condition="Exists('vendor\MANIFEST')" />
+    <EmbeddedResource Include="vendor\LICENSE" LogicalName="GlobalMonitoring.vendor.LICENSE" Condition="Exists('vendor\LICENSE')" />
+    <EmbeddedResource Include="vendor\LICENSE.md" LogicalName="GlobalMonitoring.vendor.LICENSE.md" Condition="Exists('vendor\LICENSE.md')" />
+    <EmbeddedResource Include="vendor\LICENSE.txt" LogicalName="GlobalMonitoring.vendor.LICENSE.txt" Condition="Exists('vendor\LICENSE.txt')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared AI-content labelling helper + startup AI notice (EU AI Act Art. 50).
+         Linked, not referenced: the types are internal, each assembly gets its own copy.
+         See ..\Shared\AiContent.cs. -->
+    <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

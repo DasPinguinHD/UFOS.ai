@@ -11,6 +11,7 @@ try:
 except Exception:
     yf = None
 
+import refresh
 from config import MARKET_DATA_POLL_SECONDS, MarketSnapshot, TickerQuote, all_ticker_symbols
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,9 @@ CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; FedAgent/1.0)"}
 
 ALL_SYMBOLS = all_ticker_symbols()
+
+# refresh.request_refresh(REFRESH_SOURCE) wakes the poller before its next scheduled cycle.
+REFRESH_SOURCE = "market"
 
 
 async def _fetch_chart_quote(session: aiohttp.ClientSession, symbol: str) -> TickerQuote:
@@ -122,4 +126,5 @@ class MarketDataFeed:
         async with aiohttp.ClientSession(max_line_size=32768, max_field_size=32768) as session:
             while True:
                 await self._refresh_once(session)
-                await asyncio.sleep(MARKET_DATA_POLL_SECONDS)
+                # Like asyncio.sleep, but can be cut short (stale-while-revalidate, refresh.py).
+                await refresh.wait_next_cycle(REFRESH_SOURCE, MARKET_DATA_POLL_SECONDS)

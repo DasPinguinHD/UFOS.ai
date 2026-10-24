@@ -1,0 +1,10 @@
+{
+  "label": "sandbox0",
+  "approved": "coordinator for the user, 2026-10-23 (sandbox profile, SPEC 'Sandbox profile': a small 'SANDBOX' chip on the MainWindow 'Portfolio Insight' card while the HedgeFund backend runs in sandbox mode; scope exception for the files below only)",
+  "files": [
+    "UFOS.ai/MainWindow.xaml",
+    "UFOS.ai/MainWindow.xaml.cs",
+    "UFOS.ai/Services/IPortfolioInsightProvider.cs"
+  ],
+  "note": "The provider reads the mode from the public GET /health JSON it already calls (status code still decides 'running'); MainWindow only shows the chip."
+}

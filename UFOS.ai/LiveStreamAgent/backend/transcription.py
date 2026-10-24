@@ -6,7 +6,10 @@ from collections.abc import AsyncIterator
 from deepgram import AsyncDeepgramClient
 from deepgram.core.events import EventType
 
-from config import AUDIO_SAMPLE_RATE, DEEPGRAM_API_KEY
+import credstore
+from config import AUDIO_SAMPLE_RATE
+
+KEY_NAME = "deepgram-api-key"            # Credential Manager (⚙ Keys & data), stage 10 S10-E
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +18,9 @@ async def transcribe_stream(
     audio_chunks: AsyncIterator[bytes],
     transcript_queue: "asyncio.Queue[str]",
 ) -> None:
-    """Consumes PCM chunks and pushes each finalized transcript segment to transcript_queue."""
-    client = AsyncDeepgramClient(api_key=DEEPGRAM_API_KEY)
+    """Consumes PCM chunks and pushes each finalized transcript segment to transcript_queue. Raises
+    credstore.SecretMissing / SecretStoreUnavailable (user-facing message) when the Deepgram key can't be read."""
+    client = AsyncDeepgramClient(api_key=credstore.require_secret(KEY_NAME))
 
     async with client.listen.v1.connect(
         model="nova-2",

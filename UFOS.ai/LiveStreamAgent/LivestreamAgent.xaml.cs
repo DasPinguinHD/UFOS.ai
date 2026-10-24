@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows;
 using Microsoft.Win32;
 using System.Windows.Controls;
@@ -15,6 +16,7 @@ using System.Windows.Markup;
 using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Controls.Primitives;
 using System.Net.NetworkInformation;
@@ -22,6 +24,8 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using System.Windows.Media.Animation;
+using UFOS.ai.Logging;
+using UFOS.ai.Shared;
 
 namespace UFOS.ai
 {
@@ -71,7 +75,9 @@ namespace UFOS.ai
         }
 
         // Add a verdict to the in-memory history (newest first)
-        public void AddVerdictToHistory(string verdict, string ticker, int confidence, string reason)
+        public void AddVerdictToHistory(string verdict, string ticker, int confidence, string reason,
+            string? model = null, DateTimeOffset? generatedAt = null,
+            double? costUsd = null, int? promptTokens = null, int? completionTokens = null)
         {
             try
             {
@@ -83,7 +89,12 @@ namespace UFOS.ai
                         Verdict = verdict ?? string.Empty,
                         Ticker = ticker ?? string.Empty,
                         Confidence = Math.Max(0, Math.Min(100, confidence)),
-                        Reason = reason ?? string.Empty
+                        Reason = reason ?? string.Empty,
+                        Model = model,
+                        GeneratedAt = generatedAt,
+                        CostUsd = costUsd,
+                        PromptTokens = promptTokens,
+                        CompletionTokens = completionTokens
                     };
                     _verdictHistory.Insert(0, rec);
                     // cap history to reasonable size
@@ -124,7 +135,8 @@ namespace UFOS.ai
                 if (index < 0 || index >= _verdictHistory.Count) return;
                 var rec = _verdictHistory[index];
                 bool isCurrent = index == 0;
-                RenderVerdict(rec.Verdict, rec.Ticker, rec.Confidence, rec.Reason, isCurrent ? (DateTime?)null : rec.Timestamp);
+                RenderVerdict(rec.Verdict, rec.Ticker, rec.Confidence, rec.Reason, isCurrent ? (DateTime?)null : rec.Timestamp,
+                    rec.Model, rec.GeneratedAt, rec.UsageText);
             }
             catch { }
             finally
@@ -152,7 +164,7 @@ namespace UFOS.ai
             }
             catch (Exception ex)
             {
-                try { (Application.Current as App)?.ShowUiException(new Exception("Fehler beim Öffnen der Logs: " + ex.Message)); } catch { }
+                try { (Application.Current as IUiErrorReporter)?.ShowUiException(new Exception("Fehler beim Ã–ffnen der Logs: " + ex.Message)); } catch { }
             }
         }
 
@@ -180,13 +192,27 @@ namespace UFOS.ai
         };
 
         private WebSocketService? _wsService;
+        // AI budget keys currently blocked by the backend (key -> its message), see RenderAiBudgetStatus.
+        private readonly Dictionary<string, string> _blockedAiBudgets = new(StringComparer.Ordinal);
         private CancellationTokenSource? _wsCts;
         private Process? _backendProcess;
+        // Python environment hint from run_backend.ps1's "UFOS_ENV: ..." marker lines
+        // (installing packages / waiting for an update); null = nothing to show.
+        private volatile string? _envStatusText;
+        // Backend start waiting for the Python environment (Shared/PythonEnvironment.cs):
+        // guards against double starts (Restart button) and starts after the window closed.
+        private int _backendStartPending;
+        private volatile bool _windowClosing;
+        private string? _lastConnectionStatus;
         // flag to detect first real transcript input from backend
         private bool _transcriptReceived = false;
         private MarketUpdateMessage? _latestMarketUpdate;
         private readonly System.Windows.Threading.DispatcherTimer _marketDataPopupCloseTimer = new();
         private bool _isMarketDataPopupOpen = false;
+        private bool _isMarketGridInline = false;
+        // Window width at/above which the full category grid (normally only shown via the
+        // Expand popup) is shown inline by default instead, since there's room for it.
+        private const double InlineExpandThreshold = 1100;
         private readonly System.Text.StringBuilder _backendLogBuffer = new();
         private const int BackendLogBufferLimit = 1_048_576; // ~1 MB chars
         // verdict history (newest first)
@@ -196,6 +222,7 @@ namespace UFOS.ai
         private Popup? MarketDataPopupElement => FindName("MarketDataPopup") as Popup;
         private Border? MarketDataPopupBorderElement => FindName("MarketDataPopupBorder") as Border;
         private Grid? ExpandedMarketGridElement => FindName("ExpandedMarketGrid") as Grid;
+        private Grid? MarketDataPopupRootElement => FindName("MarketDataPopupRoot") as Grid;
 
         private static string ToExpandedCategoryTitle(string key)
         {
@@ -228,25 +255,25 @@ namespace UFOS.ai
         {
             return symbol.ToUpperInvariant() switch
             {
-                "BIL" => "SPDR Bloomberg 1-3 Month T-Bill ETF · Short-term government bonds\nLow risk / cash proxy · Usually steady around Fed moves",
-                "^TNX" => "CBOE 10-Year Treasury Yield Index · U.S. Treasury yields\nMacro risk indicator · Very sensitive to rate decisions",
-                "^TYX" => "CBOE 30-Year Treasury Yield Index · U.S. Treasury yields\nLong-duration / rate sensitivity · Strongly impacted by Fed outlook",
-                "UUP" => "Invesco DB US Dollar Index Bullish Fund · U.S. dollar\nHedging asset / low risk · Often reacts to rate differentials",
-                "GLD" => "SPDR Gold Shares · Gold / commodities\nSafe haven / hedging asset · Often benefits from easing expectations",
-                "QQQ" => "Invesco QQQ Trust · Nasdaq-100 / technology\nGrowth-oriented / high risk · Rate-sensitive and valuation-driven",
-                "IWM" => "iShares Russell 2000 ETF · U.S. small caps\nCyclical / high risk · Often reacts to financing conditions",
-                "KRE" => "SPDR S&P Regional Banking ETF · Regional banks / financials\nCyclical / risk-sensitive · Very exposed to rate policy shifts",
-                "TLT" => "iShares 20+ Year Treasury Bond ETF · Long-dated U.S. Treasuries\nSafe haven / rate hedge · Usually rises when yields fall",
-                "AGG" => "iShares Core U.S. Aggregate Bond ETF · U.S. bond market\nLow risk / diversification · Typically benefits from rate cuts",
-                "VNQ" => "Vanguard Real Estate ETF · Real estate / REITs\nIncome-oriented / rate-sensitive · Often prefers lower rates",
-                "XLU" => "Utilities Select Sector SPDR Fund · Utilities\nDefensive / low risk · Usually resilient in uncertain policy cycles",
-                "XHB" => "SPDR S&P Homebuilders ETF · Homebuilding / housing\nCyclical / high risk · Sensitive to mortgage-rate expectations",
-                "ITB" => "iShares U.S. Home Construction ETF · Homebuilding / housing\nCyclical / high risk · Sensitive to mortgage-rate expectations",
-                "MAGS" => "Roundhill Magnificent Seven ETF · U.S. mega-cap tech\nMomentum / high risk · Usually reacts strongly to discount-rate moves",
-                "ARKK" => "ARK Innovation ETF · Innovation / high growth\nHighly volatile / high risk · Often benefits from easier policy",
-                "XLF" => "Financial Select Sector SPDR Fund · Financials\nCyclical / market-sensitive · Can react to yield-curve changes",
-                "HYG" => "iShares iBoxx USD High Yield Corporate Bond ETF · High-yield bonds\nYield-oriented / high risk · Tends to improve with easier financial conditions",
-                _ => "Unknown market proxy · Macro sensitivity\nBroad market observation · Reaction to Fed moves depends on asset type"
+                "BIL" => "SPDR Bloomberg 1-3 Month T-Bill ETF Â· Short-term government bonds\nLow risk / cash proxy Â· Usually steady around Fed moves",
+                "^TNX" => "CBOE 10-Year Treasury Yield Index Â· U.S. Treasury yields\nMacro risk indicator Â· Very sensitive to rate decisions",
+                "^TYX" => "CBOE 30-Year Treasury Yield Index Â· U.S. Treasury yields\nLong-duration / rate sensitivity Â· Strongly impacted by Fed outlook",
+                "UUP" => "Invesco DB US Dollar Index Bullish Fund Â· U.S. dollar\nHedging asset / low risk Â· Often reacts to rate differentials",
+                "GLD" => "SPDR Gold Shares Â· Gold / commodities\nSafe haven / hedging asset Â· Often benefits from easing expectations",
+                "QQQ" => "Invesco QQQ Trust Â· Nasdaq-100 / technology\nGrowth-oriented / high risk Â· Rate-sensitive and valuation-driven",
+                "IWM" => "iShares Russell 2000 ETF Â· U.S. small caps\nCyclical / high risk Â· Often reacts to financing conditions",
+                "KRE" => "SPDR S&P Regional Banking ETF Â· Regional banks / financials\nCyclical / risk-sensitive Â· Very exposed to rate policy shifts",
+                "TLT" => "iShares 20+ Year Treasury Bond ETF Â· Long-dated U.S. Treasuries\nSafe haven / rate hedge Â· Usually rises when yields fall",
+                "AGG" => "iShares Core U.S. Aggregate Bond ETF Â· U.S. bond market\nLow risk / diversification Â· Typically benefits from rate cuts",
+                "VNQ" => "Vanguard Real Estate ETF Â· Real estate / REITs\nIncome-oriented / rate-sensitive Â· Often prefers lower rates",
+                "XLU" => "Utilities Select Sector SPDR Fund Â· Utilities\nDefensive / low risk Â· Usually resilient in uncertain policy cycles",
+                "XHB" => "SPDR S&P Homebuilders ETF Â· Homebuilding / housing\nCyclical / high risk Â· Sensitive to mortgage-rate expectations",
+                "ITB" => "iShares U.S. Home Construction ETF Â· Homebuilding / housing\nCyclical / high risk Â· Sensitive to mortgage-rate expectations",
+                "MAGS" => "Roundhill Magnificent Seven ETF Â· U.S. mega-cap tech\nMomentum / high risk Â· Usually reacts strongly to discount-rate moves",
+                "ARKK" => "ARK Innovation ETF Â· Innovation / high growth\nHighly volatile / high risk Â· Often benefits from easier policy",
+                "XLF" => "Financial Select Sector SPDR Fund Â· Financials\nCyclical / market-sensitive Â· Can react to yield-curve changes",
+                "HYG" => "iShares iBoxx USD High Yield Corporate Bond ETF Â· High-yield bonds\nYield-oriented / high risk Â· Tends to improve with easier financial conditions",
+                _ => "Unknown market proxy Â· Macro sensitivity\nBroad market observation Â· Reaction to Fed moves depends on asset type"
             };
         }
 
@@ -321,9 +348,106 @@ namespace UFOS.ai
 
             return sections;
         }
+        // WindowStyle="None" + AllowsTransparency="True" windows overflow past the
+        // monitor's actual work area when maximized (Windows sizes them to the raw
+        // monitor rect instead, which is larger than the visible desktop by the hidden
+        // resize-border thickness and covers the taskbar) - that overflow is exactly
+        // what clips the title bar's Minimize/Close buttons off-screen when maximized.
+        // Overriding WM_GETMINMAXINFO constrains the maximized bounds to the real work
+        // area instead. (Same fix as MainWindow.xaml.cs; duplicated rather than shared
+        // since this window lives in a separate assembly from MainWindow's.)
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+            if (PresentationSource.FromVisual(this) is HwndSource hwndSource)
+            {
+                hwndSource.AddHook(WindowProc);
+            }
+        }
+
+        private static IntPtr WindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int WM_GETMINMAXINFO = 0x0024;
+            if (msg == WM_GETMINMAXINFO)
+            {
+                ConstrainMaximizedBoundsToWorkArea(hwnd, lParam);
+                handled = true;
+            }
+
+            return IntPtr.Zero;
+        }
+
+        private static void ConstrainMaximizedBoundsToWorkArea(IntPtr hwnd, IntPtr lParam)
+        {
+            var mmi = Marshal.PtrToStructure<MINMAXINFO>(lParam);
+
+            const int MONITOR_DEFAULTTONEAREST = 2;
+            var monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (monitor != IntPtr.Zero)
+            {
+                var monitorInfo = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+                GetMonitorInfo(monitor, ref monitorInfo);
+
+                var workArea = monitorInfo.rcWork;
+                var monitorArea = monitorInfo.rcMonitor;
+
+                mmi.ptMaxPosition.X = Math.Abs(workArea.Left - monitorArea.Left);
+                mmi.ptMaxPosition.Y = Math.Abs(workArea.Top - monitorArea.Top);
+                mmi.ptMaxSize.X = Math.Abs(workArea.Right - workArea.Left);
+                mmi.ptMaxSize.Y = Math.Abs(workArea.Bottom - workArea.Top);
+            }
+
+            Marshal.StructureToPtr(mmi, lParam, true);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int X;
+            public int Y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MINMAXINFO
+        {
+            public POINT ptReserved;
+            public POINT ptMaxSize;
+            public POINT ptMaxPosition;
+            public POINT ptMinTrackSize;
+            public POINT ptMaxTrackSize;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MONITORINFO
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public int dwFlags;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr handle, int flags);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
         public LivestreamAgent()
         {
             InitializeComponent();
+            // user request 2026-10-23: the main content windows start maximized (within the work area: WM_GETMINMAXINFO hook);
+            // WPF raises no StateChanged for the initial state, so the maximized look (square corners) is applied once here
+            WindowMaximize.StartMaximized(this);
+            Window_StateChanged(this, EventArgs.Empty);
             // bind tickers collection to ItemsControl
             try { TickersItems.ItemsSource = _tickers; } catch { }
             try
@@ -349,6 +473,8 @@ namespace UFOS.ai
             UpdateConfidence(0);
             UpdateVerdict("NONE", "");
             UpdateReason(string.Empty);
+            // AI caveat under every verdict (EU AI Act Art. 50, Shared/AiContent.cs).
+            try { VerdictAiCaveat.Text = AiContent.Caveat; } catch { }
             // create a simple temp debug file marker so we can detect if UI code runs
             try { DebugLogger.Log("[UI] LivestreamAgent ctor"); } catch { }
             // wire verdict navigation buttons if present
@@ -381,12 +507,31 @@ namespace UFOS.ai
                 var res = dlg.ShowDialog(this);
                 if (res == true)
                 {
-                    var text = string.Empty;
-                    try { lock (_backendLogBuffer) { text = _backendLogBuffer.ToString(); } } catch { }
+                    var text = BuildFullLogText();
                     System.IO.File.WriteAllText(dlg.FileName, text, System.Text.Encoding.UTF8);
                 }
             }
             catch { }
+        }
+
+        // Merges the central AppLog (all modules) with the legacy in-memory backend buffer
+        // so the log window and save action always show everything in one place.
+        private string BuildFullLogText()
+        {
+            var sb = new StringBuilder();
+            try { sb.Append(AppLog.GetBufferedText()); } catch { }
+            try
+            {
+                string legacy;
+                lock (_backendLogBuffer) { legacy = _backendLogBuffer.ToString(); }
+                if (!string.IsNullOrWhiteSpace(legacy))
+                {
+                    sb.AppendLine("---- Legacy Backend Buffer ----");
+                    sb.Append(legacy);
+                }
+            }
+            catch { }
+            return sb.ToString();
         }
 
         // Render a compact list of tickers from MarketUpdateMessage.
@@ -416,7 +561,7 @@ namespace UFOS.ai
 
                 // update timestamp
                 try { TimestampRun.Text = mu.Timestamp.ToString("yyyy-MM-dd HH:mm:ss"); } catch { }
-                try { if (_isMarketDataPopupOpen) RefreshExpandedMarketPopup(); } catch { }
+                try { if (_isMarketDataPopupOpen || _isMarketGridInline) RefreshExpandedMarketPopup(); } catch { }
             }
             catch { }
         }
@@ -554,6 +699,62 @@ namespace UFOS.ai
             try { if (TickersItems != null) TickersItems.Visibility = Visibility.Visible; } catch { }
             try { if (ExpandMarketButtonElement != null) ExpandMarketButtonElement.Content = "Expand"; } catch { }
             try { _marketDataPopupCloseTimer.Stop(); } catch { }
+        }
+
+        private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            UpdateMarketDataLayoutMode();
+        }
+
+        // Above InlineExpandThreshold there's enough room to show the full category grid
+        // (normally only reachable via the Expand popup) inline by default; below it,
+        // reverts to the compact ticker list + Expand button/popup - the original design.
+        private void UpdateMarketDataLayoutMode()
+        {
+            try
+            {
+                bool shouldBeInline = ActualWidth >= InlineExpandThreshold;
+                if (shouldBeInline == _isMarketGridInline)
+                {
+                    return;
+                }
+
+                var expandedGrid = ExpandedMarketGridElement;
+                var popupRoot = MarketDataPopupRootElement;
+                var inlineHost = InlineExpandedMarketHost;
+                if (expandedGrid == null || popupRoot == null || inlineHost == null)
+                {
+                    return;
+                }
+
+                if (shouldBeInline)
+                {
+                    if (_isMarketDataPopupOpen)
+                    {
+                        CloseMarketDataPopup();
+                    }
+
+                    popupRoot.Children.Remove(expandedGrid);
+                    inlineHost.Child = expandedGrid;
+                    inlineHost.Visibility = Visibility.Visible;
+                    if (TickersItems != null) TickersItems.Visibility = Visibility.Collapsed;
+                    if (ExpandMarketButtonElement != null) ExpandMarketButtonElement.Visibility = Visibility.Collapsed;
+
+                    _isMarketGridInline = true;
+                    RefreshExpandedMarketPopup();
+                }
+                else
+                {
+                    inlineHost.Child = null;
+                    inlineHost.Visibility = Visibility.Collapsed;
+                    popupRoot.Children.Add(expandedGrid);
+                    if (TickersItems != null) TickersItems.Visibility = Visibility.Visible;
+                    if (ExpandMarketButtonElement != null) ExpandMarketButtonElement.Visibility = Visibility.Visible;
+
+                    _isMarketGridInline = false;
+                }
+            }
+            catch { }
         }
 
         private void RefreshExpandedMarketPopup()
@@ -804,6 +1005,7 @@ namespace UFOS.ai
             // start websocket client
             // indicate connection attempt immediately
             try { UpdateConnectionStatus("Connecting"); } catch { }
+            LoadYouTubeUrl();
             try
             {
                 // attempt to start backend helper script (if present) so health endpoint becomes available
@@ -814,14 +1016,22 @@ namespace UFOS.ai
                 try { DebugLogger.Log($"[UI] Health check result: {ok}"); } catch { }
 
                 _wsCts = new CancellationTokenSource();
-                _wsService = new WebSocketService("ws://127.0.0.1:8765");
+                // Token from LiveStreamAgent/backend/data/api-token (the backend requires it).
+                _wsService = new WebSocketService("ws://127.0.0.1:8765",
+                    () => BackendAuth.ReadToken(BackendAuth.FindBackendDir("LiveStreamAgent", "backend")));
                 _wsService.OnTicker += msg => Dispatcher.Invoke(() => UpdateTicker(msg.Index == 0 ? 1 : msg.Index, msg.Name, msg.Value, msg.Tendency));
                 _wsService.OnMarketUpdate += mu => Dispatcher.Invoke(() => RenderMarketUpdate(mu));
                 _wsService.OnConfidence += v => Dispatcher.Invoke(() => { AddConfidenceSample(v); UpdateConfidence(v); });
                 _wsService.OnVerdict += vm => Dispatcher.Invoke(() => {
-                    try { AddVerdictToHistory(vm.Verdict, vm.Ticker, vm.Confidence, vm.Reason); } catch { }
+                    // A payload without a verdict is a failed LLM call (older backends broadcast
+                    // those) - never render it as if it were an analysis.
+                    if (string.IsNullOrWhiteSpace(vm.Verdict)) return;
+                    // Provenance from the backend; time of receipt if an older backend sent none.
+                    var generatedAt = vm.GeneratedAt ?? DateTimeOffset.Now;
+                    try { AddVerdictToHistory(vm.Verdict, vm.Ticker, vm.Confidence, vm.Reason, vm.Model, generatedAt, vm.CostUsd, vm.PromptTokens, vm.CompletionTokens); } catch { }
                     _verdictHistoryIndex = 0;
-                    UpdateVerdict(vm.Verdict, vm.Ticker, vm.Confidence);
+                    RenderVerdict(vm.Verdict, vm.Ticker, vm.Confidence, null, null, vm.Model, generatedAt,
+                        VerdictRecord.FormatUsage(vm.CostUsd, vm.PromptTokens, vm.CompletionTokens));
                     UpdateReason(vm.Reason);
                     if (vm.Confidence != 0) AddConfidenceSample(vm.Confidence);
                     UpdateVerdictNavButtons();
@@ -855,9 +1065,20 @@ namespace UFOS.ai
                     }
                 };
                 _wsService.OnConnectionStatus += s => Dispatcher.Invoke(() => UpdateConnectionStatus(s));
+                // AI budget (task B): blocked caps -> amber line under the verdict. A (re)connected backend
+                // re-sends its currently blocked keys, so the list starts empty on every connect.
+                _wsService.OnAiBudget += (key, label, blocked, message) =>
+                {
+                    try { Dispatcher.Invoke(() => UpdateAiBudgetStatus(key, label, blocked, message)); } catch { }
+                };
+                _wsService.OnConnectionStatus += s =>
+                {
+                    if (!string.Equals(s, "Connected", StringComparison.OrdinalIgnoreCase)) return;
+                    try { Dispatcher.Invoke(() => { _blockedAiBudgets.Clear(); RenderAiBudgetStatus(); }); } catch { }
+                };
                 // also log connection status changes to backend buffer for diagnostics
-                _wsService.OnConnectionStatus += s => { try { lock(_backendLogBuffer){ _backendLogBuffer.AppendLine("[WS STATUS] " + s); if (_backendLogBuffer.Length > BackendLogBufferLimit) { var ov = _backendLogBuffer.Length - BackendLogBufferLimit; if (ov>0) _backendLogBuffer.Remove(0, ov); } } } catch { } };
-                _wsService.OnRawMessage += raw => { if (!string.IsNullOrEmpty(raw)) { lock(_backendLogBuffer) { _backendLogBuffer.AppendLine("[WS RAW] " + raw); if (_backendLogBuffer.Length > BackendLogBufferLimit) { var ov = _backendLogBuffer.Length - BackendLogBufferLimit; if (ov>0) _backendLogBuffer.Remove(0, ov); } } } };
+                _wsService.OnConnectionStatus += s => { try { AppLog.Info("WebSocket", s); } catch { } };
+                _wsService.OnRawMessage += raw => { if (!string.IsNullOrEmpty(raw)) { try { AppLog.Info("WebSocket", raw); } catch { } } };
                 // show immediate alert for connection/receive errors so user sees them
                 _wsService.OnRawMessage += raw => {
                     try
@@ -865,7 +1086,7 @@ namespace UFOS.ai
                         if (string.IsNullOrEmpty(raw)) return;
                         if (raw.Contains("WS CONNECT ERROR") || raw.Contains("WS RECEIVE ERROR") || raw.Contains("CONNECT ERROR"))
                         {
-                            try { Dispatcher.Invoke(() => (Application.Current as App)?.ShowUiException(new Exception("WebSocket error:\n" + raw))); } catch { }
+                            try { Dispatcher.Invoke(() => (Application.Current as IUiErrorReporter)?.ShowUiException(new Exception("WebSocket error:\n" + raw))); } catch { }
                         }
                     }
                     catch { }
@@ -891,12 +1112,13 @@ namespace UFOS.ai
                 }
                 catch { }
                 try { UpdateConnectionStatus("Error"); } catch { }
-                try { (Application.Current as App)?.ShowUiException(new Exception("Fehler beim Starten der Verbindung:\n" + ex.ToString())); } catch { }
+                try { (Application.Current as IUiErrorReporter)?.ShowUiException(new Exception("Fehler beim Starten der Verbindung:\n" + ex.ToString())); } catch { }
             }
         }
 
         private async void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
+            _windowClosing = true;
             try
             {
                 CloseMarketDataPopup();
@@ -918,18 +1140,18 @@ namespace UFOS.ai
             {
                 // mark invocation for diagnostics
                 try { lock (_backendLogBuffer) { _backendLogBuffer.AppendLine($"[BACKEND] TryStartBackendHelper invoked at {DateTime.Now:O}"); } } catch { }
-                var script = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "backend", "run_backend.ps1");
+                var script = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "LiveStreamAgent", "backend", "run_backend.ps1");
                 script = System.IO.Path.GetFullPath(script);
                 if (!File.Exists(script))
                 {
-                    // backend script not present — append a diagnostic note and try to load latest backend logs if any
+                    // backend script not present â€” append a diagnostic note and try to load latest backend logs if any
                     lock (_backendLogBuffer)
                     {
                         _backendLogBuffer.AppendLine($"[BACKEND] run_backend.ps1 not found at {script}");
                     }
                     try
                     {
-                        var logsDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "backend", "data", "logs");
+                        var logsDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "LiveStreamAgent", "backend", "data", "logs");
                         logsDir = System.IO.Path.GetFullPath(logsDir);
                         if (Directory.Exists(logsDir))
                         {
@@ -955,10 +1177,57 @@ namespace UFOS.ai
                     return;
                 }
 
+                // Python environments are prepared once at app start (Shared/PythonEnvironment.cs);
+                // the process is started once this backend's .venv is ready.
+                _ = StartBackendWhenEnvReadyAsync(script);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Waits for this backend's Python environment (prepared at app start; a standalone
+        /// LiveStreamAgent.exe prepares it here), then starts run_backend.ps1 -SkipInstall.
+        /// </summary>
+        private async Task StartBackendWhenEnvReadyAsync(string script)
+        {
+            if (Interlocked.CompareExchange(ref _backendStartPending, 1, 0) != 0) return; // already waiting
+            try
+            {
+                var envOk = await PythonEnvironment.WaitForModuleAsync(System.IO.Path.GetDirectoryName(script)!, "LiveStream Agent",
+                    PythonEnvironment.ProgressOf(text =>
+                    {
+                        if (!_windowClosing) SetEnvStatus("Python environment: " + text);
+                    }));
+                if (_windowClosing) return;
+                if (!envOk)
+                {
+                    try { AppLog.Error("Backend", "Python environment setup failed â€” the LiveStream Agent backend was not started."); } catch { }
+                    try { lock (_backendLogBuffer) { _backendLogBuffer.AppendLine("[BACKEND] Python environment setup failed â€” backend not started (see Backend Log)"); } } catch { }
+                    SetEnvStatus("Python environment setup failed â€” see Backend Log");
+                    return;
+                }
+                SetEnvStatus(null);
+                StartBackendProcess(script);
+            }
+            catch (Exception ex)
+            {
+                try { AppLog.Error("Backend", "Failed to start the LiveStream Agent backend.", ex); } catch { }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _backendStartPending, 0);
+            }
+        }
+
+        private void StartBackendProcess(string script)
+        {
+            try
+            {
                 var psi = new ProcessStartInfo
                 {
-                    FileName = "powershell.exe",
-                    Arguments = $"-ExecutionPolicy Bypass -File \"{script}\"",
+                    // Absolute Windows PowerShell path + why Bypass stays for this .ps1: Shared/WindowsPowerShell.cs (S10-A2 L4).
+                    FileName = WindowsPowerShell.ExePath,
+                    Arguments = WindowsPowerShell.ScriptArguments(script, "-SkipInstall"),
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
@@ -966,34 +1235,19 @@ namespace UFOS.ai
                 };
 
                 _backendProcess = new Process { StartInfo = psi, EnableRaisingEvents = true };
-                _backendProcess.OutputDataReceived += (s, e) => {
+                        _backendProcess.OutputDataReceived += (s, e) => {
                     if (string.IsNullOrEmpty(e.Data)) return;
-                    lock (_backendLogBuffer)
-                    {
-                        _backendLogBuffer.AppendLine(e.Data);
-                        if (_backendLogBuffer.Length > BackendLogBufferLimit)
-                        {
-                            // remove oldest chars to keep buffer within limit.
-                            var overflow = _backendLogBuffer.Length - BackendLogBufferLimit;
-                            if (overflow > 0) _backendLogBuffer.Remove(0, overflow);
-                        }
-                    }
+                    try { AppLog.Info("Backend", e.Data); } catch { }
+                    HandleEnvMarker(e.Data);
                 };
                 _backendProcess.ErrorDataReceived += (s, e) => {
                     if (string.IsNullOrEmpty(e.Data)) return;
-                    lock (_backendLogBuffer)
-                    {
-                        _backendLogBuffer.AppendLine(e.Data);
-                        if (_backendLogBuffer.Length > BackendLogBufferLimit)
-                        {
-                            var overflow = _backendLogBuffer.Length - BackendLogBufferLimit;
-                            if (overflow > 0) _backendLogBuffer.Remove(0, overflow);
-                        }
-                    }
+                    try { AppLog.Warn("Backend", e.Data); } catch { }
                 };
                 _backendProcess.Exited += (s, e) => {
                     try
                     {
+                        SetEnvStatus(null);
                         var p = s as Process;
                         var exit = "?";
                         try { if (p != null) exit = p.ExitCode.ToString(); } catch { }
@@ -1092,6 +1346,33 @@ namespace UFOS.ai
             catch { }
         }
 
+        /// <summary>
+        /// run_backend.ps1 prints "UFOS_ENV: &lt;state&gt;" lines while it prepares the Python
+        /// environment (protocol in the script header): waiting / installing &lt;reason&gt; /
+        /// upgrading / changed &lt;n&gt; / failed &lt;reason&gt; / ready. While packages are being
+        /// installed the connection status shows that instead of a bare "Connecting".
+        /// </summary>
+        private void HandleEnvMarker(string line)
+        {
+            const string prefix = "UFOS_ENV:";
+            if (!line.StartsWith(prefix, StringComparison.Ordinal)) return;
+            var marker = line.Substring(prefix.Length).Trim();
+            if (marker.StartsWith("waiting", StringComparison.OrdinalIgnoreCase))
+                SetEnvStatus("Waiting for the Python package update to finishâ€¦");
+            else if (marker.StartsWith("installing", StringComparison.OrdinalIgnoreCase) ||
+                     marker.StartsWith("upgrading", StringComparison.OrdinalIgnoreCase))
+                SetEnvStatus("Installing Python packages (first start or requirements changed)â€¦");
+            else if (marker.StartsWith("failed", StringComparison.OrdinalIgnoreCase) ||
+                     marker.StartsWith("ready", StringComparison.OrdinalIgnoreCase))
+                SetEnvStatus(null); // a failed install is logged; the backend starts with what's installed
+        }
+
+        private void SetEnvStatus(string? text)
+        {
+            _envStatusText = text;
+            try { Dispatcher.BeginInvoke(new Action(() => UpdateConnectionStatus(_lastConnectionStatus ?? "Connecting"))); } catch { }
+        }
+
         private void TryStopBackendHelper()
         {
             try
@@ -1108,6 +1389,87 @@ namespace UFOS.ai
             catch { }
         }
 
+        // ---- YouTube URL (S10-E, user 2026-10-24: backend\data\settings.json "youtube_url", edited here; no .env) ----
+
+        private static string? LsaSettingsPath()
+            => BackendAuth.FindBackendDir("LiveStreamAgent", "backend") is string dir ? BackendSettingsFile.PathFor(dir) : null;
+
+        private void ShowYouTubeUrlStatus(string? text, bool problem)
+        {
+            YouTubeUrlStatusText.Text = text ?? "";
+            YouTubeUrlStatusText.Foreground = new SolidColorBrush(problem ? Color.FromRgb(0xED, 0x6A, 0x5A) : Color.FromRgb(0x8F, 0x8F, 0x8F));
+            YouTubeUrlStatusText.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        /// <summary>Shows the stored youtube_url (or says why there is none). The backend refuses to start without a valid one.</summary>
+        private void LoadYouTubeUrl()
+        {
+            var path = LsaSettingsPath();
+            if (path == null)
+            {
+                YouTubeUrlBox.IsEnabled = SaveYouTubeUrlButton.IsEnabled = false;
+                ShowYouTubeUrlStatus("LiveStreamAgent\\backend not found next to the app â€” the URL can't be set here.", true);
+                return;
+            }
+            try
+            {
+                var settings = BackendSettingsFile.Read(path);
+                var url = settings[BackendSettingsFile.YouTubeUrlKey]?.GetValue<string>();
+                YouTubeUrlBox.Text = url ?? "";
+                if (string.IsNullOrWhiteSpace(url))
+                    ShowYouTubeUrlStatus("No YouTube URL set â€” enter the live stream URL and press Save & restart (the backend needs it to start).", true);
+                else
+                {
+                    var problem = BackendSettingsFile.ValidateYouTubeUrl(url);
+                    ShowYouTubeUrlStatus(problem == null ? null : "The stored URL is not accepted: " + problem, problem != null);
+                }
+            }
+            catch (Exception ex) when (ex is BackendSettingsException || ex is InvalidOperationException || ex is FormatException)
+            {
+                ShowYouTubeUrlStatus(ex is BackendSettingsException ? ex.Message : "youtube_url in data\\settings.json is not a text value â€” enter it again.", true);
+            }
+        }
+
+        private void SaveYouTubeUrlButton_Click(object sender, RoutedEventArgs e)
+        {
+            var url = (YouTubeUrlBox.Text ?? "").Trim();
+            var problem = BackendSettingsFile.ValidateYouTubeUrl(url);
+            if (problem != null)
+            {
+                ShowYouTubeUrlStatus(problem, true);
+                return;
+            }
+            var path = LsaSettingsPath();
+            if (path == null)
+            {
+                ShowYouTubeUrlStatus("LiveStreamAgent\\backend not found next to the app â€” nothing saved.", true);
+                return;
+            }
+            try
+            {
+                BackendSettingsFile.SetValues(path, new System.Collections.Generic.Dictionary<string, System.Text.Json.Nodes.JsonNode?>
+                {
+                    [BackendSettingsFile.YouTubeUrlKey] = System.Text.Json.Nodes.JsonValue.Create(url),
+                });
+            }
+            catch (BackendSettingsException ex)
+            {
+                ShowYouTubeUrlStatus(ex.Message + " Nothing was changed.", true);
+                return;
+            }
+            AppLog.Info("LiveStream Agent", "YouTube URL saved to backend\\data\\settings.json; restarting the backend.");
+            ShowYouTubeUrlStatus("Saved â€” restarting the backendâ€¦", false);
+            try
+            {
+                TryStopBackendHelper();
+                TryStartBackendHelper();
+            }
+            catch (Exception ex)
+            {
+                ShowYouTubeUrlStatus("Saved, but the backend could not be restarted: " + ex.Message, true);
+            }
+        }
+
         private void RestartButton_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -1116,7 +1478,7 @@ namespace UFOS.ai
             }
             catch (Exception ex)
             {
-                try { (Application.Current as App)?.ShowUiException(new Exception("Failed to start backend: " + ex.Message)); } catch { }
+                try { (Application.Current as IUiErrorReporter)?.ShowUiException(new Exception("Failed to start backend: " + ex.Message)); } catch { }
             }
         }
 
@@ -1124,13 +1486,15 @@ namespace UFOS.ai
         {
             try
             {
-                var client = new HttpClient();
+                // Explicit per-request timeout (S10-A2): HttpClient's default is 100 s, which would let one hung
+                // health request outlast the whole wait. 2 s like Global Monitoring's health probe.
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 while (sw.Elapsed < timeout)
                 {
                     try
                     {
-                        var resp = await client.GetAsync("http://127.0.0.1:8766/health");
+                        using var resp = await client.GetAsync("http://127.0.0.1:8766/health");
                         if (resp.IsSuccessStatusCode) return true;
                     }
                     catch { }
@@ -1143,228 +1507,13 @@ namespace UFOS.ai
 
         private void OpenBackendLogButton_Click(object sender, RoutedEventArgs e)
         {
-            Window? win = null;
             try
             {
-                // Create a non-standard window that matches the LivestreamAgent look: dark border and custom title bar
-                win = new Window
-                {
-                    Title = "Backend Log",
-                    Width = 700,
-                    Height = 420,
-                    Owner = this,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    WindowStyle = WindowStyle.None,
-                    AllowsTransparency = true,
-                    Background = Brushes.Transparent
-                };
-
-                // Outer border to emulate LivestreamAgent chrome
-                var outer = new Border
-                {
-                    Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)),
-                    CornerRadius = new CornerRadius(8),
-                    Padding = new Thickness(0),
-                    SnapsToDevicePixels = true
-                };
-
-                var root = new Grid { Margin = new Thickness(0) };
-                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(18) }); // title bar
-                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-                // Title bar (black) with round buttons on the right
-                var titleBar = new Border { Background = Brushes.Black, CornerRadius = new CornerRadius(8,8,0,0), Height = 18 };
-                titleBar.MouseLeftButtonDown += (s, ev) => { try { if (ev.ButtonState == MouseButtonState.Pressed) win.DragMove(); } catch { } };
-
-                var tbGrid = new Grid();
-                tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                tbGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-                var titleText = new TextBlock { Text = "Backend Log", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8,0,0,0), FontSize = 12, FontWeight = FontWeights.SemiBold };
-                Grid.SetColumn(titleText, 0);
-                tbGrid.Children.Add(titleText);
-
-                var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0,0,6,0) };
-
-                var roundStyleObj = TryFindResource("RoundButtonStyle");
-                Style roundStyle = roundStyleObj as Style;
-
-                // If the RoundButtonStyle isn't available (resource lookup failed), create a fallback style from XAML
-                if (roundStyle == null)
-                {
-                    // Fallback: construct equivalent Style in code to avoid parsing XAML at runtime
-                    var template = new ControlTemplate(typeof(Button));
-                    var borderFactory = new FrameworkElementFactory(typeof(Border));
-                    borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(999));
-                    borderFactory.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
-                    borderFactory.SetBinding(Border.WidthProperty, new System.Windows.Data.Binding("Width") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
-                    borderFactory.SetBinding(Border.HeightProperty, new System.Windows.Data.Binding("Height") { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
-                    var contentPresenterFactory = new FrameworkElementFactory(typeof(ContentPresenter));
-                    contentPresenterFactory.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-                    contentPresenterFactory.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-                    borderFactory.AppendChild(contentPresenterFactory);
-                    template.VisualTree = borderFactory;
-
-                    var style = new Style(typeof(Button));
-                    style.Setters.Add(new Setter(Button.WidthProperty, 14.0));
-                    style.Setters.Add(new Setter(Button.HeightProperty, 14.0));
-                    style.Setters.Add(new Setter(Button.PaddingProperty, new Thickness(0)));
-                    style.Setters.Add(new Setter(Button.BorderThicknessProperty, new Thickness(0)));
-                    style.Setters.Add(new Setter(Button.BackgroundProperty, Brushes.Transparent));
-                    style.Setters.Add(new Setter(Button.TemplateProperty, template));
-
-                    roundStyle = style;
-                }
-
-                // save button (small blue) placed before minimize/close
-                var saveBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6,-2,0,0), VerticalAlignment = VerticalAlignment.Center };
-                if (roundStyle != null) saveBtn.Style = roundStyle;
-                try { saveBtn.Background = new SolidColorBrush(Color.FromRgb(0x00, 0x7A, 0xFF)); } catch { saveBtn.Background = Brushes.DodgerBlue; }
-                saveBtn.ToolTip = "Save log";
-                saveBtn.Click += (s, ev) => {
-                    try
-                    {
-                        var dlg = new SaveFileDialog()
-                        {
-                            Title = "Save Backend Log",
-                            Filter = "Log files (*.log)|*.log|Text files (*.txt)|*.txt|All files (*.*)|*.*",
-                            FileName = $"backend-log-{DateTime.Now:yyyy-MM-dd_HHmmss}.log",
-                            DefaultExt = ".log",
-                            AddExtension = true
-                        };
-                        var res = dlg.ShowDialog(this);
-                        if (res == true)
-                        {
-                            var text = string.Empty;
-                            try { lock (_backendLogBuffer) { text = _backendLogBuffer.ToString(); } } catch { }
-                            System.IO.File.WriteAllText(dlg.FileName, text, System.Text.Encoding.UTF8);
-                        }
-                    }
-                    catch { }
-                };
-                saveBtn.Content = new TextBlock { Text = "??", Foreground = Brushes.White, FontSize = 8.1, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-
-                var minimizeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6,0,0,0) };
-                if (roundStyle != null) minimizeBtn.Style = roundStyle;
-                // match LivestreamAgent exact amber background color
-                try { minimizeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0xB4, 0x00)); } catch { minimizeBtn.Background = Brushes.Gold; }
-                minimizeBtn.Click += (s, ev) => { try { win.WindowState = WindowState.Minimized; } catch { } };
-                var minTxt = new TextBlock { Text = "—", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-                minimizeBtn.Content = minTxt;
-
-                var closeBtn = new Button { Width = 14, Height = 14, Margin = new Thickness(6,0,0,0) };
-                if (roundStyle != null) closeBtn.Style = roundStyle;
-                // match LivestreamAgent exact red background color
-                try { closeBtn.Background = new SolidColorBrush(Color.FromRgb(0xED, 0x6A, 0x5A)); } catch { closeBtn.Background = Brushes.IndianRed; }
-                closeBtn.Click += (s, ev) => { try { win.Close(); } catch { } };
-                var closeTxt = new TextBlock { Text = "?", Foreground = Brushes.White, FontSize = 9, FontWeight = FontWeights.Bold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-                closeBtn.Content = closeTxt;
-
-                btnPanel.Children.Add(saveBtn);
-                btnPanel.Children.Add(minimizeBtn);
-                btnPanel.Children.Add(closeBtn);
-                Grid.SetColumn(btnPanel, 1);
-                tbGrid.Children.Add(btnPanel);
-
-                titleBar.Child = tbGrid;
-                Grid.SetRow(titleBar, 0);
-                root.Children.Add(titleBar);
-
-                // Content area with padding
-                var contentGrid = new Grid { Margin = new Thickness(8) };
-                Grid.SetRow(contentGrid, 1);
-
-                var tb = new TextBox
-                {
-                    Text = string.Empty,
-                    IsReadOnly = true,
-                    TextWrapping = TextWrapping.Wrap,
-                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                    HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-                    Background = new SolidColorBrush(Color.FromRgb(17, 17, 17)),
-                    Foreground = new SolidColorBrush(Color.FromRgb(240, 240, 240)),
-                    FontFamily = new System.Windows.Media.FontFamily("Consolas"),
-                    Margin = new Thickness(0)
-                };
-
-                // Apply the same compact scrollbar style used by the transcript textbox
-                try
-                {
-                    var compact = TryFindResource("CompactScrollBarStyle") as Style;
-                    if (compact != null) tb.Resources.Add(typeof(ScrollBar), compact);
-                    var thumbStyle = TryFindResource("CompactScrollThumbStyle") as Style;
-                    if (thumbStyle != null) tb.Resources.Add(typeof(Thumb), thumbStyle);
-                    // Ensure internal scrollbars get the template after the textbox is loaded
-                    tb.Loaded += (s, ev) => ApplyScrollStylesToVisualTree(tb);
-                }
-                catch { }
-
-                // helper to apply styles to internal ScrollBar/Thumb elements
-                void ApplyScrollStylesToVisualTree(DependencyObject root)
-                {
-                    try
-                    {
-                        var sbStyle = TryFindResource("CompactScrollBarStyle") as Style ?? Application.Current?.FindResource("CompactScrollBarStyle") as Style;
-                        var thStyle = TryFindResource("CompactScrollThumbStyle") as Style ?? Application.Current?.FindResource("CompactScrollThumbStyle") as Style;
-                        if (sbStyle == null && thStyle == null) return;
-                        // traverse visual tree and set styles
-                        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-                        {
-                            var child = VisualTreeHelper.GetChild(root, i);
-                            if (child is ScrollBar sb)
-                            {
-                                if (sbStyle != null) sb.Style = sbStyle;
-                            }
-                            if (child is Thumb th)
-                            {
-                                if (thStyle != null) th.Style = thStyle;
-                            }
-                            ApplyScrollStylesToVisualTree(child);
-                        }
-                    }
-                    catch { }
-                }
-
-                contentGrid.Children.Add(tb);
-                root.Children.Add(contentGrid);
-
-                outer.Child = root;
-                win.Content = outer;
-
-                // populate current buffer
-                lock (_backendLogBuffer)
-                {
-                    tb.Text = _backendLogBuffer.ToString();
-                }
-
-                // update periodically while open (refresh view)
-                var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-                timer.Tick += (s, ev) => { lock (_backendLogBuffer) { tb.Text = _backendLogBuffer.ToString(); tb.CaretIndex = tb.Text.Length; tb.ScrollToEnd(); } };
-                win.Closed += (s, ev) => timer.Stop();
-                // Close on Escape key when this dynamic window is focused
-                win.PreviewKeyDown += (s, e) => { try { if (e.Key == System.Windows.Input.Key.Escape) win.Close(); } catch { } };
-                timer.Start();
-
-                //Block Ownership
-
-                win.Owner = null;
-
-                // Instead of secondaryWindow.ShowDialog(); (which blocks the owner/main window)
-                win.Show();
+                BackendLogsWindow.Show(this, BuildFullLogText, "Backend Log");
             }
             catch (Exception ex)
             {
-                lock (_backendLogBuffer)
-                {
-                    _backendLogBuffer.AppendLine($"[UI ERR] OpenBackendLogButton_Click failed: {ex}");
-                    if (_backendLogBuffer.Length > BackendLogBufferLimit)
-                    {
-                        var overflow = _backendLogBuffer.Length - BackendLogBufferLimit;
-                        if (overflow > 0) _backendLogBuffer.Remove(0, overflow);
-                    }
-                }
-                try { (Application.Current as App)?.ShowUiException(new Exception($"Failed to open backend log window.\n\n{ex.Message}")); } catch { }
-                try { win?.Close(); } catch { }
+                try { (Application.Current as IUiErrorReporter)?.ShowUiException(new Exception($"Failed to open backend log window.\n\n{ex.Message}")); } catch { }
             }
         }
 
@@ -1393,10 +1542,44 @@ namespace UFOS.ai
 
 
         // Connection status update
+        // ===================== AI budget status (task B, docs/ai-budgets-spec.md Â§6.3) =====================
+        // The backend skips AI calls blocked by a daily cap (backend/ai_caps.py) and reports it with
+        // "ai_budget" messages; while any key is blocked its message is shown (plain text) under the
+        // verdict area, cleared on "blocked": false. Caps are edited in MainWindow â†’ Settings â†’ AI budgets.
+
+        private void UpdateAiBudgetStatus(string key, string label, bool blocked, string? message)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+            if (blocked)
+            {
+                _blockedAiBudgets[key] = string.IsNullOrWhiteSpace(message)
+                    ? $"{label}: AI calls are paused by the AI budget (MainWindow â†’ Settings â†’ AI budgets)."
+                    : message;
+            }
+            else
+            {
+                _blockedAiBudgets.Remove(key);
+            }
+            RenderAiBudgetStatus();
+        }
+
+        private void RenderAiBudgetStatus()
+        {
+            if (_blockedAiBudgets.Count == 0)
+            {
+                AiBudgetStatusText.Text = string.Empty;
+                AiBudgetStatusText.Visibility = Visibility.Collapsed;
+                return;
+            }
+            AiBudgetStatusText.Text = string.Join("\n", _blockedAiBudgets.Values);
+            AiBudgetStatusText.Visibility = Visibility.Visible;
+        }
+
         public void UpdateConnectionStatus(string status)
         {
             Dispatcher.Invoke(() =>
             {
+                _lastConnectionStatus = status;
                 var s = (status ?? string.Empty).ToUpperInvariant();
                 Brush color = Brushes.Gray;
                 string text = status ?? "";
@@ -1404,6 +1587,15 @@ namespace UFOS.ai
                 else if (s.Contains("CONNECTING") || s.Contains("RECONNECT")) color = Brushes.Gold;
                 else if (s.Contains("ERROR")) color = Brushes.Red;
                 else if (s.Contains("DISCONNECTED")) color = Brushes.Gray;
+
+                // While run_backend.ps1 installs Python packages, say so instead of
+                // "Connecting"/"Error" (the backend simply isn't up yet).
+                var envText = _envStatusText;
+                if (envText != null && !(s.Contains("CONNECTED") && !s.Contains("DISCONNECTED")))
+                {
+                    color = envText.Contains("failed", StringComparison.OrdinalIgnoreCase) ? Brushes.OrangeRed : Brushes.Gold;
+                    text = envText;
+                }
 
                 ConnectionIndicator.Fill = color;
                 ConnectionStatusText.Text = text;
@@ -1429,12 +1621,71 @@ namespace UFOS.ai
 
         }
 
+        // Title bar (borderless window, conventions "Borderless windows"): double-click toggles maximize;
+        // dragging a MAXIMIZED window restores it only once the mouse actually moves
+        // with the button held (a plain click does nothing), keeps the cursor at its
+        // relative spot on the title bar, then drags. Same pattern as
+        // HedgeFund/HedgeFundWindow.xaml.cs (TitleBar_MouseMove).
+        private bool _restoreOnDrag;
+        private System.Windows.Point _restoreDragStart;
+
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if (e.LeftButton == MouseButtonState.Pressed)
+            if (e.LeftButton != MouseButtonState.Pressed) return;
+            if (e.ClickCount == 2)
             {
-                try { this.DragMove(); } catch { }
+                _restoreOnDrag = false;
+                WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+                return;
             }
+            if (WindowState == WindowState.Maximized)
+            {
+                _restoreOnDrag = true;
+                _restoreDragStart = e.GetPosition(this);
+                ((UIElement)sender).CaptureMouse();
+                return;
+            }
+            try { DragMove(); } catch { }
+        }
+
+        private void TitleBar_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_restoreOnDrag || e.LeftButton != MouseButtonState.Pressed) return;
+            var pos = e.GetPosition(this);
+            if (Math.Abs(pos.X - _restoreDragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(pos.Y - _restoreDragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+            _restoreOnDrag = false;
+            ((UIElement)sender).ReleaseMouseCapture();
+
+            var ratioX = ActualWidth > 0 ? pos.X / ActualWidth : 0.5;
+            var restoreWidth = RestoreBounds.Width;
+            // Cursor position in screen DIPs (PointToScreen returns device pixels).
+            var toDip = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice
+                        ?? System.Windows.Media.Matrix.Identity;
+            var cursor = toDip.Transform(PointToScreen(pos));
+
+            WindowState = WindowState.Normal;
+            Left = cursor.X - restoreWidth * ratioX;
+            Top = cursor.Y - 9; // middle of the 18 px title bar
+            try { DragMove(); } catch { }
+        }
+
+        private void TitleBar_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_restoreOnDrag) return;
+            _restoreOnDrag = false;
+            ((UIElement)sender).ReleaseMouseCapture();
+        }
+
+        // Maximized: square corners. The WM_GETMINMAXINFO hook (ConstrainMaximizedBoundsToWorkArea) already fits
+        // the maximized window to the work area, and a transparent window has no resize frame
+        // hanging off the screen, so no extra padding is needed.
+        private void Window_StateChanged(object? sender, EventArgs e)
+        {
+            var maximized = WindowState == WindowState.Maximized;
+            RootBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(8);
+            TitleBarBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(8, 8, 0, 0);
         }
 
         private void MinimizeButton_Click(object sender, RoutedEventArgs e)
@@ -1475,8 +1726,19 @@ namespace UFOS.ai
 
         // Renders a verdict into the widget. If historyTimestamp is set, the header uses the
         // "Older Verdict from [DATETIME]: [VERDICT]" format instead of the current-verdict format.
-        private void RenderVerdict(string verdict, string ticker, int confidence, string? reason, DateTime? historyTimestamp)
+        private void RenderVerdict(string verdict, string ticker, int confidence, string? reason, DateTime? historyTimestamp,
+            string? model = null, DateTimeOffset? generatedAt = null, string? usageText = null)
         {
+            try { SetVerdictAiLabel(verdict, model, generatedAt); } catch { }
+
+            // Small grey "Cost: $0.0021 Â· 812 in / 190 out tokens" line - only when the backend sent usage.
+            try
+            {
+                VerdictCostTextBlock.Text = usageText ?? string.Empty;
+                VerdictCostTextBlock.Visibility = string.IsNullOrEmpty(usageText) ? Visibility.Collapsed : Visibility.Visible;
+            }
+            catch { }
+
             var text = string.IsNullOrWhiteSpace(ticker) ? verdict : $"{verdict} {ticker}";
             // Do not include percentage in the verdict text; show confidence as ring fill and centered number.
             // Keep the heading format/position constant regardless of current vs. older verdict; the
@@ -1531,6 +1793,20 @@ namespace UFOS.ai
             try {
                 UpdateConfidence(confidence);
             } catch { }
+        }
+
+        // "âœ¦ AI-GENERATED Â· model Â· time" above a real verdict; before the first verdict the
+        // block still says it will be AI-written (EU AI Act Art. 50, Shared/AiContent.cs).
+        private void SetVerdictAiLabel(string verdict, string? model, DateTimeOffset? generatedAt)
+        {
+            var v = (verdict ?? string.Empty).Trim();
+            bool hasVerdict = v.Length > 0 && !v.Equals("NONE", StringComparison.OrdinalIgnoreCase);
+            VerdictAiBadge.Text = hasVerdict
+                ? AiContent.Badge(model, generatedAt)
+                : AiContent.Glyph + " AI VERDICTS Â· written automatically by a language model";
+            VerdictAiCaveat.Visibility = hasVerdict ? Visibility.Visible : Visibility.Collapsed;
+            System.Windows.Automation.AutomationProperties.SetName(VerdictTextPanel,
+                hasVerdict ? AiContent.AutomationName(model, generatedAt) : "AI-generated verdicts will appear here");
         }
 
         public void UpdateReason(string reason)

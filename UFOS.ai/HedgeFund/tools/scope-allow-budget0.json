@@ -1,0 +1,29 @@
+{
+  "label": "budget0",
+  "approved": "user, 2026-10-17 (task B: central AI budget window; scope exception for the files below only; contract UFOS.ai/docs/ai-budgets-spec.md §2)",
+  "files": [
+    "UFOS.ai/MainWindow.xaml",
+    "UFOS.ai/MainWindow.xaml.cs",
+    "UFOS.ai/AiBudgetsWindow.xaml",
+    "UFOS.ai/AiBudgetsWindow.xaml.cs",
+    "UFOS.ai/Shared/IAiBudgetProvider.cs",
+    "UFOS.ai/Shared/AiBudget*.cs",
+    "UFOS.ai/Global Monitoring/backend/ai_caps.py",
+    "UFOS.ai/Global Monitoring/backend/main.py",
+    "UFOS.ai/Global Monitoring/backend/README.md",
+    "UFOS.ai/Global Monitoring/backend/tests/test_ai_caps*.py",
+    "UFOS.ai/LiveStreamAgent/backend/ai_caps.py",
+    "UFOS.ai/LiveStreamAgent/backend/main.py",
+    "UFOS.ai/LiveStreamAgent/backend/llm_analyst.py",
+    "UFOS.ai/LiveStreamAgent/backend/README.md",
+    "UFOS.ai/LiveStreamAgent/backend/tests/test_ai_caps*.py",
+    "UFOS.ai/LiveStreamAgent/WebSocketService.cs",
+    "UFOS.ai/LiveStreamAgent/LivestreamAgent.xaml",
+    "UFOS.ai/LiveStreamAgent/LivestreamAgent.xaml.cs",
+    "CLAUDE.md",
+    "UFOS.ai/LiveStreamAgent/backend/cost_ledger.py",
+    "UFOS.ai/ArticleWindow.xaml.cs",
+    "UFOS.ai/Services/OpenRouterClient.cs"
+  ],
+  "amended": "2026-10-17 review L5: + UFOS.ai/LiveStreamAgent/backend/cost_ledger.py (Deepgram cost-log lines); 2026-10-17 review M2 (user decision 'all AI budgets of all modules'): + UFOS.ai/ArticleWindow.xaml.cs, UFOS.ai/Services/OpenRouterClient.cs (app-side Summarize-with-AI cap)"
+}

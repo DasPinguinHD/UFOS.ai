@@ -1,0 +1,19 @@
+{
+  "label": "stage10envui",
+  "approved": "lead for the user, 2026-10-24 16:15 (S10-E: remove .env completely, Credential Manager only, ALL modules; ENV_REMOVAL_TASK.md) — WPF/C# side (Agent W); companion of Agent H's python label stage10env",
+  "files": [
+    "UFOS.ai/Shared/CredentialVault.cs",
+    "UFOS.ai/Shared/CredentialCatalog.cs",
+    "UFOS.ai/Services/EnvConfig.cs",
+    "UFOS.ai/Services/EnvConfig.cs.stale",
+    "UFOS.ai/Services/OpenRouterClient.cs",
+    "UFOS.ai/ArticleWindow.xaml.cs",
+    "UFOS.ai/.env.example",
+    "UFOS.ai/.env.example.stale",
+    "UFOS.ai/Shared/BackendSettingsFile.cs",
+    "UFOS.ai/Shared/MainAppSettings.cs",
+    "UFOS.ai/LiveStreamAgent/LivestreamAgent.xaml",
+    "UFOS.ai/LiveStreamAgent/LivestreamAgent.xaml.cs"
+  ],
+  "note": "Shared/CredentialVault.cs (new): the one Credential Manager layer of every WPF module. Shared/CredentialCatalog.cs (new): all modules' credential names (from ENV_API.md). Services/EnvConfig.cs retired (→ .stale): no C# code reads .env. Services/OpenRouterClient.cs: key from the Credential Manager, settings from JSON. ArticleWindow.xaml.cs: 'set it in ⚙ Keys & data' text. .env.example of the main app retired (→ .stale, no secrets in it). The .env files themselves are only touched by the user-run import dialog on the user's PC. Backups in HedgeFund/backend/data/stage10envui-backup/ (*.pre-s10e.stale). Amendment 1: Shared/BackendSettingsFile.cs (new; atomic read/modify/write of a backend's data/settings.json, YouTube URL rule), Shared/MainAppSettings.cs (new; main app openrouter_base_url / openrouter_model in %LOCALAPPDATA%\\UFOS.ai\\app-settings.json), LiveStreamAgent window: YouTube URL field (user decision 16:25)."
+}

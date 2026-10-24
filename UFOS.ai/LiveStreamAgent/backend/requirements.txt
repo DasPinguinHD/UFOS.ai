@@ -1,6 +1,6 @@
-# Asynchrone & Netzwerk-Bibliotheken
-asyncio>=3.4.3
-websockets>=12.0
+# Asynchrone & Netzwerk-Bibliotheken (asyncio is part of the standard library — the old PyPI "asyncio" backport
+# was removed in stage 10, security audit M3)
+websockets>=14.0  # process_request(connection, request) API used by api_auth.py
 aiohttp>=3.9.0
 
 # Datenverarbeitung
@@ -11,7 +11,6 @@ deepgram-sdk>=3.0.0
 openai>=1.10.0
 
 # System- & Utilities
-python-dotenv>=1.0.0
 yt-dlp>=2024.3.10
 yfinance>=0.2.65
 

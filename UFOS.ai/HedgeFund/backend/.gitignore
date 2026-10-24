@@ -1,0 +1,44 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+# data/ is runtime data only (stage 10 security audit M2, 2026-10-24): everything in it is ignored except the two
+# versioned placeholders (the only data/ files in the repository: data/.keep, data/scenarios/.keep). The specific
+# data/ lines further down predate this rule and stay as documentation of what lives there.
+data/*
+!data/.keep
+!data/scenarios/
+data/scenarios/*
+!data/scenarios/.keep
+data/sandbox0-backup/
+# rollback copies of agent edits (renamed instead of deleted, removed in the stage-10 deletion steps)
+*.stale
+data/logs/*
+data/backtests/*
+# held while run_*.ps1 installs/updates Python packages (see README)
+.venv.lock
+# local SQLite store (data/newsroom.db) + quarantined corrupt copies
+*.db
+*.db-wal
+*.db-shm
+*.db.corrupt-*
+
+# per-start API session token (api_auth.py) — never commit
+data/api-token
+data/api-token.tmp
+
+# Strategy Platform rebuild: scope-guard manifests + DB backups (local only)
+data/scope-guard/
+data/backups/
+# OS0 read-only options data check reports (SPEC §21.9)
+data/os0/*
+
+# agent test offloading (tarball of the backend code, no data, no secrets)
+data/agent_transfer/
+
+# OS1 options archive runtime files (SPEC §21.11) — the DB is covered by *.db
+data/os_archive_status.json
+data/os_archive_status.json.tmp
+data/options_archive.lock
+data/options_archive.stop
+data/options_archive_config.json

@@ -4,3 +4,14 @@ __pycache__/
 .env
 data/logs/*
 data/scenarios/*
+# held while run_*.ps1 installs/updates Python packages (see README)
+.venv.lock
+# local SQLite storage (storage.py: data/livestream.db + -wal/-shm, moved-aside corrupt copies)
+*.db
+*.db-wal
+*.db-shm
+*.db.corrupt-*
+
+# per-start API session token (api_auth.py) — never commit
+data/api-token
+data/api-token.tmp

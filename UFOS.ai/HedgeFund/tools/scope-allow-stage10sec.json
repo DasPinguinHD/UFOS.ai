@@ -1,0 +1,32 @@
+{
+  "label": "stage10sec",
+  "approved": "lead for the user, 2026-10-24 (Stage 10 security audit, fix batch S10-A1, coordinator message to Agent H): the audit findings that live in the Global Monitoring / LiveStreamAgent backends and the root docker-compose.yml",
+  "files": [
+    "docker-compose.yml",
+    "UFOS.ai/Global Monitoring/backend/api_auth.py",
+    "UFOS.ai/Global Monitoring/backend/tests/test_api_auth.py",
+    "UFOS.ai/Global Monitoring/backend/tests/test_s10_security.py",
+    "UFOS.ai/Global Monitoring/backend/.dockerignore",
+    "UFOS.ai/Global Monitoring/backend/Dockerfile",
+    "UFOS.ai/Global Monitoring/backend/config.py",
+    "UFOS.ai/Global Monitoring/backend/assess.py",
+    "UFOS.ai/Global Monitoring/backend/assess_context.py",
+    "UFOS.ai/Global Monitoring/backend/logger.py",
+    "UFOS.ai/Global Monitoring/backend/main.py",
+    "UFOS.ai/LiveStreamAgent/backend/api_auth.py",
+    "UFOS.ai/LiveStreamAgent/backend/tests/test_api_auth.py",
+    "UFOS.ai/LiveStreamAgent/backend/tests/test_s10_security.py",
+    "UFOS.ai/LiveStreamAgent/backend/.dockerignore",
+    "UFOS.ai/LiveStreamAgent/backend/Dockerfile",
+    "UFOS.ai/LiveStreamAgent/backend/requirements.txt",
+    "UFOS.ai/LiveStreamAgent/backend/config.py",
+    "UFOS.ai/LiveStreamAgent/backend/logger.py",
+    "UFOS.ai/LiveStreamAgent/backend/main.py",
+    "docker-compose.yml.stale",
+    "UFOS.ai/Global Monitoring/backend/Dockerfile.stale",
+    "UFOS.ai/Global Monitoring/backend/.dockerignore.stale",
+    "UFOS.ai/LiveStreamAgent/backend/Dockerfile.stale",
+    "UFOS.ai/LiveStreamAgent/backend/.dockerignore.stale"
+  ],
+  "note": "L2 Host check in the api_auth copies (kept identical to HedgeFund/backend/api_auth.py) + tests; M1 .dockerignore and no ALLOW_REMOTE_ACCESS baked into the GM/LSA Dockerfiles and docker-compose.yml; L1 OPENROUTER_BASE_URL https + openrouter.ai (GM config.py + assess.py, LSA config.py); L3 public-only article fetch, capped redirects, LRU cache (GM assess_context.py); L6 event logs pruned after 30 days (GM/LSA logger.py + the call in main.py); L10 generic client errors + no pid on /version (GM main.py); M3 part: PyPI asyncio removed (LSA requirements.txt); tests: GM/LSA tests/test_s10_security.py. Backups of every existing file in HedgeFund/backend/data/stage10sec-backup/ (same relative paths). Amended 2026-10-24 (user decision 16:56, Docker removed entirely): docker-compose.yml and the GM / LSA Dockerfile + .dockerignore renamed *.stale (git-ignored, they leave the repo with the next commit)."
+}

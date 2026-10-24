@@ -1,9 +1,15 @@
 using System;
 using System.IO;
 using System.Text;
+using UFOS.ai.Logging;
 
 namespace UFOS.ai
 {
+    /// <summary>
+    /// Dünner Kompatibilitäts-Wrapper: bestehende Aufrufe von DebugLogger.Log(...) landen
+    /// weiterhin (zusätzlich zu den alten Debug-Dateien) im zentralen AppLog und sind damit
+    /// im globalen Log-Fenster sichtbar.
+    /// </summary>
     internal static class DebugLogger
     {
         private static readonly string TempPath = Path.Combine(Path.GetTempPath(), "UFOS.ai_ws_debug.log");
@@ -14,6 +20,7 @@ namespace UFOS.ai
             var line = DateTime.Now.ToString("o") + " " + text + Environment.NewLine;
             TryAppend(TempPath, line);
             TryAppend(RepoPath, line);
+            try { AppLog.Info("Debug", text); } catch { }
         }
 
         private static void TryAppend(string path, string data)
@@ -23,7 +30,9 @@ namespace UFOS.ai
                 var bytes = Encoding.UTF8.GetBytes(data);
                 using var fs = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
                 fs.Write(bytes, 0, bytes.Length);
-                fs.Flush(true);
+                // No Flush(true) (fsync) per line any more — it made every debug line a
+                // synchronous disk write. Disposing the stream hands the data to the OS.
+                // Errors are made durable by AppLog (Copilot review, 2026-09-25).
             }
             catch
             {

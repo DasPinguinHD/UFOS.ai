@@ -1,0 +1,13 @@
+{
+  "label": "stage10lock",
+  "approved": "user, 2026-10-24 16:15 (relayed by the coordinator): pinned dependencies with hashes for all three backends - requirements.lock with == pins + --hash, installers use pip install --require-hashes -r requirements.lock, 'Update Python packages' regenerates the lock deliberately",
+  "files": [
+    "UFOS.ai/Global Monitoring/backend/run_backend.ps1",
+    "UFOS.ai/LiveStreamAgent/backend/run_backend.ps1",
+    "UFOS.ai/Global Monitoring/backend/make_lockfile.py",
+    "UFOS.ai/LiveStreamAgent/backend/make_lockfile.py",
+    "UFOS.ai/Global Monitoring/backend/requirements.lock",
+    "UFOS.ai/LiveStreamAgent/backend/requirements.lock"
+  ],
+  "note": "run_backend.ps1: install only from requirements.lock with --require-hashes, -Upgrade runs make_lockfile.py --update first (same change as HedgeFund/backend/run_hedgefund_backend.ps1). make_lockfile.py: byte-identical copy of HedgeFund/backend/tools/make_lockfile.py. requirements.lock: written by the user's one-time run of make_lockfile.py (no network to PyPI from the agent machines). Backups: HedgeFund/backend/data/stage10lock-backup/."
+}

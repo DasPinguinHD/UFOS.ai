@@ -1,0 +1,13 @@
+{
+  "label": "maxwin0",
+  "approved": "user, 2026-10-23 (\"Stelle die Fenster so ein, dass sie ab sofort maximiert (bis auf Einstellungsfenster (z. B. Keys & Data) und Logfenster) starten.\"): the main content windows start maximized within the monitor's work area; scope exception for the files below only",
+  "files": [
+    "UFOS.ai/Shared/WindowMaximize.cs",
+    "UFOS.ai/MainWindow.xaml.cs",
+    "UFOS.ai/ArticleWindow.xaml.cs",
+    "UFOS.ai/TransactionLogWindow.xaml.cs",
+    "UFOS.ai/Global Monitoring/MainWindow.xaml.cs",
+    "UFOS.ai/LiveStreamAgent/LivestreamAgent.xaml.cs"
+  ],
+  "note": "Shared/WindowMaximize.cs is new (WM_GETMINMAXINFO work-area hook + start maximized), linked into every project via Shared/*.cs. Settings (AiBudgetsWindow, Keys & data), log windows (BackendLogsWindow, AppLog viewer) and dialogs are not maximized."
+}

@@ -1,0 +1,1413 @@
+<Window x:Class="UFOS.ai.HedgeFund.HedgeFundWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Hedge Fund" Height="760" Width="1180"
+        MinHeight="620" MinWidth="960"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing"
+        StateChanged="Window_StateChanged"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        WindowStartupLocation="CenterScreen">
+    <!-- One Hedge Fund scroll bar design (Styles/ScrollBars.xaml): implicit for every ScrollBar in this window. -->
+    <Window.Resources>
+        <ResourceDictionary Source="/HedgeFundApp;component/Styles/ScrollBars.xaml" />
+    </Window.Resources>
+    <Border x:Name="RootBorder" Background="#111111" CornerRadius="8" Padding="0" SnapsToDevicePixels="True">
+        <Grid>
+            <Grid.Resources>
+
+                <!-- ===================== Window chrome (unchanged, local copy) ===================== -->
+                <Style x:Key="RoundButtonStyle" TargetType="Button">
+                    <Setter Property="Width" Value="14" />
+                    <Setter Property="Height" Value="14" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="999" Width="{TemplateBinding Width}" Height="{TemplateBinding Height}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="bd" Property="RenderTransform">
+                                            <Setter.Value>
+                                                <ScaleTransform ScaleX="0.95" ScaleY="0.95"/>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+                <Style x:Key="RoundedDarkButtonStyle" TargetType="Button">
+                    <Setter Property="Padding" Value="8,3" />
+                    <Setter Property="MinHeight" Value="22" />
+                    <Setter Property="Background" Value="#FF242424" />
+                    <Setter Property="BorderBrush" Value="#FF333333" />
+                    <Setter Property="Foreground" Value="#FFBFBFBF" />
+                    <Setter Property="BorderThickness" Value="1" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" SnapsToDevicePixels="True">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Opacity" Value="0.88" />
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="bd" Property="RenderTransform">
+                                            <Setter.Value>
+                                                <ScaleTransform ScaleX="0.97" ScaleY="0.97" />
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+                <!-- ===================== Overlay accent colors (local to this module only) ===================== -->
+                <SolidColorBrush x:Key="LongBrush" Color="#FF6FA98A" />
+                <SolidColorBrush x:Key="LongDimBrush" Color="#FF4E7A64" />
+                <SolidColorBrush x:Key="ShortBrush" Color="#FFC1604B" />
+                <SolidColorBrush x:Key="ShortDimBrush" Color="#FF8E4739" />
+                <SolidColorBrush x:Key="NeutralBrush" Color="#FF9A9A9A" />
+                <SolidColorBrush x:Key="RiskBrush" Color="#FFD9A54B" />
+                <SolidColorBrush x:Key="FocusBrush" Color="#FF7C8CF8" />
+                <SolidColorBrush x:Key="PanelBrush" Color="#FF1A1A1A" />
+                <SolidColorBrush x:Key="PanelBorderBrush" Color="#FF2A2A2A" />
+                <SolidColorBrush x:Key="HairlineBrush" Color="#FF242424" />
+
+                <!-- Action buttons in the execution panel: same shape/behavior as RoundedDarkButtonStyle, different colors -->
+                <Style x:Key="ActionButtonLongStyle" TargetType="Button" BasedOn="{StaticResource RoundedDarkButtonStyle}">
+                    <Setter Property="Background" Value="#266FA98A" />
+                    <Setter Property="BorderBrush" Value="{StaticResource LongDimBrush}" />
+                    <Setter Property="Foreground" Value="#FF9CCBB3" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </Style>
+                <Style x:Key="ActionButtonShortStyle" TargetType="Button" BasedOn="{StaticResource RoundedDarkButtonStyle}">
+                    <Setter Property="Background" Value="#26C1604B" />
+                    <Setter Property="BorderBrush" Value="{StaticResource ShortDimBrush}" />
+                    <Setter Property="Foreground" Value="#FFE3998A" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </Style>
+                <Style x:Key="ActionButtonFlattenStyle" TargetType="Button" BasedOn="{StaticResource RoundedDarkButtonStyle}" />
+
+                <!-- Manual/Autonomous tab switch as a segmented pill -->
+                <Style x:Key="ModeTabStyle" TargetType="RadioButton">
+                    <Setter Property="Padding" Value="14,5" />
+                    <Setter Property="Foreground" Value="#FF9A9A9A" />
+                    <Setter Property="FontSize" Value="12" />
+                    <Setter Property="FontWeight" Value="Medium" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="RadioButton">
+                                <Border x:Name="bd" CornerRadius="999" Background="Transparent" Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="bd" Property="Background" Value="#FF242424" />
+                                        <Setter Property="Foreground" Value="#FFBFBFBF" />
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Foreground" Value="#FFBFBFBF" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+
+                <!-- Toggle switch for autonomous mode -->
+                <Style x:Key="ToggleSwitchStyle" TargetType="CheckBox">
+                    <Setter Property="Cursor" Value="Hand" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="CheckBox">
+                                <Grid Width="38" Height="21">
+                                    <Border x:Name="Track" CornerRadius="999" Background="#FF333333" />
+                                    <Ellipse x:Name="Thumb" Width="15" Height="15" Fill="#FFBFBFBF"
+                                             HorizontalAlignment="Left" Margin="3,0,0,0" />
+                                </Grid>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="Track" Property="Background" Value="#557C8CF8" />
+                                        <Setter TargetName="Thumb" Property="Fill" Value="{StaticResource FocusBrush}" />
+                                        <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
+                                        <Setter TargetName="Thumb" Property="Margin" Value="0,0,3,0" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+
+                <!-- Compact parameter sliders -->
+                <Style x:Key="ParamSliderStyle" TargetType="Slider">
+                    <Setter Property="Height" Value="18" />
+                    <Setter Property="Foreground" Value="{StaticResource FocusBrush}" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="Slider">
+                                <Grid VerticalAlignment="Center">
+                                    <Border Height="4" CornerRadius="2" Background="{StaticResource HairlineBrush}" />
+                                    <Track x:Name="PART_Track">
+                                        <Track.DecreaseRepeatButton>
+                                            <RepeatButton Command="Slider.DecreaseLarge" IsTabStop="False">
+                                                <RepeatButton.Template>
+                                                    <ControlTemplate TargetType="RepeatButton">
+                                                        <Border Height="4" CornerRadius="2" Background="{TemplateBinding Foreground}" />
+                                                    </ControlTemplate>
+                                                </RepeatButton.Template>
+                                                <RepeatButton.Foreground>
+                                                    <Binding RelativeSource="{RelativeSource AncestorType=Slider}" Path="Foreground" />
+                                                </RepeatButton.Foreground>
+                                            </RepeatButton>
+                                        </Track.DecreaseRepeatButton>
+                                        <Track.Thumb>
+                                            <Thumb Width="14" Height="14" IsTabStop="False">
+                                                <Thumb.Template>
+                                                    <ControlTemplate TargetType="Thumb">
+                                                        <Ellipse Fill="{StaticResource FocusBrush}" Stroke="#FF111111" StrokeThickness="2" />
+                                                    </ControlTemplate>
+                                                </Thumb.Template>
+                                            </Thumb>
+                                        </Track.Thumb>
+                                        <Track.IncreaseRepeatButton>
+                                            <RepeatButton Command="Slider.IncreaseLarge" Background="Transparent" IsTabStop="False">
+                                                <RepeatButton.Template>
+                                                    <ControlTemplate TargetType="RepeatButton">
+                                                        <Border Height="4" CornerRadius="2" Background="Transparent" />
+                                                    </ControlTemplate>
+                                                </RepeatButton.Template>
+                                            </RepeatButton>
+                                        </Track.IncreaseRepeatButton>
+                                    </Track>
+                                </Grid>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+
+
+                <!-- ===================== Live engine additions (2026-09-26) ===================== -->
+                <!-- App-wide AI colour (same values as Styles/DesignSystem.xaml; this module has no access to it) -->
+                <SolidColorBrush x:Key="AiAccentBrush" Color="#FFB98CE8" />
+                <SolidColorBrush x:Key="AiSurfaceBrush" Color="#14B98CE8" />
+                <SolidColorBrush x:Key="KillBrush" Color="#FFED6A5A" />
+
+                <!-- "▶ Run now" / "Execute" / primary buttons: RoundedDarkButtonStyle in the focus colour -->
+                <Style x:Key="RunButtonStyle" TargetType="Button" BasedOn="{StaticResource RoundedDarkButtonStyle}">
+                    <Setter Property="Background" Value="#267C8CF8" />
+                    <Setter Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                    <Setter Property="Foreground" Value="#FFD5DAFB" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </Style>
+                <!-- Kill switch: always visible, red -->
+                <Style x:Key="KillButtonStyle" TargetType="Button" BasedOn="{StaticResource RoundedDarkButtonStyle}">
+                    <Setter Property="Background" Value="#33ED6A5A" />
+                    <Setter Property="BorderBrush" Value="{StaticResource KillBrush}" />
+                    <Setter Property="Foreground" Value="#FFF4A197" />
+                    <Setter Property="FontWeight" Value="Bold" />
+                </Style>
+
+                <!-- Watchlist chips (RadioButtons created in code, GroupName "Watchlist") -->
+                <Style x:Key="ChipStyle" TargetType="RadioButton">
+                    <Setter Property="Padding" Value="10,3" />
+                    <Setter Property="Margin" Value="0,2,6,2" />
+                    <Setter Property="Foreground" Value="#FF9A9A9A" />
+                    <Setter Property="FontFamily" Value="Consolas" />
+                    <Setter Property="FontSize" Value="11.5" />
+                    <Setter Property="Cursor" Value="Hand" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="RadioButton">
+                                <Border x:Name="bd" CornerRadius="999" Background="Transparent" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="bd" Property="Background" Value="#FF242424" />
+                                        <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                                        <Setter Property="Foreground" Value="#FFE6E6E6" />
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Foreground" Value="#FFBFBFBF" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+
+                <!-- Text inputs (same look as the original ticker/size boxes) -->
+                <Style x:Key="InputBoxStyle" TargetType="TextBox">
+                    <Setter Property="FontFamily" Value="Consolas" />
+                    <Setter Property="FontSize" Value="12" />
+                    <Setter Property="Foreground" Value="#FFBFBFBF" />
+                    <Setter Property="Background" Value="#FF111111" />
+                    <Setter Property="BorderBrush" Value="{StaticResource HairlineBrush}" />
+                    <Setter Property="BorderThickness" Value="1" />
+                    <Setter Property="Padding" Value="8,6" />
+                    <Setter Property="CaretBrush" Value="#FFBFBFBF" />
+                </Style>
+
+                <!-- Section captions inside panels -->
+                <Style x:Key="ParamLabelStyle" TargetType="TextBlock">
+                    <Setter Property="FontSize" Value="11.5" />
+                    <Setter Property="Foreground" Value="#FF9A9A9A" />
+                    <Setter Property="HorizontalAlignment" Value="Left" />
+                </Style>
+                <Style x:Key="ParamValueStyle" TargetType="TextBlock">
+                    <Setter Property="FontFamily" Value="Consolas" />
+                    <Setter Property="FontSize" Value="11.5" />
+                    <Setter Property="Foreground" Value="#FFBFBFBF" />
+                    <Setter Property="HorizontalAlignment" Value="Right" />
+                </Style>
+                <Style x:Key="SubHeadStyle" TargetType="TextBlock">
+                    <Setter Property="FontSize" Value="10.5" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                    <Setter Property="Foreground" Value="#FF6A6A6A" />
+                    <Setter Property="Margin" Value="0,6,0,8" />
+                </Style>
+
+                <!-- ===================== Navigation rail (Strategy Platform stage 2, SPEC §7.12) ===================== -->
+                <Style x:Key="NavRailButtonStyle" TargetType="RadioButton">
+                    <Setter Property="Foreground" Value="#FF9A9A9A" />
+                    <Setter Property="FontSize" Value="11" />
+                    <Setter Property="Cursor" Value="Hand" />
+                    <Setter Property="Margin" Value="0,0,0,6" />
+                    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="RadioButton">
+                                <Grid>
+                                    <Border x:Name="bd" CornerRadius="6" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Padding="4,8,4,7">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                    <Border x:Name="accent" Width="2" HorizontalAlignment="Left" Margin="0,8,0,8" CornerRadius="1" Background="{StaticResource FocusBrush}" Visibility="Collapsed" />
+                                </Grid>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="bd" Property="Background" Value="#FF1F1F1F" />
+                                        <Setter TargetName="accent" Property="Visibility" Value="Visible" />
+                                        <Setter Property="Foreground" Value="#FFE6E6E6" />
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Foreground" Value="#FFBFBFBF" />
+                                    </Trigger>
+                                    <Trigger Property="IsKeyboardFocused" Value="True">
+                                        <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+
+            </Grid.Resources>
+
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- ===================== Title bar (unchanged: black, rounded, drag, minimize/close) ===================== -->
+            <Border x:Name="TitleBarBorder" Grid.Row="0" Background="Black" CornerRadius="8,8,0,0" Height="18" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
+                    MouseMove="TitleBar_MouseMove" MouseLeftButtonUp="TitleBar_MouseLeftButtonUp">
+                <Grid>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="8,0,0,0">
+                        <Ellipse Width="5" Height="5" Fill="{StaticResource NeutralBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="Hedge Fund" Foreground="#FF9A9A9A" FontSize="10" Margin="6,0,0,0" VerticalAlignment="Center" />
+                        <TextBlock Text="·  Paper trading · simulated money  ·  Financial Newsroom: live public data" Foreground="#FF5A5A5A" FontSize="10" Margin="4,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0">
+                        <TextBlock x:Name="ClockText" Text="--:--:-- UTC" Foreground="#FF5A5A5A" FontSize="10" Margin="0,0,10,0" VerticalAlignment="Center" />
+                        <Button x:Name="MinimizeButton" Click="MinimizeButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFEDB400" BorderBrush="Transparent">
+                            <TextBlock Text="—" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Button>
+                        <Button x:Name="CloseButton" Click="CloseButton_Click" Style="{StaticResource RoundButtonStyle}" Margin="6,0" Background="#FFED6A5A" BorderBrush="Transparent">
+                            <TextBlock Text="✕" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ===== Sandbox strip (strategy_platform/SPEC.md "Sandbox profile" S2, 2026-10-23): permanent while the backend's
+                 state payload says mode == "sandbox"; amber with black text (not the P&L red/green, not the AI violet), pinned
+                 above the toolbar so no section or scroll position hides it. Text = the payload's banner + brokers / data dir. -->
+            <Border x:Name="SandboxStrip" Grid.Row="1" Visibility="Collapsed" Background="#FFFFA51F" BorderBrush="#FF000000"
+                    BorderThickness="0,0,0,2" Padding="20,7">
+                <DockPanel LastChildFill="True">
+                    <Border DockPanel.Dock="Left" Background="#FF000000" CornerRadius="3" Padding="7,2" Margin="0,0,12,0" VerticalAlignment="Center">
+                        <TextBlock Text="SANDBOX" Foreground="#FFFFA51F" FontFamily="Consolas" FontSize="11.5" FontWeight="Bold" />
+                    </Border>
+                    <TextBlock x:Name="SandboxStripText" Text="" Foreground="#FF000000" FontSize="12.5" FontWeight="SemiBold"
+                               TextWrapping="Wrap" VerticalAlignment="Center" />
+                </DockPanel>
+            </Border>
+
+            <!-- ===== Module toolbar: "Financial Newsroom" button (unchanged) + engine controls =====
+                 Live public data (insider trades, macro indicators, calendar, AI analysis),
+                 served by HedgeFund/backend. The button opens the newsroom on its first
+                 section; the newsroom's own navigation (Newsroom/NewsroomSections.cs) does
+                 the rest. (Was a dropdown submenu until 2026-09-25.)
+                 Right side (2026-09-26): the live paper-trading engine (backend/fund, SPEC.md §13):
+                 "▶ Run now" and the always-visible red kill switch.
+                 Pinned in its own row ABOVE the ScrollViewer (review 2026-09-26): the kill
+                 switch must stay reachable however far the dashboard is scrolled. -->
+            <Grid Grid.Row="2" Margin="20,18,20,12">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                    <Button x:Name="NewsroomMenuButton" Style="{StaticResource RoundedDarkButtonStyle}" Padding="10,4"
+                            Click="NewsroomMenuButton_Click" AutomationProperties.Name="Open Financial Newsroom"
+                            ToolTip="Financial Newsroom — live public market data (insider trades, macro indicators)">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse x:Name="NewsroomStatusDot" Width="6" Height="6" Fill="#FF6A6A6A" VerticalAlignment="Center" />
+                            <TextBlock Text="Financial Newsroom" FontSize="11.5" Foreground="#FFE6E6E6" Margin="7,0,0,0" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <!-- Strategy Platform stage 1 (2026-10-02): keys (Windows Credential Manager) and data sources, Platform/KeysAndDataWindow. -->
+                    <Button x:Name="KeysAndDataButton" Style="{StaticResource RoundedDarkButtonStyle}" Padding="10,4" Margin="8,0,0,0"
+                            Click="KeysAndDataButton_Click" AutomationProperties.Name="Open keys and data sources"
+                            ToolTip="API keys (stored in the Windows Credential Manager) and the status of the data sources">
+                        <TextBlock Text="⚙ Keys &amp; data" FontSize="11.5" Foreground="#FFE6E6E6" VerticalAlignment="Center" />
+                    </Button>
+                    <TextBlock x:Name="NewsroomStatusText" Text="Newsroom backend: not started" FontSize="10" Foreground="#FF6A6A6A"
+                               Margin="10,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="460" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <!-- Shown while engine.schedule_mode = "manual_only" (outside the US session): no scheduled cycles. -->
+                    <TextBlock x:Name="RunNowHintText" Visibility="Collapsed" Text="US closed · manual only →" ToolTip="Outside the US session the engine runs no scheduled cycles — use ▶ Run now. Crypto fills 24/7, stock orders wait for the open." FontSize="10.5"
+                               Foreground="#FFD5DAFB" Margin="0,0,8,0" VerticalAlignment="Center" />
+                    <Button x:Name="RunNowButton" Style="{StaticResource RunButtonStyle}" Padding="12,4" Content="▶ Run now"
+                            Click="RunNowButton_Click" AutomationProperties.Name="Run one engine cycle now" />
+                    <Button x:Name="ResumeButton" Style="{StaticResource RoundedDarkButtonStyle}" Padding="12,4" Margin="8,0,0,0"
+                            Content="Resume engine" Visibility="Collapsed" Click="ResumeButton_Click"
+                            ToolTip="Clears the halt. The autopilot stays off until you switch it on again." />
+                    <Button x:Name="KillSwitchButton" Style="{StaticResource KillButtonStyle}" Padding="12,4" Margin="8,0,0,0"
+                            Content="■ Kill switch" Click="KillSwitchButton_Click"
+                            AutomationProperties.Name="Kill switch: halt both engines (old engine and Strategy Platform) and close all simulated positions"
+                            ToolTip="Covers BOTH engines (Strategy Platform SPEC §17.1): halts the old engine (autopilot off, its positions closed) AND every Strategy Platform paper account (auto trading off, working orders cancelled, positions closed). Market orders queue until the next open while the market is closed. Each half reports its own result. Asks for confirmation first." />
+                </StackPanel>
+            </Grid>
+
+            <!-- ===================== Navigation shell (Strategy Platform stage 2, SPEC §7.12) =====================
+                 Slim left rail: Overview (the dashboard below, unchanged), Library (Platform/LibraryView), Studio
+                 (Platform/StudioView, Strategy Platform stage 5a), Loop (Platform/LoopView, stage 6 discovery loop),
+                 Portfolio & Trading (Platform/TradingView, stage 7 — paper only) and Research (MarketResearch/ResearchView, Market Research MR1).
+                 The toolbar above (Newsroom, Keys & data, Run now, Kill switch) stays pinned in both.
+                 Switching only toggles visibility: the Overview keeps its timers and polling (they depend on the
+                 window being visible, not on the selected entry), so it is current when the user comes back. -->
+            <Grid Grid.Row="3">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border x:Name="NavRail" Grid.Column="0" Width="74" Margin="12,0,0,20" Padding="0,0,8,0"
+                        BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,0,1,0">
+                    <StackPanel KeyboardNavigation.DirectionalNavigation="Cycle" KeyboardNavigation.TabNavigation="Once"
+                                AutomationProperties.Name="Hedge Fund navigation">
+                        <RadioButton x:Name="NavOverviewButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}" IsChecked="True"
+                                     Checked="NavButton_Checked" AutomationProperties.Name="Overview: live paper-trading dashboard"
+                                     ToolTip="Overview — the live paper-trading dashboard">
+                            <StackPanel>
+                                <TextBlock Text="◫" FontSize="16" HorizontalAlignment="Center" />
+                                <TextBlock Text="Overview" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="NavLibraryButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
+                                     Checked="NavButton_Checked" AutomationProperties.Name="Library: strategies and the alpha library"
+                                     ToolTip="Library — strategies by lifecycle state, the alpha library, editor and import/export">
+                            <StackPanel>
+                                <TextBlock Text="▤" FontSize="16" HorizontalAlignment="Center" />
+                                <TextBlock Text="Library" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </RadioButton>
+                        <!-- Strategy Platform stage 5a (SPEC §13.3): Platform/StudioView (Strategy Studio), created on first use. -->
+                        <RadioButton x:Name="NavStudioButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
+                                     Checked="NavButton_Checked" AutomationProperties.Name="Studio: Strategy Studio — AI-assisted strategy drafts"
+                                     ToolTip="Strategy Studio — describe an idea, an AI drafts a strategy in the DSL; every valid draft is backtested">
+                            <StackPanel>
+                                <TextBlock Text="✎" FontSize="16" HorizontalAlignment="Center" />
+                                <TextBlock Text="Studio" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </RadioButton>
+                        <!-- Strategy Platform stage 6 (SPEC §16, WPF notes §16.13): Platform/LoopView (discovery loop), created on first use. -->
+                        <RadioButton x:Name="NavLoopButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
+                                     Checked="NavButton_Checked" AutomationProperties.Name="Loop: discovery loop — AI-assisted variants, generations and finalists"
+                                     ToolTip="Discovery loop — variants × generations: backtest, score, AI diagnosis and refinement, selection; finalists for your approval">
+                            <StackPanel>
+                                <TextBlock Text="↻" FontSize="16" HorizontalAlignment="Center" />
+                                <TextBlock Text="Loop" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </RadioButton>
+                        <!-- Strategy Platform stage 7 (SPEC §17, WPF notes §17.13): Platform/TradingView (portfolio, risk, OMS — paper only), created on first use. -->
+                        <RadioButton x:Name="NavTradingButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
+                                     Checked="NavButton_Checked" AutomationProperties.Name="Portfolio and Trading: platform paper accounts, strategy sub-ledgers, orders, incubation, risk limits"
+                                     ToolTip="Portfolio &amp; Trading — platform paper accounts, allocation, netting, OMS orders, incubation, migration and risk limits (paper only)">
+                            <StackPanel>
+                                <TextBlock Text="⇄" FontSize="16" HorizontalAlignment="Center" />
+                                <TextBlock Text="Portfolio &amp; Trading" FontSize="10" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="58" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </RadioButton>
+                        <!-- Strategy Platform stage 9 (SPEC §19, WPF notes §19.13): Platform/MonitoringView (realised vs expected band, decay pause +
+                             your decision, accounts / brokers, alerts, reports, tax-statement notice) and Platform/ShadowAccountView (your own broker
+                             statements, analysed locally), created on first use. NavMonitoringBadge = alerts not yet seen (MonitoringNotifier). -->
+                        <RadioButton x:Name="NavMonitoringButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
+                                     Checked="NavButton_Checked" AutomationProperties.Name="Monitoring: realised versus expected, decay pauses and decisions, alerts, reports, portfolio insights"
+                                     ToolTip="Monitoring — realised vs expected band, decay monitor (pause + your decision), accounts and brokers, alerts, daily/weekly reports, portfolio insights (paper / demo)">
+                            <StackPanel>
+                                <TextBlock Text="◉" FontSize="16" HorizontalAlignment="Center" />
+                                <TextBlock Text="Monitoring" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                                <TextBlock x:Name="NavMonitoringBadge" Text="" FontSize="9.5" FontWeight="SemiBold" Foreground="{StaticResource RiskBrush}"
+                                           HorizontalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="Alerts not yet seen" />
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="NavShadowButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
+                                     Checked="NavButton_Checked" AutomationProperties.Name="Shadow Account: your own broker statements, behaviour diagnostics, shadow portfolios — data stays on this PC"
+                                     ToolTip="Shadow Account — import your own broker statements (Trade Republic, Scalable, IBKR Flex, any CSV), behaviour diagnostics, rule-based shadow portfolios, audit report. Data stays on this PC.">
+                            <StackPanel>
+                                <TextBlock Text="◐" FontSize="16" HorizontalAlignment="Center" />
+                                <TextBlock Text="Shadow Account" FontSize="10" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="58" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </RadioButton>
+                        <!-- Market Research MR1 (backend/market_research/SPEC.md §1): MarketResearch/ResearchView, created on first use. -->
+                        <RadioButton x:Name="NavResearchButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
+                                     Checked="NavButton_Checked" AutomationProperties.Name="Research: Market Research — charts, watchlists, news"
+                                     ToolTip="Market Research — charts, watchlists, news">
+                            <StackPanel>
+                                <TextBlock Text="◈" FontSize="16" HorizontalAlignment="Center" />
+                                <TextBlock Text="Research" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </RadioButton>
+                    </StackPanel>
+                </Border>
+
+            <!-- ===================== Content (Overview) ===================== -->
+            <ScrollViewer x:Name="OverviewScroll" Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="20,0,20,20">
+
+                    <!-- ===== Engine header: watchlist chips + status line ===== -->
+                    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Watchlist" FontSize="11" Foreground="#FF6A6A6A" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <WrapPanel x:Name="WatchlistChipsPanel" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" />
+                            </Grid>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse x:Name="EngineStatusDot" Width="6" Height="6" Fill="#FF6A6A6A" VerticalAlignment="Center" />
+                                <TextBlock x:Name="EngineStatusText" Grid.Column="1" Text="Engine: connecting…" FontFamily="Consolas" FontSize="11"
+                                           Foreground="#FF9A9A9A" Margin="7,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Backend offline / not authorized / errors (never crash, show the state) -->
+                    <Border x:Name="ConnectionBanner" Visibility="Collapsed" Background="#1FD9A54B" BorderBrush="{StaticResource RiskBrush}" BorderThickness="1" CornerRadius="6" Padding="12,7" Margin="0,0,0,10">
+                        <TextBlock x:Name="ConnectionBannerText" Text="" FontSize="11.5" Foreground="#FFE3C27E" TextWrapping="Wrap" />
+                    </Border>
+                    <!-- Account state unreadable (account.unreadable): autopilot, drawdown checks and snapshots paused -->
+                    <!-- Strategy Platform stage 7 (SPEC §17.1): the old paper account was migrated (or is migrating) — the engine is advisory only -->
+                    <Border x:Name="LegacyBanner" Visibility="Collapsed" Background="#1A7C8CF8" BorderBrush="{StaticResource FocusBrush}" BorderThickness="1" CornerRadius="6" Padding="12,7" Margin="0,0,0,10">
+                        <TextBlock x:Name="LegacyBannerText" Text="" FontSize="11.5" Foreground="#FFD5DAFB" TextWrapping="Wrap" />
+                    </Border>
+                    <Border x:Name="AccountBanner" Visibility="Collapsed" Background="#26ED6A5A" BorderBrush="{StaticResource KillBrush}" BorderThickness="1" CornerRadius="6" Padding="12,7" Margin="0,0,0,10">
+                        <TextBlock x:Name="AccountBannerText" Text="" FontSize="11.5" Foreground="#FFF4A197" TextWrapping="Wrap" />
+                    </Border>
+                    <!-- Halt (kill switch / drawdown stop) -->
+                    <Border x:Name="HaltBanner" Visibility="Collapsed" Background="#26ED6A5A" BorderBrush="{StaticResource KillBrush}" BorderThickness="1" CornerRadius="6" Padding="12,7" Margin="0,0,0,10">
+                        <TextBlock x:Name="HaltBannerText" Text="" FontSize="11.5" Foreground="#FFF4A197" TextWrapping="Wrap" />
+                    </Border>
+
+                    <!-- ===== Three-column signal / verdict / portfolio grid ===== -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="300" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="300" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Left: Council of AIs — agent signals of the selected symbol (latest engine run) -->
+                        <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                            <Grid Margin="2,0,2,10">
+                                <TextBlock Text="Council of AIs" FontSize="13" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                <TextBlock x:Name="AgentsSubtitleText" Text="—" FontFamily="Consolas" FontSize="11" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                            </Grid>
+                            <!-- Technical, Macro and Risk are rule-based (no AI). Sentiment is an LLM
+                                 agent: its card gets the AI badge, caveat and violet container whenever
+                                 its source is "llm" or "cached" (AI content labelling, CLAUDE.md). -->
+                            <TextBlock Text="Technical, macro and risk are rule-based. Sentiment uses a language model. Hover a card for the numbers behind it."
+                                       FontSize="10.5" FontStyle="Italic" Foreground="#FF6A6A6A" TextWrapping="Wrap" Margin="2,-4,2,10" />
+                            <!-- D9 (2026-10-02): market data missing for this symbol in the last cycle → not analysed (no fallback). -->
+                            <Border x:Name="AgentsDataBanner" Visibility="Collapsed" Background="#26ED6A5A" BorderBrush="{StaticResource KillBrush}" BorderThickness="1" CornerRadius="6" Padding="10,6" Margin="0,0,0,10">
+                                <TextBlock x:Name="AgentsDataBannerText" Text="" FontSize="11" Foreground="#FFF4A197" TextWrapping="Wrap" />
+                            </Border>
+
+                            <!-- Agent: Technical -->
+                            <Border x:Name="TechCard" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,10" ToolTipService.ShowDuration="30000">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="3" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border x:Name="TechStripe" Grid.Column="0" Background="{StaticResource NeutralBrush}" CornerRadius="2" Margin="0,10,0,10" />
+                                    <StackPanel Grid.Column="1" Margin="11,10,12,11">
+                                        <Grid Margin="0,0,0,6">
+                                            <TextBlock Text="Technical" FontSize="12.5" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="TechStance" Text="—" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="{StaticResource NeutralBrush}" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <!-- Score bar: -1 (short, left of centre) … +1 (long, right of centre) -->
+                                        <Grid Height="4" Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.ColumnSpan="2" CornerRadius="2" Background="{StaticResource HairlineBrush}" />
+                                            <Border x:Name="TechBarNeg" Grid.Column="0" CornerRadius="2" Background="{StaticResource ShortBrush}" RenderTransformOrigin="1,0.5">
+                                                <Border.RenderTransform>
+                                                    <ScaleTransform ScaleX="0" ScaleY="1" />
+                                                </Border.RenderTransform>
+                                            </Border>
+                                            <Border x:Name="TechBarPos" Grid.Column="1" CornerRadius="2" Background="{StaticResource LongBrush}" RenderTransformOrigin="0,0.5">
+                                                <Border.RenderTransform>
+                                                    <ScaleTransform ScaleX="0" ScaleY="1" />
+                                                </Border.RenderTransform>
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock x:Name="TechSummary" Text="Waiting for the first engine run…" TextWrapping="Wrap" FontSize="11.5" Foreground="#FF9A9A9A" LineHeight="17" />
+                                        <Grid Margin="0,8,0,0">
+                                            <TextBlock x:Name="TechConf" Text="conf —" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="TechMeta" Text="rule-based" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <!-- Agent: Macro -->
+                            <Border x:Name="MacroCard" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,10" ToolTipService.ShowDuration="30000">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="3" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border x:Name="MacroStripe" Grid.Column="0" Background="{StaticResource NeutralBrush}" CornerRadius="2" Margin="0,10,0,10" />
+                                    <StackPanel Grid.Column="1" Margin="11,10,12,11">
+                                        <Grid Margin="0,0,0,6">
+                                            <TextBlock Text="Macro" FontSize="12.5" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="MacroStance" Text="—" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="{StaticResource NeutralBrush}" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <!-- Score bar: -1 (short, left of centre) … +1 (long, right of centre) -->
+                                        <Grid Height="4" Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.ColumnSpan="2" CornerRadius="2" Background="{StaticResource HairlineBrush}" />
+                                            <Border x:Name="MacroBarNeg" Grid.Column="0" CornerRadius="2" Background="{StaticResource ShortBrush}" RenderTransformOrigin="1,0.5">
+                                                <Border.RenderTransform>
+                                                    <ScaleTransform ScaleX="0" ScaleY="1" />
+                                                </Border.RenderTransform>
+                                            </Border>
+                                            <Border x:Name="MacroBarPos" Grid.Column="1" CornerRadius="2" Background="{StaticResource LongBrush}" RenderTransformOrigin="0,0.5">
+                                                <Border.RenderTransform>
+                                                    <ScaleTransform ScaleX="0" ScaleY="1" />
+                                                </Border.RenderTransform>
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock x:Name="MacroSummary" Text="Waiting for the first engine run…" TextWrapping="Wrap" FontSize="11.5" Foreground="#FF9A9A9A" LineHeight="17" />
+                                        <Grid Margin="0,8,0,0">
+                                            <TextBlock x:Name="MacroConf" Text="conf —" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="MacroMeta" Text="rule-based" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <!-- Agent: Sentiment -->
+                            <Border x:Name="SentCard" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,10" ToolTipService.ShowDuration="30000">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="3" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border x:Name="SentStripe" Grid.Column="0" Background="{StaticResource NeutralBrush}" CornerRadius="2" Margin="0,10,0,10" />
+                                    <StackPanel Grid.Column="1" Margin="11,10,12,11">
+                                        <Grid Margin="0,0,0,6">
+                                            <TextBlock Text="Sentiment" FontSize="12.5" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="SentStance" Text="—" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="{StaticResource NeutralBrush}" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <!-- Score bar: -1 (short, left of centre) … +1 (long, right of centre) -->
+                                        <Grid Height="4" Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.ColumnSpan="2" CornerRadius="2" Background="{StaticResource HairlineBrush}" />
+                                            <Border x:Name="SentBarNeg" Grid.Column="0" CornerRadius="2" Background="{StaticResource ShortBrush}" RenderTransformOrigin="1,0.5">
+                                                <Border.RenderTransform>
+                                                    <ScaleTransform ScaleX="0" ScaleY="1" />
+                                                </Border.RenderTransform>
+                                            </Border>
+                                            <Border x:Name="SentBarPos" Grid.Column="1" CornerRadius="2" Background="{StaticResource LongBrush}" RenderTransformOrigin="0,0.5">
+                                                <Border.RenderTransform>
+                                                    <ScaleTransform ScaleX="0" ScaleY="1" />
+                                                </Border.RenderTransform>
+                                            </Border>
+                                        </Grid>
+                                        <!-- AI label (visible when the sentiment came from the LLM or its cache) -->
+                                        <TextBlock x:Name="SentBadge" Visibility="Collapsed" Text="" FontFamily="Consolas" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource AiAccentBrush}" TextWrapping="Wrap" Margin="0,0,0,5" />
+                                        <TextBlock x:Name="SentSummary" Text="Waiting for the first engine run…" TextWrapping="Wrap" FontSize="11.5" Foreground="#FF9A9A9A" LineHeight="17" />
+                                        <TextBlock x:Name="SentCaveat" Visibility="Collapsed" Text="" FontSize="10" FontStyle="Italic" Foreground="#FF6A6A6A" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                        <!-- details.insider_unavailable (2026-10-02): status hint, not part of the AI text -->
+                                        <TextBlock x:Name="SentInsiderHint" Visibility="Collapsed" Text="" FontSize="10.5" Foreground="#FFE3C27E" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                        <Grid Margin="0,8,0,0">
+                                            <TextBlock x:Name="SentConf" Text="conf —" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="SentMeta" Text="—" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <!-- Agent: Risk Manager -->
+                            <Border x:Name="RiskCard" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,10" ToolTipService.ShowDuration="30000">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="3" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border x:Name="RiskStripe" Grid.Column="0" Background="{StaticResource FocusBrush}" CornerRadius="2" Margin="0,10,0,10" />
+                                    <StackPanel Grid.Column="1" Margin="11,10,12,11">
+                                        <Grid Margin="0,0,0,6">
+                                            <TextBlock Text="Risk Manager" FontSize="12.5" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="RiskStance" Text="—" FontFamily="Consolas" FontSize="11" FontWeight="Bold" Foreground="{StaticResource NeutralBrush}" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <!-- Size multiplier 0..1 -->
+                                        <Grid Height="4" Margin="0,0,0,8">
+                                            <Border CornerRadius="2" Background="{StaticResource HairlineBrush}" />
+                                            <Border x:Name="RiskBar" CornerRadius="2" Background="{StaticResource FocusBrush}" RenderTransformOrigin="0,0.5">
+                                                <Border.RenderTransform>
+                                                    <ScaleTransform ScaleX="0" ScaleY="1" />
+                                                </Border.RenderTransform>
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock x:Name="RiskSummary" Text="Waiting for the first engine run…" TextWrapping="Wrap" FontSize="11.5" Foreground="#FF9A9A9A" LineHeight="17" />
+                                        <Grid Margin="0,8,0,0">
+                                            <TextBlock x:Name="RiskConf" Text="conf —" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="RiskMeta" Text="rule-based" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Center: Council of AIs verdict (judge) for the selected symbol -->
+                        <Border Grid.Column="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="10,0" Padding="22">
+                            <StackPanel HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                                <TextBlock x:Name="VerdictHeaderText" Text="Council of AIs · Verdict" FontSize="12" Foreground="#FF6A6A6A" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                                <!-- "✦ AI-GENERATED · model · time" for LLM verdicts; "Rule-based · no AI" only for old rows of the
+                                     former rule-based judge (removed 2026-10-02, D9); "Verdict unavailable" when the judge could not run -->
+                                <Border x:Name="VerdictBadgeBorder" HorizontalAlignment="Center" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="4" Padding="8,2" Margin="0,0,0,14">
+                                    <TextBlock x:Name="VerdictBadgeText" Text="No verdict yet" FontFamily="Consolas" FontSize="10" Foreground="#FF6A6A6A" />
+                                </Border>
+
+                                <Grid Width="176" Height="176" Margin="0,0,0,16">
+                                    <Ellipse Width="148" Height="148" HorizontalAlignment="Center" VerticalAlignment="Center" Stroke="{StaticResource HairlineBrush}" StrokeThickness="9" />
+                                    <Path x:Name="VerdictArc" Width="176" Height="176" HorizontalAlignment="Left" VerticalAlignment="Top" Stretch="None"
+                                          Stroke="{StaticResource FocusBrush}" StrokeThickness="9" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <TextBlock x:Name="VerdictConfText" Text="—" FontFamily="Consolas" FontSize="32" FontWeight="Bold" Foreground="#FFEDEDED" HorizontalAlignment="Center" />
+                                        <TextBlock Text="confidence" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock x:Name="VerdictSymbolText" Text="—" FontFamily="Consolas" FontSize="15" Foreground="#FF9A9A9A" HorizontalAlignment="Center" Margin="0,0,0,2" />
+                                <TextBlock x:Name="VerdictQuoteText" Text="" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Center" Margin="0,0,0,6" />
+                                <TextBlock x:Name="VerdictActionText" Text="—" FontSize="26" FontWeight="Bold" Foreground="{StaticResource NeutralBrush}" HorizontalAlignment="Center" Margin="0,0,0,4" />
+                                <TextBlock x:Name="VerdictSizeText" Text="" FontSize="12" Foreground="#FF6A6A6A" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,0,0,2" />
+                                <TextBlock x:Name="VerdictRuleText" Text="" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+                                <!-- D9 (2026-10-02): judge unavailable this run / recommendation not updated — a status, not a verdict
+                                     (no AI badge). The button opens the AI budget setting or Keys & data when that is the cause. -->
+                                <Border x:Name="VerdictNoticeBorder" Visibility="Collapsed" Background="#1FD9A54B" BorderBrush="{StaticResource RiskBrush}" BorderThickness="1" CornerRadius="6" Padding="12,7" Margin="0,0,0,12" MaxWidth="440" HorizontalAlignment="Center">
+                                    <StackPanel>
+                                        <TextBlock x:Name="VerdictNoticeText" Text="" FontSize="11.5" Foreground="#FFE3C27E" TextWrapping="Wrap" />
+                                        <Button x:Name="VerdictNoticeButton" Style="{StaticResource RoundedDarkButtonStyle}" Padding="10,3" Margin="0,8,0,0" HorizontalAlignment="Left"
+                                                Content="Open Keys &amp; data / Settings" Visibility="Collapsed" Click="VerdictNoticeButton_Click" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Rationale container: violet (AiAccentBrush) when the text is AI-generated -->
+                                <Border x:Name="VerdictRationaleBorder" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="6" Padding="12,9" MaxWidth="440" HorizontalAlignment="Center">
+                                    <StackPanel>
+                                        <TextBlock x:Name="VerdictRationaleText" Text="Waiting for the first engine run…" TextWrapping="Wrap" TextAlignment="Left" FontSize="13" Foreground="#FF9A9A9A" LineHeight="20" />
+                                        <TextBlock x:Name="VerdictCaveatText" Text="" FontSize="10.5" FontStyle="Italic" Foreground="#FF6A6A6A" TextWrapping="Wrap" Margin="0,8,0,0" />
+                                        <TextBlock x:Name="VerdictCostText" Text="" FontFamily="Consolas" FontSize="10" Foreground="#FF6A6A6A" TextWrapping="Wrap" Margin="0,4,0,0" Visibility="Collapsed" />
+                                    </StackPanel>
+                                </Border>
+
+                                <TextBlock x:Name="VerdictStatusText" Text="" FontSize="11" Foreground="#FF6A6A6A" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,10,0,0" />
+                                <Button x:Name="ExecuteButton" Style="{StaticResource RunButtonStyle}" Content="Execute recommendation…" HorizontalAlignment="Center" Padding="14,5" Margin="0,10,0,0"
+                                        Click="ExecuteButton_Click" Visibility="Collapsed"
+                                        ToolTip="Places the simulated paper order(s) that move this symbol to the recommended target size. Asks for confirmation first." />
+
+                                <TextBlock Text="Paper trading · simulated money."
+                                           TextWrapping="Wrap" TextAlignment="Center" FontSize="10.5" Foreground="#FF6A6A6A" MaxWidth="300" Margin="0,18,0,0" HorizontalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Right: Portfolio + Risk + equity curve -->
+                        <StackPanel Grid.Column="2" Margin="10,0,0,0">
+                            <Grid Margin="2,0,2,10">
+                                <TextBlock Text="Portfolio" FontSize="13" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                <TextBlock Text="USD · paper" FontFamily="Consolas" FontSize="11" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                            </Grid>
+                            <!-- D9 (2026-10-02): account.valuation_paused — equity/drawdown not current, shown as "—" with the reason. -->
+                            <Border x:Name="ValuationBanner" Visibility="Collapsed" Background="#1FD9A54B" BorderBrush="{StaticResource RiskBrush}" BorderThickness="1" CornerRadius="6" Padding="10,6" Margin="0,0,0,10">
+                                <TextBlock x:Name="ValuationBannerText" Text="" FontSize="11" Foreground="#FFE3C27E" TextWrapping="Wrap" />
+                            </Border>
+
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <Grid>
+                                        <TextBlock Text="Equity" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="EquityValueText" Text="—" FontFamily="Consolas" FontSize="16" FontWeight="Medium" Foreground="#FFEDEDED" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Grid Margin="0,8,0,0">
+                                        <TextBlock Text="Cash" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="CashText" Text="—" FontFamily="Consolas" FontSize="12" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Grid Margin="0,4,0,0">
+                                        <TextBlock Text="Day P&amp;L" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="DayPnlText" Text="—" FontFamily="Consolas" FontSize="12" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Grid Margin="0,4,0,0">
+                                        <TextBlock Text="Total P&amp;L" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="TotalPnlText" Text="—" FontFamily="Consolas" FontSize="12" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Grid Margin="0,4,0,0">
+                                        <TextBlock Text="Buying power" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="BuyingPowerText" Text="—" FontFamily="Consolas" FontSize="12" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Positions (long/short, P&L, borrow rate) — rows built in code; click a row to select the symbol -->
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,4">
+                                        <TextBlock Text="Positions" FontSize="12" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="PositionsCountText" Text="" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <StackPanel x:Name="PositionsPanel" />
+                                    <TextBlock x:Name="PositionsEmptyText" Text="No open positions." FontSize="11" Foreground="#FF6A6A6A" Margin="0,4,0,4" />
+                                    <TextBlock x:Name="PendingOrdersText" Text="" FontSize="10.5" Foreground="{StaticResource RiskBrush}" TextWrapping="Wrap" Margin="0,4,0,2" Visibility="Collapsed" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                        <Ellipse Width="6" Height="6" Fill="{StaticResource RiskBrush}" VerticalAlignment="Center" />
+                                        <TextBlock Text="Drawdown" FontSize="12" FontWeight="SemiBold" Foreground="#FFBFBFBF" Margin="7,0,0,0" />
+                                    </StackPanel>
+                                    <Grid Height="5" Margin="0,0,0,6">
+                                        <Border CornerRadius="3" Background="{StaticResource HairlineBrush}" />
+                                        <Border x:Name="DrawdownBar" CornerRadius="3" Background="{StaticResource RiskBrush}" RenderTransformOrigin="0,0.5">
+                                            <Border.RenderTransform>
+                                                <ScaleTransform ScaleX="0" ScaleY="1" />
+                                            </Border.RenderTransform>
+                                        </Border>
+                                    </Grid>
+                                    <Grid>
+                                        <TextBlock x:Name="DrawdownText" Text="— current" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="DrawdownLimitText" Text="Limit —" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Border BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" Margin="0,10,0,8" />
+                                    <Grid>
+                                        <TextBlock Text="Margin excess" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="MarginExcessText" Text="—" FontFamily="Consolas" FontSize="12" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Grid Margin="0,4,0,0">
+                                        <TextBlock Text="Short exposure" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="ShortExposureText" Text="—" FontFamily="Consolas" FontSize="12" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Grid Margin="0,4,0,0">
+                                        <TextBlock Text="Maintenance req." FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="MaintenanceText" Text="—" FontFamily="Consolas" FontSize="12" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <!-- Crypto perps (2026-09-26): hidden while the backend does not send the fields -->
+                                    <Grid x:Name="FundingRow" Margin="0,4,0,0" Visibility="Collapsed"
+                                          ToolTip="Funding booked on crypto perp positions so far (every 8 h). Positive rate: longs pay shorts, so our perp shorts receive.">
+                                        <TextBlock Text="Crypto funding" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="FundingTotalText" Text="—" FontFamily="Consolas" FontSize="12" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Grid x:Name="CryptoMarginRow" Margin="0,4,0,0" Visibility="Collapsed"
+                                          ToolTip="Equity above the crypto perp maintenance margin. Below zero the perp shorts are liquidated (liquidation fee).">
+                                        <TextBlock Text="Crypto margin excess" FontSize="11.5" Foreground="#FF9A9A9A" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="CryptoMarginExcessText" Text="—" FontFamily="Consolas" FontSize="12" Foreground="#FFBFBFBF" HorizontalAlignment="Right" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Equity curve vs SPY (EquityChart is created in code and placed into EquityChartHost) -->
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,6">
+                                        <TextBlock Text="Equity curve" FontSize="12" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                        <TextBlock Text="vs SPY" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <Border x:Name="EquityChartHost" Height="130" />
+                                    <TextBlock x:Name="EquityChartNote" Text="Blue: paper equity · grey dashed: SPY scaled to the starting capital" FontSize="10" Foreground="#FF6A6A6A" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- ===== Execution: manual / autonomous + engine settings ===== -->
+                    <Border BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,16,0,0">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,14">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                                    <TextBlock Text="Execution" FontSize="13" FontWeight="SemiBold" Foreground="#FFBFBFBF" VerticalAlignment="Center" />
+                                    <TextBlock Text="Paper trading · simulated orders · paper only, no real money" FontSize="10.5" Foreground="#FF6A6A6A" Margin="10,1,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <Border HorizontalAlignment="Right" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="999" Padding="3">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="ModeManualTab" GroupName="ExecutionMode" Style="{StaticResource ModeTabStyle}" IsChecked="True" Content="Manual" Checked="ModeManualTab_Checked" />
+                                        <RadioButton x:Name="ModeAutoTab" GroupName="ExecutionMode" Style="{StaticResource ModeTabStyle}" Content="Autonomous" Checked="ModeAutoTab_Checked" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="14" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Manual panel: simulated market orders (POST /fund/orders), each confirmed first -->
+                                <Border x:Name="ManualPanel" Grid.Column="0" VerticalAlignment="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="16,14">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,12">
+                                            <TextBlock Text="Manual Order" FontSize="12" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <Border HorizontalAlignment="Right" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="4" Padding="6,1">
+                                                <TextBlock Text="User" FontFamily="Consolas" FontSize="10" Foreground="#FF6A6A6A" />
+                                            </Border>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="8" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="Ticker" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,0,0,4" />
+                                                <TextBox x:Name="TickerInput" Text="SPY" Style="{StaticResource InputBoxStyle}" CharacterCasing="Upper" MaxLength="14" AutomationProperties.Name="Ticker"
+                                                         TextChanged="TickerInput_TextChanged" ToolTip="Stock/ETF ticker (e.g. SPY) or crypto pair (e.g. BTC-USD)" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <Grid Margin="0,0,0,4">
+                                                    <TextBlock Text="Size" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Left" />
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                        <RadioButton x:Name="UnitSharesRadio" GroupName="OrderUnit" Content="shares" IsChecked="True" FontSize="10.5" Foreground="#FF9A9A9A" Margin="0,0,8,0" VerticalContentAlignment="Center" />
+                                                        <RadioButton x:Name="UnitDollarRadio" GroupName="OrderUnit" Content="$" FontSize="10.5" Foreground="#FF9A9A9A" VerticalContentAlignment="Center" />
+                                                    </StackPanel>
+                                                </Grid>
+                                                <TextBox x:Name="SizeInput" Text="10" Style="{StaticResource InputBoxStyle}" AutomationProperties.Name="Order size (shares or dollars)" />
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="6" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="6" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="6" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="6" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Button Grid.Column="0" Content="Buy" Style="{StaticResource ActionButtonLongStyle}" Click="ManualBuy_Click" ToolTip="Buy (open or add to a long position)" />
+                                            <Button Grid.Column="2" Content="Sell" Style="{StaticResource ActionButtonLongStyle}" Click="ManualSell_Click" ToolTip="Sell (reduce or close a long position)" />
+                                            <Button Grid.Column="4" Content="Short" Style="{StaticResource ActionButtonShortStyle}" Click="ManualShort_Click" ToolTip="Sell short (open or add to a short position; margin and borrow fees apply)" />
+                                            <Button Grid.Column="6" Content="Cover" Style="{StaticResource ActionButtonShortStyle}" Click="ManualCover_Click" ToolTip="Buy to cover (reduce or close a short position)" />
+                                            <Button Grid.Column="8" Content="Flatten" Style="{StaticResource ActionButtonFlattenStyle}" Click="ManualFlatten_Click" ToolTip="Close the whole position in this ticker" />
+                                        </Grid>
+
+                                        <TextBlock x:Name="ManualStatusText" Text="Market orders only. Stocks/ETFs: whole shares; while the US market is closed they are queued and fill at the next open. Crypto (e.g. BTC-USD) fills 24/7, fractional quantities allowed." TextWrapping="Wrap" FontSize="11" Foreground="#FF6A6A6A" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Autonomous panel: autopilot + hard limits (PUT /fund/params) -->
+                                <Border x:Name="AutoPanel" Grid.Column="0" VerticalAlignment="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="16,14" Visibility="Collapsed">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,12">
+                                            <TextBlock Text="Council of AIs · Autopilot" FontSize="12" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <Border HorizontalAlignment="Right" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="4" Padding="6,1">
+                                                <TextBlock Text="Agent" FontFamily="Consolas" FontSize="10" Foreground="#FF6A6A6A" />
+                                            </Border>
+                                        </Grid>
+
+                                        <Grid Margin="0,0,0,12">
+                                            <StackPanel HorizontalAlignment="Left" MaxWidth="260">
+                                                <TextBlock Text="Autonomous Mode" FontSize="12" Foreground="#FFBFBFBF" />
+                                                <TextBlock Text="Places simulated paper orders on its own at every run, within the limits below. Off after every backend start." TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,1,0,0" />
+                                            </StackPanel>
+                                            <CheckBox x:Name="AutoEngageToggle" Style="{StaticResource ToggleSwitchStyle}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                      Click="AutoEngageToggle_Click" AutomationProperties.Name="Autonomous mode (autopilot)" />
+                                        </Grid>
+                                        <StackPanel Margin="0,0,0,10">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Minimum Confidence" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="ConfidenceValueText" Text="75%" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="ConfidenceSlider" Style="{StaticResource ParamSliderStyle}" Minimum="50" Maximum="95" Value="75" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Minimum Confidence" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Max Position Size" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="MaxSizeValueText" Text="5% of equity" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="MaxSizeSlider" Style="{StaticResource ParamSliderStyle}" Minimum="1" Maximum="15" Value="5" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Max Position Size" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Max Trades / Day" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="MaxTradesValueText" Text="6" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="MaxTradesSlider" Style="{StaticResource ParamSliderStyle}" Minimum="1" Maximum="20" Value="6" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Max Trades / Day" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,12">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Drawdown Stop" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="DrawdownStopValueText" Text="8%" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="DrawdownStopSlider" Style="{StaticResource ParamSliderStyle}" Minimum="2" Maximum="20" Value="8" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Drawdown Stop" />
+                                        </StackPanel>
+
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Ellipse x:Name="AutoStatusDot" Width="6" Height="6" Fill="#FF6A6A6A" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="AutoStatusText" Grid.Column="1" Text="Off" TextWrapping="Wrap" FontSize="11" Foreground="#FF6A6A6A" Margin="7,0,0,0" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Engine settings (versioned params; debounced PUT /fund/params, applies from the next run) -->
+                                <Border x:Name="SettingsPanel" Grid.Column="2" VerticalAlignment="Top" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="16,14">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,4">
+                                            <TextBlock Text="Engine settings" FontSize="12" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="ParamsVersionText" Text="" FontFamily="Consolas" FontSize="10" Foreground="#FF6A6A6A" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                        </Grid>
+                                        <TextBlock x:Name="ParamsSaveText" Text="Changes are saved automatically and apply from the next run." TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,0,0,10" />
+
+                                        <TextBlock Text="SCHEDULE" Style="{StaticResource SubHeadStyle}" />
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Minutes between runs during the US regular session (09:30–16:00 New York).">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Run interval (market open)" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="IntervalValueText" Text="5 min" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="IntervalSlider" Style="{StaticResource ParamSliderStyle}" Minimum="1" Maximum="60" Value="5" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Run interval (market open)" />
+                                        </StackPanel>
+                                        <!-- closed_interval_minutes (2026-09-26): with 24/7 crypto there are no scheduled cycles outside the US
+                                             session any more; the value is the interval of the light crypto risk watch. The code-behind
+                                             switches label/tooltip back for an older backend without crypto support. -->
+                                        <StackPanel x:Name="ClosedIntervalPanel" Margin="0,0,0,10" ToolTip="Outside US hours there is no automatic trading (only ▶ Run now). While crypto positions are open, a light risk watch (no agents, no AI, no new orders) checks marks, funding, margin/liquidation and drawdown at this interval.">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock x:Name="ClosedIntervalLabelText" Text="Risk watch interval (outside US hours)" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="ClosedIntervalValueText" Text="30 min" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="ClosedIntervalSlider" Style="{StaticResource ParamSliderStyle}" Minimum="5" Maximum="240" Value="30" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Risk watch interval (outside US hours)" />
+                                        </StackPanel>
+                                        <!-- Dead-man switch (params.autopilot_heartbeat_minutes, 5..240, default 15): the engine switches
+                                             the autopilot off when it has not heard from this app for that long. Disabled while the
+                                             running backend does not know the setting (older version). -->
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Safety net: if the engine hears nothing from UFOS.ai for this long (app closed, crashed or asleep), it switches the autopilot off by itself. Matters most when the engine keeps running after UFOS.ai closes.">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Autopilot heartbeat" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="HeartbeatValueText" Text="15 min" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="HeartbeatSlider" Style="{StaticResource ParamSliderStyle}" Minimum="5" Maximum="240" Value="15" ValueChanged="ParamSlider_ValueChanged"
+                                                    AutomationProperties.Name="Autopilot heartbeat: autopilot switches itself off after this many minutes without the app" />
+                                            <TextBlock x:Name="HeartbeatHintText" Text="Autopilot switches itself off after 15 min without the app." TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,4,0,0" />
+                                        </StackPanel>
+
+                                        <TextBlock Text="AGENT WEIGHTS" Style="{StaticResource SubHeadStyle}" />
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Weight of the technical agent in the rule score (0 = off).">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Technical" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="WeightTechValueText" Text="1.00" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="WeightTechSlider" Style="{StaticResource ParamSliderStyle}" Minimum="0" Maximum="1" Value="1" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Technical" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Weight of the macro agent in the rule score (0 = off).">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Macro" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="WeightMacroValueText" Text="1.00" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="WeightMacroSlider" Style="{StaticResource ParamSliderStyle}" Minimum="0" Maximum="1" Value="1" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Macro" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Weight of the sentiment agent (language model on recent headlines, 0 = off).">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Sentiment (AI)" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="WeightSentValueText" Text="0.50" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="WeightSentSlider" Style="{StaticResource ParamSliderStyle}" Minimum="0" Maximum="1" Value="0.5" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Sentiment (AI)" />
+                                        </StackPanel>
+                                        <Grid Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,10,0">
+                                                <TextBlock Text="Risk manager" FontSize="11.5" Foreground="#FFBFBFBF" TextWrapping="Wrap" />
+                                                <TextBlock Text="Vetoes and size cuts (drawdown, events, volatility, concentration)" TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,1,0,0" />
+                                            </StackPanel>
+                                            <CheckBox x:Name="RiskEnabledToggle" Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}" VerticalAlignment="Center" IsChecked="True"
+                                                      Click="ParamToggle_Click" AutomationProperties.Name="Risk manager" />
+                                        </Grid>
+
+                                        <TextBlock Text="AI JUDGE" Style="{StaticResource SubHeadStyle}" />
+                                        <Border HorizontalAlignment="Left" Background="#FF111111" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="999" Padding="3" Margin="0,0,0,10">
+                                            <StackPanel Orientation="Horizontal">
+                                                <RadioButton x:Name="JudgeStandardRadio" GroupName="JudgeMode" Style="{StaticResource ModeTabStyle}" Padding="10,4" Content="Standard" IsChecked="True"
+                                                             Checked="JudgeMode_Checked" ToolTip="Standard model for every judgement (cheapest)." />
+                                                <RadioButton x:Name="JudgePremiumRadio" GroupName="JudgeMode" Style="{StaticResource ModeTabStyle}" Padding="10,4" Content="Premium"
+                                                             Checked="JudgeMode_Checked" ToolTip="Premium model for every judgement (most expensive)." />
+                                                <RadioButton x:Name="JudgeFlipRadio" GroupName="JudgeMode" Style="{StaticResource ModeTabStyle}" Padding="10,4" Content="Premium on flip"
+                                                             Checked="JudgeMode_Checked" ToolTip="Standard model first; a second premium call only when a symbol's action would flip." />
+                                            </StackPanel>
+                                        </Border>
+                                        <Grid Margin="0,0,0,10" ToolTip="Daily limit for all AI calls of the engine (judge + sentiment), UTC day. 0 = never call the language model — then no new verdicts are made (no rule-based stand-in).">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="90" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="AI daily budget (USD)" FontSize="11.5" Foreground="#FF9A9A9A" />
+                                                <TextBlock x:Name="AiBudgetHintText" Text="0 = no AI calls, no new verdicts" FontSize="10.5" Foreground="#FF6A6A6A" />
+                                            </StackPanel>
+                                            <TextBox x:Name="AiBudgetInput" Grid.Column="1" Text="1.00" Style="{StaticResource InputBoxStyle}" Padding="6,4"
+                                                     TextChanged="AiBudgetInput_TextChanged" AutomationProperties.Name="AI daily budget in US dollars" />
+                                        </Grid>
+                                        <!-- Strategy Platform §11.2/§11.3: own daily budget of the AI explanations in the backtest / validation reports
+                                             (GET/PUT /v2/settings/explain) — separate from the engine's AI budget above. Empty and disabled until loaded. -->
+                                        <Grid Margin="0,0,0,10" ToolTip="Daily limit for the AI explanations in the backtest and validation reports (&quot;Explain with AI…&quot;), UTC day. Separate from the engine's AI budget. 0 = explanations off.">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="90" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel VerticalAlignment="Center" Margin="0,0,10,0">
+                                                <TextBlock Text="AI explanations — daily budget (USD)" FontSize="11.5" Foreground="#FF9A9A9A" TextWrapping="Wrap" />
+                                                <TextBlock x:Name="ExplainBudgetHintText" Text="Not loaded yet" FontSize="10.5" Foreground="#FF6A6A6A" TextWrapping="Wrap" />
+                                            </StackPanel>
+                                            <TextBox x:Name="ExplainBudgetInput" Grid.Column="1" Text="" IsEnabled="False" Style="{StaticResource InputBoxStyle}" Padding="6,4"
+                                                     TextChanged="ExplainBudgetInput_TextChanged" AutomationProperties.Name="AI explanations daily budget in US dollars" />
+                                        </Grid>
+                                        <!-- Strategy Platform stage 5a (SPEC §13.1/§13.5): own budget of the Strategy Studio's AI ideation
+                                             (GET/PUT /v2/settings/ideation, both values saved together) — separate from the engine's and the
+                                             explanations' budgets. Empty and disabled until loaded. -->
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Budget of the Strategy Studio's AI drafts (&quot;Studio&quot; in the rail): a monthly budget (UTC month) and a daily cap (UTC day). Separate from the engine's and the explanations' AI budgets. Monthly budget 0 = ideation off.">
+                                            <Grid Margin="0,0,0,4">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="90" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="AI ideation (Studio) — monthly budget (USD)" FontSize="11.5" Foreground="#FF9A9A9A" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                                <TextBox x:Name="IdeationMonthlyInput" Grid.Column="1" Text="" IsEnabled="False" Style="{StaticResource InputBoxStyle}" Padding="6,4"
+                                                         TextChanged="IdeationBudgetInput_TextChanged" AutomationProperties.Name="AI ideation monthly budget in US dollars" />
+                                            </Grid>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="90" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="AI ideation (Studio) — daily cap (USD)" FontSize="11.5" Foreground="#FF9A9A9A" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                                <TextBox x:Name="IdeationDailyInput" Grid.Column="1" Text="" IsEnabled="False" Style="{StaticResource InputBoxStyle}" Padding="6,4"
+                                                         TextChanged="IdeationBudgetInput_TextChanged" AutomationProperties.Name="AI ideation daily cap in US dollars" />
+                                            </Grid>
+                                            <TextBlock x:Name="IdeationBudgetHintText" Text="Not loaded yet" FontSize="10.5" Foreground="#FF6A6A6A" TextWrapping="Wrap" Margin="0,3,0,0" />
+                                        </StackPanel>
+                                        <!-- Strategy Platform stage 5b (SPEC §14.3/§14.7): investment committee after each validation (GET/PUT
+                                             /v2/settings/committee {auto_after_validation, model}); disabled until loaded. Uses the ideation budget above. -->
+                                        <StackPanel Margin="0,0,0,10" ToolTip="When on, five AI roles review every finished (non-holdout) validation and write an advisory memo (ideation budget). When off, the validation report and the Library offer &quot;Convene committee…&quot; instead.">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="Run the investment committee automatically after each validation" FontSize="11.5" Foreground="#FFBFBFBF" TextWrapping="Wrap" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                                <CheckBox x:Name="CommitteeAutoToggle" Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}" VerticalAlignment="Center" IsEnabled="False"
+                                                          Click="CommitteeSetting_Click" AutomationProperties.Name="Run the investment committee automatically after each validation" />
+                                            </Grid>
+                                            <Border HorizontalAlignment="Left" Background="#FF111111" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="999" Padding="3" Margin="0,6,0,0">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <RadioButton x:Name="CommitteeStandardRadio" GroupName="CommitteeModel" Style="{StaticResource ModeTabStyle}" Padding="10,4" Content="Standard" IsEnabled="False"
+                                                                 Click="CommitteeSetting_Click" ToolTip="Standard model for the automatic committee (cheaper)." AutomationProperties.Name="Committee model Standard" />
+                                                    <RadioButton x:Name="CommitteePremiumRadio" GroupName="CommitteeModel" Style="{StaticResource ModeTabStyle}" Padding="10,4" Content="Premium" IsEnabled="False"
+                                                                 Click="CommitteeSetting_Click" ToolTip="Premium model for the automatic committee (more expensive)." AutomationProperties.Name="Committee model Premium" />
+                                                </StackPanel>
+                                            </Border>
+                                            <TextBlock x:Name="CommitteeSettingsHintText" Text="Not loaded yet" FontSize="10.5" Foreground="#FF6A6A6A" TextWrapping="Wrap" Margin="0,3,0,0" />
+                                        </StackPanel>
+
+                                        <TextBlock Text="SHORTS &amp; COSTS" Style="{StaticResource SubHeadStyle}" />
+                                        <Grid Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,10,0">
+                                                <TextBlock Text="Allow shorts" FontSize="11.5" Foreground="#FFBFBFBF" TextWrapping="Wrap" />
+                                                <TextBlock Text="Short sales use Reg T margin and pay borrow fees" TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,1,0,0" />
+                                            </StackPanel>
+                                            <CheckBox x:Name="AllowShortsToggle" Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}" VerticalAlignment="Center" IsChecked="True"
+                                                      Click="ParamToggle_Click" AutomationProperties.Name="Allow shorts" />
+                                        </Grid>
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Maximum gross short market value as a share of equity.">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Short exposure cap" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="ShortCapValueText" Text="30% of equity" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="ShortCapSlider" Style="{StaticResource ParamSliderStyle}" Minimum="0" Maximum="100" Value="30" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Short exposure cap" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Commission and slippage per fill in basis points (half in the price, half as a fee).">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Fees + slippage" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="FeesValueText" Text="5.0 bps" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="FeesSlider" Style="{StaticResource ParamSliderStyle}" Minimum="0" Maximum="50" Value="5" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Fees + slippage" />
+                                        </StackPanel>
+
+                                        <!-- ===== Crypto (24/7), 2026-09-26: crypto_* params (SPEC §3). Each control is enabled only when the
+                                             running backend serves its key in GET /fund/params (params or limits); older backends: disabled + hint. ===== -->
+                                        <TextBlock Text="CRYPTO (24/7)" Style="{StaticResource SubHeadStyle}" />
+                                        <TextBlock x:Name="CryptoSupportHintText" Visibility="Collapsed" Text="Not supported by the running backend (older version) — restart the Hedge Fund backend to update it."
+                                                   TextWrapping="Wrap" FontSize="10.5" Foreground="{StaticResource RiskBrush}" Margin="0,0,0,8" />
+                                        <TextBlock Text="Crypto pairs (e.g. BTC-USD) trade around the clock with fractional quantities. Shorts are simulated as perpetual futures: funding every 8 h — positive rate means longs pay shorts. Own margin and a liquidation fee; no borrow fee, dividends or short-sale rule."
+                                                   TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,0,0,10" />
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Commission and slippage per crypto fill in basis points.">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Crypto fees + slippage" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="CryptoFeesValueText" Text="20.0 bps" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="CryptoFeesSlider" Style="{StaticResource ParamSliderStyle}" Minimum="0" Maximum="100" Value="20" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Crypto fees and slippage in basis points" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Maximum size of one crypto position as a share of equity (crypto is more volatile than the ETFs).">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Crypto max position" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="CryptoMaxPosValueText" Text="3% of equity" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="CryptoMaxPosSlider" Style="{StaticResource ParamSliderStyle}" Minimum="0.5" Maximum="15" Value="3" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Crypto max position size in percent of equity" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Initial margin for a crypto perp short, in percent of its notional.">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Perp initial margin" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="CryptoInitialMarginValueText" Text="50%" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="CryptoInitialMarginSlider" Style="{StaticResource ParamSliderStyle}" Minimum="10" Maximum="100" Value="50" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Crypto perp initial margin in percent" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Maintenance margin for crypto perp shorts (at most the initial margin). Below it the position is liquidated and the liquidation fee is charged.">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Perp maintenance margin" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="CryptoMaintMarginValueText" Text="25%" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="CryptoMaintMarginSlider" Style="{StaticResource ParamSliderStyle}" Minimum="5" Maximum="100" Value="25" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Crypto perp maintenance margin in percent" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Simulated funding rate per 8 hours, signed. Positive: longs pay shorts (our perp shorts receive). Negative: shorts pay.">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Perp funding rate" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="CryptoFundingValueText" Text="+0.010% / 8 h" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="CryptoFundingSlider" Style="{StaticResource ParamSliderStyle}" Minimum="-0.5" Maximum="0.5" Value="0.01" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Crypto perp funding rate in percent per 8 hours, positive means longs pay shorts" />
+                                            <TextBlock x:Name="CryptoFundingHintText" Text="Shorts are simulated as perpetual futures: funding every 8 h — positive rate means longs pay shorts." TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,4,0,0" />
+                                        </StackPanel>
+                                        <StackPanel Margin="0,0,0,10" ToolTip="Fee charged on the notional when a crypto perp short is liquidated.">
+                                            <Grid Margin="0,0,0,6">
+                                                <TextBlock Text="Liquidation fee" Style="{StaticResource ParamLabelStyle}" />
+                                                <TextBlock x:Name="CryptoLiqFeeValueText" Text="0.5%" Style="{StaticResource ParamValueStyle}" />
+                                            </Grid>
+                                            <Slider x:Name="CryptoLiqFeeSlider" Style="{StaticResource ParamSliderStyle}" Minimum="0" Maximum="5" Value="0.5" ValueChanged="ParamSlider_ValueChanged" AutomationProperties.Name="Crypto liquidation fee in percent" />
+                                        </StackPanel>
+                                        <Grid Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,10,0">
+                                                <TextBlock Text="Risk watch" FontSize="11.5" Foreground="#FFBFBFBF" TextWrapping="Wrap" />
+                                                <TextBlock x:Name="CryptoRiskWatchHintText" Text="Risk watch: outside US hours no automatic trading — only ▶ Run now; open crypto positions are still checked for margin/funding every 30 min."
+                                                           TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,1,0,0" />
+                                            </StackPanel>
+                                            <CheckBox x:Name="CryptoRiskWatchToggle" Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}" VerticalAlignment="Center" IsChecked="True"
+                                                      Click="ParamToggle_Click" AutomationProperties.Name="Crypto risk watch outside US hours" />
+                                        </Grid>
+
+                                        <TextBlock Text="WATCHLIST" Style="{StaticResource SubHeadStyle}" />
+                                        <Grid Margin="0,0,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox x:Name="WatchlistInput" Text="" Style="{StaticResource InputBoxStyle}" Padding="6,4" CharacterCasing="Upper"
+                                                     AutomationProperties.Name="Watchlist symbols, comma separated" KeyDown="WatchlistInput_KeyDown" />
+                                            <Button x:Name="WatchlistApplyButton" Grid.Column="1" Style="{StaticResource RoundedDarkButtonStyle}" Content="Apply" Margin="8,0,0,0" Padding="10,3"
+                                                    Click="WatchlistApply_Click" />
+                                        </Grid>
+                                        <TextBlock x:Name="WatchlistHintText" Text="1–25 symbols, comma separated (e.g. SPY, QQQ, BTC-USD)." TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,0,0,10" />
+
+                                        <TextBlock Text="THIS COMPUTER" Style="{StaticResource SubHeadStyle}" />
+                                        <Grid Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,10,0">
+                                                <TextBlock Text="Mute notifications" FontSize="11.5" Foreground="#FFBFBFBF" TextWrapping="Wrap" />
+                                                <TextBlock Text="No Windows toasts for flips, autopilot orders, halts, margin calls and autopilot switch-offs" TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,1,0,0" />
+                                            </StackPanel>
+                                            <CheckBox x:Name="MuteToastsCheck" Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}" VerticalAlignment="Center"
+                                                      Click="MuteToastsCheck_Click" AutomationProperties.Name="Mute notifications" />
+                                        </Grid>
+                                        <Grid Margin="0,0,0,0" ToolTip="Takes effect at the next backend start. The engine then runs without the app (not bound to UFOS.ai, no output shown in the Backend Log); its output goes to backend/data/logs/process.log. UFOS.ai reuses the running engine on its next start. To stop it, use &quot;Stop engine…&quot; below (or end python.exe in Task Manager). Safety net: the autopilot switches itself off after the heartbeat time without UFOS.ai.">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,10,0">
+                                                <TextBlock Text="Keep the engine running after UFOS.ai closes (experimental)" FontSize="11.5" Foreground="#FFBFBFBF" TextWrapping="Wrap" />
+                                            </StackPanel>
+                                            <CheckBox x:Name="KeepRunningCheck" Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}" VerticalAlignment="Center"
+                                                      Click="KeepRunningCheck_Click" AutomationProperties.Name="Keep the engine running after UFOS.ai closes (experimental)" />
+                                        </Grid>
+                                        <!-- Stage 9b (strategy_platform SPEC §20.8): start the backend together with UFOS.ai (OFF by default). -->
+                                        <Grid Margin="0,10,0,0" ToolTip="Off by default. When on, UFOS.ai starts the Hedge Fund backend in the background when the app starts (the window does not open), so the MainWindow Portfolio Insight card has figures and opening Hedge Fund is faster. It is the same backend as when you open the Hedge Fund window: it also runs the paper engine (autopilot and auto trading are switched off at every start).">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,10,0">
+                                                <TextBlock Text="Start the Hedge Fund backend together with UFOS.ai" FontSize="11.5" Foreground="#FFBFBFBF" TextWrapping="Wrap" />
+                                                <TextBlock Text="In the background, without opening this window (also runs the paper engine; autopilot and auto trading stay off at start)" TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,1,0,0" />
+                                            </StackPanel>
+                                            <CheckBox x:Name="StartWithAppCheck" Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}" VerticalAlignment="Center"
+                                                      Click="StartWithAppCheck_Click" AutomationProperties.Name="Start the Hedge Fund backend together with UFOS.ai" />
+                                        </Grid>
+                                        <!-- Stop engine (2026-09-26): kill switch (POST /fund/kill) + POST /shutdown — the only
+                                             in-app way to end a detached engine. -->
+                                        <Grid Margin="0,10,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Margin="0,0,10,0" VerticalAlignment="Center">
+                                                <TextBlock Text="Stop engine" FontSize="11.5" Foreground="#FFBFBFBF" TextWrapping="Wrap" />
+                                                <TextBlock x:Name="StopEngineHintText" Text="Halts trading (kill switch), then ends the backend process — also a detached one" TextWrapping="Wrap" FontSize="10.5" Foreground="#FF6A6A6A" Margin="0,1,0,0" />
+                                            </StackPanel>
+                                            <Button x:Name="StopEngineButton" Grid.Column="1" Style="{StaticResource RoundedDarkButtonStyle}" Content="Stop engine…" Padding="10,3" VerticalAlignment="Center"
+                                                    Click="StopEngineButton_Click"
+                                                    AutomationProperties.Name="Stop engine: halt trading and end the Hedge Fund backend process"
+                                                    ToolTip="Runs the kill switch (autopilot off, all simulated positions closed), then shuts the Hedge Fund backend down. Asks for confirmation first. The Financial Newsroom goes offline too until the backend is started again (reopen the Hedge Fund window)." />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ===== History, backtest, exports ===== -->
+                    <Border BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,16,0,0">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,10">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                    <TextBlock Text="Run History" FontSize="13" FontWeight="SemiBold" Foreground="#FFBFBFBF" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="HistoryStatusText" Text="" FontSize="10.5" Foreground="#FF6A6A6A" Margin="10,1,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button x:Name="RefreshHistoryButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="Refresh" Padding="10,3" Click="RefreshHistory_Click" />
+                                    <Button x:Name="BacktestButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="Backtest…" Padding="10,3" Margin="8,0,0,0" Click="Backtest_Click"
+                                            ToolTip="Backtest the library strategy &quot;Council Rules (no AI)&quot; — the rule-only version of the Council of AIs — with the backtest engine v2 (daily bars, paper broker costs, optional stress tests) — no AI. Hypothetical results."
+                                            AutomationProperties.Name="Backtest the Council Rules (no AI) strategy" />
+                                    <Button x:Name="ExportOrdersButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="Export orders.csv" Padding="10,3" Margin="8,0,0,0" Click="ExportOrders_Click" />
+                                    <Button x:Name="ExportDecisionsButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="Export decisions.csv" Padding="10,3" Margin="8,0,0,0" Click="ExportDecisions_Click"
+                                            ToolTip="Recommendations with agent scores; AI-generated rationales keep their model and time columns." />
+                                </StackPanel>
+                            </Grid>
+                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="6,6">
+                                <StackPanel>
+                                    <StackPanel x:Name="HistoryPanel" />
+                                    <TextBlock x:Name="HistoryEmptyText" Text="No runs yet." FontSize="11" Foreground="#FF6A6A6A" Margin="8,6,8,6" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ===================== Library (created on first use, Platform/LibraryView) ===================== -->
+            <Border x:Name="LibraryHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
+
+            <!-- ===================== Studio (Strategy Platform stage 5a, created on first use, Platform/StudioView) ===================== -->
+            <Border x:Name="StudioHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
+
+            <!-- ===================== Loop (Strategy Platform stage 6, created on first use, Platform/LoopView) ===================== -->
+            <Border x:Name="LoopHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
+
+            <!-- ===================== Portfolio & Trading (Strategy Platform stage 7, created on first use, Platform/TradingView) ===================== -->
+            <Border x:Name="TradingHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
+
+            <!-- ===================== Monitoring + Shadow Account (Strategy Platform stage 9, created on first use) ===================== -->
+            <Border x:Name="MonitoringHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
+            <Border x:Name="ShadowHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
+
+            <!-- ===================== Research (Market Research MR1, created on first use, MarketResearch/ResearchView) =====================
+                 ONE ResearchView per window: it lives in ResearchViewHost, or — after "⧉ Pop out" — in
+                 MarketResearch/ResearchPopoutWindow; closing the pop-out moves it back here. While it is popped out,
+                 this area only says so (ResearchPoppedOutPanel). -->
+            <Grid x:Name="ResearchHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20">
+                <Border x:Name="ResearchViewHost" />
+                <StackPanel x:Name="ResearchPoppedOutPanel" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="Market Research is open in its own window." FontSize="12.5" Foreground="#FF9A9A9A" HorizontalAlignment="Center" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
+                        <Button Style="{StaticResource RoundedDarkButtonStyle}" Padding="12,4" Content="Show window" Click="ResearchShowPopout_Click"
+                                AutomationProperties.Name="Bring the Market Research window to the front" />
+                        <Button Style="{StaticResource RoundedDarkButtonStyle}" Padding="12,4" Margin="8,0,0,0" Content="Return here" Click="ResearchReturn_Click"
+                                AutomationProperties.Name="Close the Market Research window and show it here again" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

@@ -1,0 +1,24 @@
+{
+  "label": "stage10secui",
+  "approved": "lead for the user, 2026-10-24 (Stage 10 batch S10-A2, security audit fixes C#/XAML; companion of Agent H's python label stage10sec)",
+  "files": [
+    "UFOS.ai/Global Monitoring/MainWindow.xaml.cs",
+    "UFOS.ai/Global Monitoring/globe.html",
+    "UFOS.ai/ArticleWindow.xaml.cs",
+    "UFOS.ai/LiveStreamAgent/LivestreamAgent.xaml.cs",
+    "UFOS.ai/LiveStreamAgent/LivestreamAgent.xaml",
+    "UFOS.ai/Services/PythonEnvManager.cs",
+    "UFOS.ai/Services/OpenRouterClient.cs",
+    "UFOS.ai/Shared/WindowsPowerShell.cs",
+    "UFOS.ai/MainWindow.xaml",
+    "UFOS.ai/Global Monitoring/GlobalMonitoring.csproj",
+    "UFOS.ai/Global Monitoring/tools/fetch_world_atlas.py",
+    "UFOS.ai/Global Monitoring/vendor/land-110m.json",
+    "UFOS.ai/Global Monitoring/vendor/land-110m.json.*",
+    "UFOS.ai/Global Monitoring/vendor/MANIFEST",
+    "UFOS.ai/Global Monitoring/vendor/MANIFEST.*",
+    "UFOS.ai/Global Monitoring/vendor/LICENSE*",
+    "UFOS.ai/Shared/RotatingLogFile.cs"
+  ],
+  "note": "Global Monitoring/MainWindow.xaml.cs + globe.html: M4 WebView2 hardening (navigation/frame allow-list, token only to the NavigateToString page, downloads/permissions denied, CSP meta with a load-time script hash, pinned world-atlas@2.0.2), L4 powershell path, L7 notice wording. ArticleWindow.xaml.cs: M5 (downloads/permissions denied, DevTools + script dialogs off, InPrivate). LivestreamAgent.xaml.cs: L4 + explicit HttpClient timeout; LivestreamAgent.xaml: L8 yfinance attribution. Services/PythonEnvManager.cs: L4. Services/OpenRouterClient.cs: L1 base-URL check (https + openrouter.ai). Shared/WindowsPowerShell.cs (new): absolute powershell.exe path for every launch (L4). MainWindow.xaml: L8 data-source line. Backups in HedgeFund/backend/data/stage10secui-backup/ (*.pre-s10a.stale). Amendment (coordinator, 2026-10-24): world-atlas vendoring — tools/fetch_world_atlas.py (new; pinned world-atlas@2.0.2, registry + tarball sha512 == pin, writes vendor/ + MANIFEST), vendor/* (written by that tool on the user's PC), GlobalMonitoring.csproj (embeds the vendor files only when present). Amendment 2 (coordinator, L6 follow-up): Shared/RotatingLogFile.cs (new) — process.log of Global Monitoring (MainWindow.xaml.cs) and the Hedge Fund backend (NewsroomBackend.cs) rotated at 5 MB, 3 old files kept; the detached HF backend's log is rotated before each start."
+}
