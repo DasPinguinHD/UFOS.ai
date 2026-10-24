@@ -6,9 +6,12 @@ engines, per-account halts and resume.
   changed_by}): forced OFF at every backend start; ON needs an audit row first and is
   refused while an account is halted; OFF always works (cancels the queued runtime
   orders, positions kept).
-- **Heartbeat**: ``touch()`` (every authenticated platform GET) also touches the old
-  engine (``engine.touch_client``); ``last_seen()`` = the newer of both. Timeout = the
-  fund params' ``autopilot_heartbeat_minutes`` (one setting for both engines).
+- **Heartbeat**: ``touch()`` (every authenticated platform GET, and the app-wide
+  ``GET /v2/monitoring/alerts`` poll) also touches the old engine (``engine.touch_client``);
+  ``last_seen()`` = the newer of both. Timeout: before the Council switch-over the fund params'
+  ``autopilot_heartbeat_minutes``; from R2 on the platform setting hedgefund.db meta
+  ``autotrade.heartbeat_minutes`` (SP §22.4) — read explicitly, unreadable → fail closed (auto
+  trading off), never a silent default.
 - **Kill** (``kill_platform``): every platform account: halt (kind ``kill``), auto
   trading off, cancel all working orders, close all positions with protective OMS
   orders (queued while the market is closed), sub-ledgers of a flat symbol crossed
@@ -33,6 +36,11 @@ from .errors import TradingError
 logger = logging.getLogger(__name__)
 
 AUTOTRADE_KEY = "oms.autotrade"
+HEARTBEAT_KEY = "autotrade.heartbeat_minutes"        # SP §22.4, written by the R2 switch-over
+
+
+class HeartbeatUnreadable(Exception):
+    """The dead-man timeout cannot be read (callers fail closed)."""
 _state_lock = threading.RLock()
 _legacy_engine = None
 _last_seen: Optional[datetime] = None
@@ -66,9 +74,29 @@ def last_seen() -> Optional[datetime]:
     return max(vals) if vals else None
 
 
+def _switched_over() -> bool:
+    from strategy_platform.council import store as cl_store
+    return cl_store.switchover() in ("pending", "done")
+
+
 def heartbeat_minutes() -> float:
+    """The dead-man timeout. From the switch-over on: meta ``autotrade.heartbeat_minutes`` (5 … 240) — raises
+    HeartbeatUnreadable when missing / invalid / the state is unreadable (no silent default, SP §22.4)."""
     from strategy_platform.core import params as fund_params
     lim = fund_params.LIMITS["autopilot_heartbeat_minutes"]
+    try:
+        switched = _switched_over()
+    except Exception as ex:      # noqa: BLE001
+        raise HeartbeatUnreadable("the Council switch-over state is unreadable") from ex
+    if switched:
+        try:
+            raw = db.meta_get(HEARTBEAT_KEY)
+            m = float(json.loads(raw)["minutes"])
+        except Exception as ex:  # noqa: BLE001
+            raise HeartbeatUnreadable(f"{HEARTBEAT_KEY} is missing or unreadable") from ex
+        if not 5.0 <= m <= 240.0:
+            raise HeartbeatUnreadable(f"{HEARTBEAT_KEY} {m!r} is outside 5 … 240 minutes")
+        return m
     v = None
     eng = _legacy_engine
     if eng is not None:
@@ -92,10 +120,15 @@ def autotrade() -> dict:
         d = {}
     enabled = bool(d.get("enabled"))
     seen = last_seen()
-    hb = heartbeat_minutes()
-    return {"enabled": enabled, "heartbeat_minutes": hb,
+    hb_error = None
+    try:
+        hb = heartbeat_minutes()
+    except HeartbeatUnreadable as ex:
+        hb, hb_error = None, str(ex)
+    return {"enabled": enabled, "heartbeat_minutes": hb, "heartbeat_error": hb_error,
             "last_client_seen": seen.isoformat(timespec="seconds") if seen else None,
-            "off_at": (seen + timedelta(minutes=hb)).isoformat(timespec="seconds") if (enabled and seen) else None,
+            "off_at": (seen + timedelta(minutes=hb)).isoformat(timespec="seconds") if (enabled and seen and hb)
+            else None,
             "changed_at": d.get("changed_at"), "changed_by": d.get("changed_by")}
 
 
@@ -151,6 +184,11 @@ def set_autotrade(enabled: bool, actor: str = "user") -> dict:
                 raise TradingError(409, "halted", f"Account {', '.join(halted)} is halted — resume it before switching "
                                                   "auto trading on.")
             try:
+                heartbeat_minutes()
+            except HeartbeatUnreadable as ex:
+                raise TradingError(409, "heartbeat_unreadable", f"The dead-man timeout cannot be read ({ex}) — auto "
+                                                                "trading stays off.") from ex
+            try:
                 db.add_audit(actor, "autotrade", {"enabled": True})
             except Exception as ex:   # noqa: BLE001
                 raise TradingError(503, "audit_unavailable", AUDIT_UNAVAILABLE) from ex
@@ -188,6 +226,19 @@ def check_heartbeat(now: Optional[datetime] = None) -> bool:
         return False
     now = (now or accounts.now()).astimezone(timezone.utc)
     seen = last_seen()
+    if st["heartbeat_minutes"] is None:          # SP §22.4: unreadable timeout → fail closed
+        _write_autotrade(False, "engine")
+        n = _cancel_runtime_orders("cancelled: auto trading off (heartbeat setting unreadable)")
+        try:
+            db.add_audit("engine", "autotrade_heartbeat_off", {"last_client_seen": st["last_client_seen"],
+                                                               "timeout_minutes": None,
+                                                               "reason": f"heartbeat setting unreadable: "
+                                                                         f"{st['heartbeat_error']}",
+                                                               "cancelled_orders": n})
+        except Exception:      # noqa: BLE001
+            logger.exception("audit row autotrade_heartbeat_off failed")
+        logger.error("platform auto trading switched off: %s", st["heartbeat_error"])
+        return True
     if seen is not None and now - seen < timedelta(minutes=st["heartbeat_minutes"]):
         return False
     _write_autotrade(False, "engine")
@@ -226,8 +277,11 @@ def kill_account(acc, reason: str, kind: str, actor: str, prices: Optional[dict]
     with oms.lock_for(acc.id):
         acc.set_halt(True, kind, reason[:300])
         cancelled = oms.cancel_working(acc, f"cancelled: {reason[:100]}")
+        council_cancelled = None
         if acc.id == accounts.COUNCIL:          # SP §22.5 (N2): every kill forces the Council orders off
-            council_orders_off("kill" if kind == "kill" else "drawdown", actor, acc.id)
+            n_off = council_orders_off("kill" if kind == "kill" else "drawdown", actor, acc.id)
+            council_cancelled = sum(1 for o in cancelled if isinstance(o, dict) and o.get("origin") == "council") \
+                + int(n_off or 0)
         orders = []
         for p in acc.store.get_positions():
             side = "sell" if p["qty"] > 0 else "cover"
@@ -251,7 +305,10 @@ def kill_account(acc, reason: str, kind: str, actor: str, prices: Optional[dict]
                                       f"({len(orders)} order(s)). Paper trading · simulated money.")
         except Exception:        # noqa: BLE001
             logger.exception("kill event failed")
-    return {"account_id": acc.id, "cancelled": len(cancelled), "orders": orders}
+    out = {"account_id": acc.id, "cancelled": len(cancelled), "orders": orders}
+    if council_cancelled is not None:
+        out["council_cancelled"] = council_cancelled
+    return out
 
 
 def flatten_sources(acc, prices: Optional[dict] = None) -> int:
@@ -283,7 +340,7 @@ def flatten_sources(acc, prices: Optional[dict] = None) -> int:
     return len(rows)
 
 
-def kill_platform(reason: Optional[str] = None, actor: str = "user") -> dict:
+def kill_platform(reason: Optional[str] = None, actor: str = "user", via: Optional[str] = None) -> dict:
     reason = (str(reason).strip() if reason else "") or "Kill switch pressed"
     out = {"ok": True, "error": None, "accounts": []}
     try:
@@ -305,29 +362,51 @@ def kill_platform(reason: Optional[str] = None, actor: str = "user") -> dict:
             out["ok"] = False
             out["accounts"].append({"account_id": acc.id, "error": str(ex)[:200], "cancelled": 0, "orders": []})
     try:
-        db.add_audit(actor if actor in db.AUDIT_ACTORS else "user", "platform_kill",
-                     {"reason": reason, "accounts": [{"account_id": a["account_id"], "orders": len(a.get("orders") or [])}
-                                                     for a in out["accounts"]]})
+        detail = {"reason": reason, "accounts": [{"account_id": a["account_id"], "orders": len(a.get("orders") or [])}
+                                                 for a in out["accounts"]]}
+        if via:
+            detail["via"] = via              # the /fund/kill alias after R2 (SP §22.8, D6)
+        db.add_audit(actor if actor in db.AUDIT_ACTORS else "user", "platform_kill", detail)
     except Exception:            # noqa: BLE001
         logger.exception("audit row platform_kill failed")
     return out
 
 
-def kill_all(reason: Optional[str] = None, actor: str = "user") -> dict:
-    """POST /v2/oms/kill: the platform kill AND the old engine's kill (sync; call in a worker thread)."""
-    platform = kill_platform(reason, actor)
-    legacy = {"ok": True, "error": None, "halted": None}
+def kill_all(reason: Optional[str] = None, actor: str = "user", via: Optional[str] = None) -> dict:
+    """POST /v2/oms/kill (sync; call in a worker thread) → {"platform", "legacy", "council"} (SP §22.8).
+    Before the switch-over: the platform kill AND the old engine's kill (its closing orders passed through);
+    council not applicable. After it (``council.switchover = done``): the legacy half is "not applicable" (never a
+    failure); the council half reports the forced-off Council switch and its cancelled orders (paper-council's
+    positions are closed by the platform half)."""
+    try:
+        from strategy_platform.council import store as cl_store
+        state = cl_store.switchover()
+    except Exception:            # noqa: BLE001 — unreadable: report both halves as before (fail safe: kill all)
+        cl_store, state = None, "unreadable"
+    platform = kill_platform(reason, actor, via)
+    if state in ("done", "pending"):        # pending: the old engine is already stopped (review minor 4)
+        legacy = {"ok": True, "applicable": False, "note": "not applicable — switched over to the Council",
+                  "error": None, "halted": None}
+        n = council_orders_off("kill", actor)
+        acc_res = next((a for a in platform.get("accounts") or [] if a.get("account_id") == accounts.COUNCIL), None)
+        cancelled = int((acc_res or {}).get("council_cancelled") or 0) + int(n or 0)
+        enabled = cl_store.orders_enabled()
+        council = {"applicable": True, "ok": not enabled, "orders_enabled": enabled, "cancelled_orders": cancelled,
+                   "error": None if not enabled else "the Council orders switch could not be forced off"}
+        return {"platform": platform, "legacy": legacy, "council": council}
+    legacy = {"ok": True, "error": None, "halted": None, "orders": []}
     eng = _legacy_engine
     if eng is None:
-        legacy = {"ok": False, "error": "the old engine is not running", "halted": None}
+        legacy = {"ok": False, "error": "the old engine is not running", "halted": None, "orders": []}
     else:
         try:
             res = _run_coro(eng.kill((reason or "")[:200] or None, actor, propagate=False))
             legacy["halted"] = bool(res.get("halted"))
+            legacy["orders"] = list(res.get("orders") or [])
         except Exception as ex:  # noqa: BLE001
             logger.exception("kill (old engine half) failed")
-            legacy = {"ok": False, "error": f"{type(ex).__name__}: {ex}"[:200], "halted": None}
-    return {"platform": platform, "legacy": legacy}
+            legacy = {"ok": False, "error": f"{type(ex).__name__}: {ex}"[:200], "halted": None, "orders": []}
+    return {"platform": platform, "legacy": legacy, "council": {"applicable": False}}
 
 
 _loop_ref = None
@@ -346,7 +425,7 @@ def _run_coro(coro):
     return asyncio.run(coro)
 
 
-def resume(account_id: str, reason: str, actor: str = "user") -> dict:
+def resume(account_id: str, reason: str, actor: str = "user", via: Optional[str] = None) -> dict:
     from strategy_platform.execution.paper_broker import StateUnavailable
     acc = accounts.get(account_id)
     if getattr(acc, "is_broker", False):
@@ -369,8 +448,10 @@ def resume(account_id: str, reason: str, actor: str = "user") -> dict:
         raise TradingError(503, "valuation_paused", f"The account cannot be valued ({ex}) — cannot resume safely "
                                                     "(the drawdown peak could not be rebased). Try again later.")
     try:
-        db.add_audit(actor, "platform_resume", {"account_id": acc.id, "was": acc.halt(), "reason": reason,
-                                               "peak_equity_rebased_to": view.equity})
+        detail = {"account_id": acc.id, "was": acc.halt(), "reason": reason, "peak_equity_rebased_to": view.equity}
+        if via:
+            detail["via"] = via              # the /fund/resume alias after R2 (SP §22.8, D6)
+        db.add_audit(actor, "platform_resume", detail)
     except Exception as ex:      # noqa: BLE001
         raise TradingError(503, "audit_unavailable", AUDIT_UNAVAILABLE) from ex
     acc.set_halt(False)

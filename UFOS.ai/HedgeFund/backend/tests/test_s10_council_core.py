@@ -39,7 +39,7 @@ def switched_over(on=True):
 
 class V25Test(TradingCase):
     def test_tables_insert_only(self):
-        self.assertEqual(db.SCHEMA_VERSION, 25)
+        self.assertGreaterEqual(db.SCHEMA_VERSION, 26)      # v26: unique legacy old ids (R2 review M1)
         rid = cs.create_run("manual", FRI, None, "open", False, False)
         cs.finish_run(rid, FRI, "ok", "llm", 0.01, {"x": 1})
         cs.save_signals(rid, [{"symbol": "SPY", "agent": "technical", "score": 0.2, "confidence": 0.5,

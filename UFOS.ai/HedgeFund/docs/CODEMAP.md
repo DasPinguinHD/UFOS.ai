@@ -18,6 +18,9 @@ Status: 2026-10-23 (first version, built read-only from the repo). Repo root on 
   - `*.stale` files are backups.
   - `backend/data/` is runtime data and git-ignored.
   - `bin/`, `obj/` and `HedgeFundApp/obj` are build output.
+- Vendored files (`**/vendor/**`, e.g. the KLineChart bundle, the world atlas) are pinned by sha256 in their
+  `MANIFEST`; the root `.gitattributes` line `**/vendor/** -text` keeps git from rewriting their line endings (the
+  klinecharts CRLF incident, 2026-10-24) — never re-save or normalise them; update only via their fetch tools.
 - Moving targets (2026-10-23):
   - OS0 / OS1 backend are done (2026-10-24); the OS1 WPF card (Keys & data → Data sources) may still be in progress.
   - fix1023 changed several endpoints and dialogs (confirm words dropped, notes optional).
@@ -55,6 +58,7 @@ Scope rule:
 | `HedgeFundWindow.xaml.cs` | 3280 | Old-engine dashboard (`/fund/*`, FUND §11/§13): polls `/fund/state` 5 s, chips, agents, verdict, orders, kill / resume, sandbox strip, nav switching |
 | `HedgeFundWindow.{Studio,Loop,Trading,Monitoring}.cs` | 20–95 | Nav-rail entries: create Platform views on first use |
 | `HedgeFundWindow.{ExplainBudget,IdeationBudget,CommitteeSettings}.cs` | 100–150 | Engine-settings rows for the AI budgets (SP §11.2, §13.1, §14.3) |
+| `HedgeFundWindow.Council.cs` | 80 | S10-C R3: hosts the Council view (`CouncilHost`), hides the old-engine sections (`Legacy*`) and stops `/fund/state` polling once `council.switchover` is done / pending; "Resume…" dialog (halted accounts + old engine only before the switch-over) |
 | `HedgeFundBackendHost.cs` | 46 | Public facade over `NewsroomBackend` for the main app (start / IsRunning) |
 | `App.xaml(.cs)`, `HedgeFundApp/` | — | Standalone start (HedgeFundApp.exe) |
 | `Styles/ScrollBars.xaml` | 180 | The one scroll-bar design of the module |
@@ -66,7 +70,7 @@ Scope rule:
 | `FundClient.cs` | 750 | Typed client `/fund/*` + DTOs (`FundState` incl. `mode` / `sandbox`), `KillAsync` (150 s) |
 | `FundWindows.cs` | 1020 | **UI kit:** `FundPalette` (colours), `FundUi` (Text, MakeButton, Panel, wheel scrolling, `FixtureLine`), `FundPopupWindow` (borderless dialog base, maximize/work-area, **open-once `ShowDialog`**), `FundDialogs` (Confirm / Form / Info), `DialogGuard` (one-at-a-time key guard for load-then-open actions) |
 | `FundFormat.cs` | 127 | Money / percent / time formatting (invariant) |
-| `FundNotifications.cs` | 350 | App-wide toasts for `/fund/events` |
+| `FundNotifications.cs` | 400 | App-wide toasts for `/fund/events` until the switch-over (410 "replaced" / Council view → stops; the Council's events come as monitoring alerts via `MonitoringNotifier`); `SourceProblem` shown, never silent |
 | `FundSettings.cs` | 166 | Per-user JSON settings in `%LOCALAPPDATA%\UFOS.ai` (start-with-app, mute, toasts) |
 | `EquityChart.cs` | 162 | Equity vs benchmark line chart (OnRender) |
 
@@ -86,7 +90,8 @@ Clients (one partial `PlatformClient` per SP stage). All go through `PlatformCli
 | `PlatformClient.Studio.cs` | §13 | `/v2/studio/*`, ideation budget |
 | `PlatformClient.Papers.cs` / `.Committee.cs` | §14 | `/v2/papers*`, `/v2/committee*` |
 | `PlatformClient.Loops.cs` | §16 | `/v2/loops*` |
-| `PlatformClient.Trading.cs` | §17 | `/v2/portfolio/*`, `/v2/oms/*`, `/v2/incubation*` (submit timeout 150 s, `OrderNoAnswerText`) |
+| `PlatformClient.Trading.cs` | §17 | `/v2/portfolio/*`, `/v2/oms/*`, `/v2/incubation*` (submit timeout 150 s, `OrderNoAnswerText`); kill result with platform / legacy / council halves (§22.8) |
+| `PlatformClient.Council.cs` | §22.11 | `/v2/council/{state,runs,run,orders,params,switchover,switchover/retry,switchover/abort,switchover/revert}` + DTOs (switch-over 180 s; pending attempt + actions, SWITCHOVER_FIX_API) |
 | `PlatformClient.Brokers.cs` | §18 | `/v2/brokers*`, routing, live guard (read) |
 | `PlatformClient.Monitoring.cs` | §19 | `/v2/monitoring/*` (decay decision, alerts, reports) |
 | `PlatformClient.Shadow.cs` | §19.6–8, §20.10–11 | `/v2/shadow/*` |
@@ -112,6 +117,7 @@ Views and dialogs:
 | `LoopView.cs` / `LoopDialogs.cs` | 1790 / 900 | §16 | Discovery loop list / detail / finalists; start + settings dialogs |
 | `TradingView.cs` | 1250 | §17.13 | Portfolio & Trading header, accounts, positions, auto-trading, resume, new order; `InFlightButton` (button disabled while its request runs) |
 | `TradingView.Sections.cs` | 1470 | §17.13 | Strategies, Netting, Orders, Incubation, Migration, Risk-limit sections |
+| `CouncilView.cs`, `CouncilDialogs.cs` | 360/330 | §22.8, §22.11 | S10-C R3: Council view (header, budget, Run now, orders switch, AI budget…, Switch over… / Revert…, symbol cards with AI labelling, recent runs; 15 s poll); switch-over dialog (dry run → POST), revert confirm, `ResumeDialog` |
 | `TradingDialogs.cs` | 770 | §17 | `TradingUi` kit (incl. `SetBusy`, `NoteBox`), generic confirm dialog, incubation start, settings, migration, order (timeout lookup) |
 | `KeysAndDataWindow.xaml(.cs)` | 740 | §2, §4 | "⚙ Keys & data": Credential Manager key rows, data sources, `.env` import |
 | `KeysAndDataWindow.Brokers.cs` | 1300 | §18.12 | Brokers section: test / connect / disconnect / kill / reconcile, routing, live-guard checklist |
@@ -128,7 +134,7 @@ Views and dialogs:
 | `MonitoringView.Insights.cs` | 523 | §20 | Portfolio insights tab |
 | `MonitoringDialogs.cs` | 127 | §19.2 | Keep running / Demote decision dialog |
 | `MonitoringUi.cs` | 740 | §19.13 | Shared monitoring widgets (`MonUi`), band chart, explain-report panel |
-| `MonitoringNotifier.cs` | 193 | §19.3 | App-wide toasts for monitoring alerts |
+| `MonitoringNotifier.cs` | 230 | §19.3, §22.8 | App-wide toasts for monitoring alerts (incl. the Council's `council_*` kinds after the switch-over); `PollProblem` shown in Monitoring + the Council view |
 | `ShadowAccountView.cs` | 1092 | §19.6–8 | Shadow Account (user's own broker CSV imports) |
 | `ShadowDialogs.cs` | 954 | §19.6–8 | New account, valuation, classification, column-mapping profile |
 | `ShadowSymbolDialogs.cs` | 600 | §20.10–11 | ISIN → listing / US ticker mapping (US: `GET /v2/shadow/symbol-check` first, Alpaca name shown), mappings window, EODHD refresh flow |
@@ -189,7 +195,7 @@ API routes (all `(query, body, match) -> (status, payload)`, behind api_auth):
 | `api/broker_routes.py` | 336 | `/v2/brokers*`, `/v2/brokers/routing`, live guard (SP §18.9) |
 | `api/monitoring_routes.py` | 741 | `/v2/monitoring/*`, `/v2/shadow/*`, `/v2/insights/*` (SP §19.10, §20) |
 | `api/options_archive_routes.py` | 172 | `/v2/options-archive/{status,gaps,runs,registration}` read-only + `POST …/audit` (SP §21.11; sandbox → 409) |
-| `api/council_routes.py` | 290 | `/v2/council/{state,runs,runs/{id},run,params,broker-params,orders}` (SP §22.11; S10-C R1 — switch-over / revert routes come with R2) |
+| `api/council_routes.py` | 380 | `/v2/council/{state,runs,runs/{id},run,params,broker-params,orders}` + R2 `GET/POST /v2/council/switchover`, `POST …/switchover/{revert,retry,abort}` (SP §22.11, §22.14) |
 
 Subpackages:
 
@@ -201,7 +207,7 @@ Subpackages:
 | `core/venv_guard.py`, `core/notices.py` | small | §23.2 | Tools refuse a non-backend Python (stdlib only); context notices (= `Shared/AiContent.cs` (a)/(b)/(c) + short context lines) — S10-H |
 | `core/params.py`, `core/types.py` | 240–400 | §22.7 (FUND §3, §4) | Broker / engine parameters (defaults, limits, validation, crypto rules) and the shared dataclasses (`Bar`, `Quote`, `OrderRequest`, …) — moved from `fund/` (S10-C M1+M2); `fund/params.py` / `fund/types.py` are temporary same-module shims until R4 |
 | `core/llm.py` | 485 | §22.7 (FUND §8, §0) | OpenRouter client, `Budget`, cost log (`fund-*` / `sp-*` features), `TRANSPORT` test hook — moved from `fund/llm.py` (M3); model ids only via `newsroom.ai.analysis_models()` (S10-E settings source), never the environment |
-| `storage/db.py` | 3025 | §5 | **hedgefund.db** schema + all access (migrations v1…v25 — v24 = fix1023 `sh_symbol_maps.confirmed_via`, v25 = S10-C `cl_*` Council tables, insert-only; tables §3.7) |
+| `storage/db.py` | 3025 | §5 | **hedgefund.db** schema + all access (migrations v1…v25 — v24 = fix1023 `sh_symbol_maps.confirmed_via`, v25 = S10-C `cl_*` Council tables, insert-only, v26 = unique legacy `old_id` indexes; meta `schema.created_version`; tables §3.7) |
 | `data/registry.py` | 327 | §3 | One configured source per data type (no fallback chains) |
 | `data/http_gate.py` | 606 | §3, §21 | Token buckets (alpaca 150/min + burst 10, tiingo 20/min), retries (3 attempts), Research priority lane |
 | `data/cache.py`, `pit.py`, `validation.py`, `licences.py` | 50–350 | §3 | Bar cache (table `bars`), point-in-time rules, bar findings, licence terms |
@@ -235,10 +241,11 @@ Subpackages:
 | `execution/oms.py` | 721 | §17.7 | OMS state machine (`oms_orders` + events), idempotent client order id |
 | `execution/paper_broker.py` | 1345 | §22.7 (FUND §6) | `PaperBroker` long/short simulation (backtest, platform paper accounts, mirror valuation, the old engine) — moved from `fund/broker.py` (M5) |
 | `execution/accounts.py`, `paper_store.py` | 260–480 | §17.1, §17.8 | Platform paper accounts + their SQLite book |
-| `execution/control.py` | 351 | §17.1, §17.6 | Auto-trading switch, shared heartbeat (dead-man), kill switch for both engines |
+| `execution/control.py` | 430 | §17.1, §17.6, §22.8 | Auto-trading switch, shared heartbeat (dead-man; from R2 the meta `autotrade.heartbeat_minutes`, fail closed), kill switch (`kill_all` → platform / legacy / council halves), `council_orders_off` |
 | `execution/migration.py` | 395 | §17.9 | Old account → `paper-council` (one-way) |
-| `council/service.py` | 790 | §22.1, §22.5 | S10-C: the Council as a platform strategy — one cycle (agents → judge → sizing → order step under `oms.lock_for`, origin `council`, D7 market-closed rule), schedule (`next_due`), "Run now", D11 crypto expiry; `default()` built in `main.py`, NOT started before R2 |
+| `council/service.py` | 790 | §22.1, §22.5 | S10-C: the Council as a platform strategy — one cycle (agents → judge → sizing → order step under `oms.lock_for`, origin `council`, D7 market-closed rule), schedule (`next_due`), "Run now", D11 crypto expiry; `default()` built in `main.py`; started at start-up when switched over (or by the switch-over itself) |
 | `council/store.py`, `params.py`, `spend.py` | 145–360 | §22.2–22.4 | `cl_*` access + switch-over / orders meta; Council params + broker override (D9) + agent view; the ONE AI spend counter booked with its `cl_ai_calls` row |
+| `council/switchover.py` | 700 | §22.8, §22.14 | R2: preconditions / dry run / run (old engine stopped in-process, ONE transaction: params copy, heartbeat setting, spend seed, legacy import above the high-water mark) / `retry` / `abort` / `recover` / `revert`; one operation at a time; a failed attempt stays `pending` + `last_error` — the real run ONLY from the user's dialog |
 | `council/agents/{technical,risk,sentiment}.py`, `judge.py`, `sizing.py`, `indicators.py` | 100–560 | FUND §7–§9 | Council agents / judge / sizing — copies of the `fund/` modules (R4 removes the originals) |
 | `execution/brokers/service.py` | 1026 | §18.1–18.9 | Test / connect / disconnect, routing, per-broker kill, `run_forever` poller |
 | `execution/brokers/mirror.py`, `reconcile.py` | 420–630 | §18.4–18.5 | Mirror book (+ `RetiredAdapter` for history rows of a retired broker, S10-K); reconciliation (mismatch halts) |
@@ -314,6 +321,7 @@ Subpackages:
 | `backend/tools/verify_alpaca_options.py` | OS0 read-only Alpaca options + FRED VIX check (SP §21.9; transport from `options_archive/transport.py`, per-endpoint timeouts, one counted retry, sanitized reasons, exit 0/1/2/3/4) |
 | `backend/tools/options_archive.py` | OS1 archive CLI: `service` (the scheduled task) / `run-once` / `run-slot` / `status` / `gaps` (SP §21.11, exit 0–7) |
 | `HedgeFund/tools/scope_guard.py` | Scope guard (`snapshot` / `check` / `amend` / `close`) |
+| `HedgeFund/tools/check_shared_cs_members.py` | Static check: duplicate member / type names in `UFOS.ai/Shared/*.cs` (linked into 4 assemblies; test `tests/test_s10_shared_cs.py`) |
 | `HedgeFund/tools/check_no_env_cs.py` | S10-E guard: no C#/XAML code reads `.env` or a secret env var (test `tests/test_s10_env_cs_guard.py`) |
 | `backend/tools/make_lockfile.py` | S10-E: writes `requirements.lock` / `requirements-broker.lock` (`==` pins + sha256); `--update` refreshes (the user runs it — no PyPI from the agent machines) |
 
@@ -340,10 +348,10 @@ Never open the real `*.db` files in tests. Use copies in a temp dir.
 
 | Task | Code | What |
 |---|---|---|
-| fund engine | `fund/engine.py` | Old-engine cycles (first cycle 20 s after the start) |
+| fund engine | `fund/engine.py` | Old-engine cycles (first cycle 20 s after the start) — only while NOT switched over (`start()` refuses after R2) |
 | newsroom collectors + prune | `newsroom/*_collector.py`, `main._prune_forever` | SEC EDGAR 120 s, FRED / calendar 6 h, daily prune |
 | `sp-runtime` | `live/runtime.py` | Strategy runtime (platform accounts) |
-| Council (R2+) | `council/service.py run_forever` | Built in `main.py` (`service.default()`) but NOT started until the R2 switch-over build |
+| `council-cycle` | `council/service.py run_forever` | Runs when `council.switchover = done` (then no `fund engine` task); scheduled cycles only in the session after the grace |
 | `sp-brokers` | `execution/brokers/service.py run_forever` | 15 s broker poller / reconciliation |
 | `sp-monitor` | `monitoring/service.py run_forever` | Audit scan, broker link watch (30 s), decay checks, reports |
 | Research supervisor | `market_research/supervisor.py` | Hub, asset refresh, store maintenance, alerts |
@@ -535,6 +543,7 @@ Location: `backend/tests/` (unittest, no network, fakes; testkits `*_testkit.py`
 | `test_s10_council_core`, `test_s10_council_service`, `test_s10_council_routes` | S10-C R1: v25 tables, params, `plan_target`, origin `council`; cycle / D7 / D8 / schedule / Run now / D11; `/v2/council/*` + core/llm settings source |
 | `test_s10_council_parity` (+ `council_parity_testkit.py`) | SP §22.10 parity gate: old engine vs Council in lockstep from the real §17.9 migration (`UFOS_PARITY_SESSIONS`, default 2; 60 = the full window, run separately), D7, schedule equivalence |
 | `test_s10_council_parity_scenarios` (+ `council_parity_real_bars.json`) | SP §22.10 scenarios (judge unavailable, model modes, short / sizing rules, reversals, gates, drawdown, data outages, budget day, restarts), the no-wall-clock check (`WallClockSpy`), the frozen real-data fixture |
+| `test_s10_council_switchover` | S10-C R2: preconditions, the switch-over transaction, kill / resume / 410 after R2, heartbeat setting, AI budget, pending recovery, revert; review fixes (two-thread double import, pending + retry / abort, recovery failure, minors) |
 | `test_s10_hardening`, `test_s10_security`, `test_sp_broker_retired`, `test_s10_env_cs_guard`, `test_s10_env`, `test_s10_lockfile` | S10-H (venv guard, calendar 2028–2030, races, notices parity), S10-A1 security, S10-K retirement guard, S10-E (C# `.env` guard, python env guard + settings, lock files) |
 | `test_os_*` | OS0 (options check, preregistration), OS1 archive (`test_os_archive_*` incl. `_round2` review fixes, testkit `os_archive_testkit.py`) |
 | `test_ai_budgets`, `test_usage`, `test_cost_ledger` | AI budgets / ledger |

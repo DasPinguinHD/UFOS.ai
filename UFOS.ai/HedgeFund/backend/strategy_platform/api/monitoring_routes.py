@@ -162,7 +162,7 @@ class MonitoringRoutesMixin:
                 errors["unacked"] = "0 | 1"
         if errors:
             return _bad(errors)
-        self._touch()
+        self._touch()          # SP §22.5: the app-wide MonitoringNotifier poll is the client heartbeat (R2 + R3)
         err, payload = await self._trading(alerts.list_alerts, after, limit, bool(unacked))
         return err or (200, payload)
 

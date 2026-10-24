@@ -2,7 +2,8 @@
   "label": "stage10git",
   "approved": "user, 2026-10-24 16:15 (relayed by the coordinator): narrow the root .gitignore docs/ rule to the repo-root docs folder so UFOS.ai/HedgeFund/docs/ and UFOS.ai/docs/ are versioned; the private root docs/ (incl. todo.md), CLAUDE.md and the 2nd todo copy UFOS.ai/docs/todo.md stay ignored",
   "files": [
-    ".gitignore"
+    ".gitignore",
+    ".gitattributes"
   ],
-  "note": "Only the docs/ line changes (-> /docs/) and an explicit /UFOS.ai/docs/todo.md ignore is added; CLAUDE.md stays ignored everywhere. Backup: HedgeFund/backend/data/stage10git-backup/.gitignore."
+  "note": "Only the docs/ line changes (-> /docs/) and an explicit /UFOS.ai/docs/todo.md ignore is added; CLAUDE.md stays ignored everywhere. Backup: HedgeFund/backend/data/stage10git-backup/.gitignore. Amendment 1 (lead, 2026-10-24): root .gitattributes gains '**/vendor/** -text' - vendor files must keep their bytes (sha256-pinned in vendor/MANIFEST; a CRLF checkout broke the klinecharts hashes, chart error engine_modified). Change made by the lead; allow-listed here by Agent H."
 }

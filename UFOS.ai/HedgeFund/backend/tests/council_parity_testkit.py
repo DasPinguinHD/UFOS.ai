@@ -1,6 +1,7 @@
 """Stage 10 S10-C R1 — the Council parity harness (SP §22.10): the OLD path (``fund.engine.FundEngine`` full cycles on a
 temp newsroom.db copy of the old account) against the NEW path (``council.service`` + the platform runtime's
-housekeeping on a temp hedgefund.db, after the REAL §17.9 migration of the same old account), both driven by ONE
+housekeeping on a temp hedgefund.db, after the REAL §17.9 migration and the REAL R2 switch-over of the same old
+account), both driven by ONE
 injected clock on identical ticks, a deterministic fake market (daily bars, intraday quotes, headlines, no
 dividends) and ONE scripted fake LLM keyed by (feature, canonical request hash).
 
@@ -38,10 +39,10 @@ from strategy_platform.core import calendars
 from strategy_platform.core import params as P
 from strategy_platform.core.llm import LlmUnavailable
 from strategy_platform.core.types import Bar, OrderRequest, Quote
-from strategy_platform.council import params as cp
 from strategy_platform.council import service as svc_mod
 from strategy_platform.council import spend
 from strategy_platform.council import store as cs
+from strategy_platform.council import switchover
 from strategy_platform.execution import accounts, control, migration, oms
 from strategy_platform.execution.paper_broker import PaperBroker
 from strategy_platform.storage import db
@@ -318,13 +319,20 @@ class Harness:
         eng0.platform_migrated_fn = migration.platform_migrated
         control.set_legacy_engine(eng0)
         self.migration = migration.run(None, "", "user", eng0)
+        # NEW path: the REAL R2 switch-over (SP §22.8) on the migrated temp store — Council params copied from the
+        # old ones, heartbeat setting, spend seed (temp cost log), legacy import; then the user's "orders on"
+        cost_log = os.path.join(case.tmp, "ai-cost-log.jsonl")
+        prev_log = os.environ.get("UFOS_AI_COST_LOG")
+        os.environ["UFOS_AI_COST_LOG"] = cost_log
+        case.addCleanup(lambda: os.environ.pop("UFOS_AI_COST_LOG", None) if prev_log is None
+                        else os.environ.__setitem__("UFOS_AI_COST_LOG", prev_log))
+        svc_mod.set_default(svc_mod.CouncilService(self.world, clock=case.clock, llm=self.llm.for_path("new"),
+                                                   sandbox_fn=lambda: False))      # blocker council_unavailable
+        case.addCleanup(svc_mod.set_default, None)
+        self.switchover = asyncio.run(switchover.run("parity harness", "user", eng0))
         control.set_legacy_engine(None)
         newsroom_db.close()
         assert newsroom_db.init(self.old_db, legacy="")
-        # NEW path: what the R2 switch-over will write (Council params from the old ones, switched over, orders on)
-        council, _notes = cp.from_old(fund_store.effective_params()[1])
-        cs.add_params(council, "system", "parity harness (R2 switch-over stand-in)", "migration")
-        db.meta_set(cs.META_SWITCHOVER, json.dumps({"state": "done"}))
         cs.set_orders_enabled(True, "user", "parity")
         control._write_autotrade(True, "user")
         # OLD path: the engine on the copy, autopilot on

@@ -501,8 +501,11 @@
             <ScrollViewer x:Name="OverviewScroll" Grid.Column="1" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="20,0,20,20">
 
-                    <!-- ===== Engine header: watchlist chips + status line ===== -->
-                    <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
+                    <!-- ===== S10-C R3: the Council of AIs as a platform strategy (Platform/CouncilView.cs; SPEC §22.11) ===== -->
+                    <Border x:Name="CouncilHost" />
+
+                    <!-- ===== Engine header: watchlist chips + status line (old engine — hidden after the switch-over) ===== -->
+                    <Border x:Name="LegacyEngineHeader" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
                         <StackPanel>
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -541,8 +544,8 @@
                         <TextBlock x:Name="HaltBannerText" Text="" FontSize="11.5" Foreground="#FFF4A197" TextWrapping="Wrap" />
                     </Border>
 
-                    <!-- ===== Three-column signal / verdict / portfolio grid ===== -->
-                    <Grid>
+                    <!-- ===== Three-column signal / verdict / portfolio grid (old engine — hidden after the switch-over) ===== -->
+                    <Grid x:Name="LegacyDashboardGrid">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="300" />
                             <ColumnDefinition Width="*" />
@@ -885,8 +888,8 @@
                         </StackPanel>
                     </Grid>
 
-                    <!-- ===== Execution: manual / autonomous + engine settings ===== -->
-                    <Border BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,16,0,0">
+                    <!-- ===== Execution: manual / autonomous + engine settings (old engine — hidden after the switch-over) ===== -->
+                    <Border x:Name="LegacyExecutionSection" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,16,0,0">
                         <StackPanel>
                             <Grid Margin="0,0,0,14">
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
@@ -1345,8 +1348,8 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- ===== History, backtest, exports ===== -->
-                    <Border BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,16,0,0">
+                    <!-- ===== History, backtest, exports (old engine — hidden after the switch-over) ===== -->
+                    <Border x:Name="LegacyHistorySection" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,16,0,0">
                         <StackPanel>
                             <Grid Margin="0,0,0,10">
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">

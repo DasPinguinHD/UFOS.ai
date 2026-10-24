@@ -8058,7 +8058,7 @@ touched — all tests use temp dirs and a fake transport.
   (pending the user's confirmation, §21.2).
 
 
-## 22. Stage 10 — Council of AIs migration (CONTRACT rev. 3 — approved for implementation (review 2026-10-24); batch S10-C; D1–D4, D7, D12 confirmed by the user; module moves M1–M6 DONE; R1 built 2026-10-24 (build-only, no switch-over) — as-built §22.13)
+## 22. Stage 10 — Council of AIs migration (CONTRACT rev. 3 — approved for implementation (review 2026-10-24); batch S10-C; D1–D4, D7, D12 confirmed by the user; module moves M1–M6 DONE; R1 built 2026-10-24; deliberate differences approved 2026-10-24 17:59; R2 (backend) built 2026-10-24 — the real switch-over only by the user in the app — as-built §22.13 / §22.14)
 
 Basis: SP §15 ("Stage 10 — the Council of AIs is migrated into the new platform as a strategy (parity test against the
 old engine), then a SAFE and CAREFUL cleanup"), the approved deletion list `HedgeFund/docs/STAGE10_DELETION_LIST.md`
@@ -8429,7 +8429,7 @@ and leaves no empty package `__init__` behind:
 
 - `GET /v2/council/state` → `{"active": bool, "switchover": "none|pending|done|reverted", "task": "idle|running|not_active|sandbox", "orders_enabled": bool, "label": "not validated — AI strategy", "record": {"since": "…", "days": n}, "next_due_at": "…Z"|null, "budget": {"limit_usd": x, "spent_usd": y|null, "status": "ok|reached|off|unreadable"}, "last_run": <run>|null, "symbols": [{"symbol", "action", "confidence", "judge_source", "rationale", "ai_generated", "provenance", "agents": [{"agent", "score", "confidence", "summary", "source"}], "target_weight", "position": {"qty", "weight"}, "execution": {"outcome", "reason", "client_order_id", "order_state" (read from the OMS)}|null, "unavailable_reason"}]}`
 - `GET /v2/council/runs?limit=1..200` → `{"runs": [<run>]}`, `<run>` = `{"id", "trigger", "started_at", "finished_at", "status", "judge_mode", "cost_usd", "params_version", "orders_enabled", "legacy", "summary"}`; `GET /v2/council/runs/{id}` → `<run>` + `signals`, `decisions`, `executions`, `ai_calls`.
-- `POST /v2/council/run` (§22.5) · `GET /v2/council/params` → `{"version", "params", "limits"}` · `PUT /v2/council/params {params…, reason?}` → new version (strict, unknown keys 400) · `PUT /v2/council/orders {"enabled": bool, "reason"?}` → `{"orders_enabled", "audit_id"}` (409 `halted` / 503 audit) · `POST /v2/council/switchover` / `…/revert` (dialogs, preconditions as 409 blockers list). Errors `{error, code}`, never a stack trace.
+- `POST /v2/council/run` (§22.5) · `GET /v2/council/params` → `{"version", "params", "limits"}` · `PUT /v2/council/params {params…, reason?}` → new version (strict, unknown keys 400) · `PUT /v2/council/orders {"enabled": bool, "reason"?}` → `{"orders_enabled", "audit_id"}` (409 `halted` / 503 audit) · `GET /v2/council/switchover` → dry run `{ok, blockers, state, parity_accepted, params: {from_version, council, notes}, heartbeat_minutes, spend_seed_usd, legacy: {runs, signals, recommendations, hwm_before, hwm_after}}` · `POST /v2/council/switchover {reason?}` → `200 {state: "done", tx, params_version, spend_seed_usd, legacy, hwm, …}` / 409 `sandbox` / 409 `switchover_blocked` + `blockers` / 503 · `POST /v2/council/switchover/revert {reason?}` → `200 {state: "reverted", old_spend_seed_usd}` / 409 `not_switched_over` (dialogs; built in R2, §22.14). Errors `{error, code}`, never a stack trace.
 - **Toolbar (W):** the pinned kill button calls `/v2/oms/kill` (already before R2, D6) and shows the three halves
   (§22.8). "Resume…": BEFORE R2 the halted platform accounts + the old engine (`/v2/oms/resume` per account,
   `/fund/resume` for the old engine); in the R2 + R3 build the halted accounts only (`/v2/oms/resume` per account).
@@ -8517,6 +8517,76 @@ compared. The temp copy is deleted afterwards; the real newsroom.db is never wri
   replace / keep of a working in-session Council order and manual / protective pending orders (not reachable with
   immediate paper fills in the session — partly covered by the `plan_target` unit tests, not by lockstep); account unreadable;
   the golden fixture (before R4). The deliberate differences were APPROVED by the user 2026-10-24 17:59 (§22.10).
+
+### 22.14 R2 as-built (2026-10-24, backend; the WPF dialog + Council view are R3, Agent W, same build)
+
+**Nothing was switched over by an agent.** The real switch-over happens only when the user confirms the dialog in the
+app (`POST /v2/council/switchover`); every test runs on temp copies (temp hedgefund.db / newsroom.db / cost log).
+
+- **`strategy_platform/council/switchover.py`** — `blockers` / `dry_run` / `run` / `apply` / `recover` / `revert`:
+  - preconditions: not sandbox (409 `sandbox`); state not `done`; §17.9 migration done; `paper-council` exists and its
+    `_unallocated` is empty; old autopilot off; the pre-v25 backup `data/backups/hedgefund.db.pre-v25-*` exists OR the
+    database was created at v25+ (new meta `schema.created_version`, written once by `db.migrate` on an empty file);
+    parity accepted (`PARITY_ACCEPTED = "2026-10-24"`, the user's approval §22.10); today's AI spend readable;
+  - steps: audit `council_switchover {stage: pending}` (audit-first) → meta `council.switchover = pending` with an
+    attempt id `tx` → the running `FundEngine` stopped in-process (a running cycle awaited ≤ 120 s, task cancelled,
+    autopilot off under its `_trade_lock`, unregistered from `control`) → ONE hedgefund.db transaction: legacy import
+    above the high-water mark (§22.8a; risk-watch runs — trigger `risk-watch` or a `startup` run with
+    `summary.risk_watch` — skipped; `rules` decisions never AI-marked; executed → `submitted` "old engine order #N",
+    skipped → `skipped` + reason), the Council params copied from the latest `fund_params` (`source` "copied from
+    fund_params vN"), meta `autotrade.heartbeat_minutes` `{minutes, source}`, the spend counter seeded with
+    max(old meta `fund.ai_spend` today, Σ cost log `fund-sentiment` + `fund-judge` today), the high-water mark and the
+    marker `council.r2_tx` (with `tx`) → `council.switchover = done`, Council orders OFF (cause `switchover`), audit
+    `council_switchover {stage: done}`, the Council task started;
+  - idempotent per attempt: `apply` with the same `tx` writes nothing twice; backend start with `pending` →
+    `recover` finishes the same attempt; a later switch-over after a revert has a new `tx` and imports only old ids
+    above the mark;
+  - revert: audit `council_revert` → Council orders off + working orders cancelled → Council task stopped → old
+    counter `fund.ai_spend` seeded with max(old, cost log) → `reverted` → the old engine re-created by the factory
+    `main.py` registered (`configure`) and handed to `control`, the `/fund` API and the AI-budget source.
+- **`main.py`:** reads the state at start via `switchover.recover()`: `done` → no `FundEngine`, the Council task
+  starts; `none` / `reverted` / unreadable → the old engine (its `start()` refuses while `pending` / `done` or when the
+  state is unreadable with hedgefund.db open).
+- **`/fund/*` (fund/api.py):** decided per request (`switch_state`): `pending` / `done` → 410 `{"code": "replaced"}`
+  except `/fund/kill` → `control.kill_all(via="/fund/kill")` and `/fund/resume` → `control.resume("paper-council",
+  via="/fund/resume")` (audited like the platform routes, with `via`); unreadable → 503 (kill still forwarded).
+- **`control`:** `kill_all` → `{"platform", "legacy", "council"}` per §22.8 (before R2: legacy incl. the old closing
+  orders, council `{"applicable": false}`; after: legacy "not applicable", council `{applicable, ok, orders_enabled,
+  cancelled_orders, error}`); the heartbeat timeout from R2 on is meta `autotrade.heartbeat_minutes` — missing /
+  invalid → `check_heartbeat` switches auto trading off (audit `autotrade_heartbeat_off` with the reason) and
+  `set_autotrade(True)` answers 409 `heartbeat_unreadable`; `GET /v2/monitoring/alerts` touches the heartbeat.
+- **AI budgets:** `FundSource` reads `cl_params.ai_daily_budget_usd` + the Council counter from R2 on; a PUT writes a
+  new `cl_params` version (audit-first, `via: "/ai/budgets"`).
+- **Tests:** `tests/test_s10_council_switchover.py` (preconditions + sandbox, unreadable spend refuses before any
+  change, the full run incl. legacy counts / params / heartbeat / seed / cold-start memory, kill / resume / 410
+  after R2, kill before R2, AI budget, heartbeat fail-closed + the alerts poll, pending recovery, revert + a second
+  run importing only new ids); the parity harness now starts the Council through the REAL `switchover.run` (0
+  mismatches unchanged).
+- **Review fixes (independent review of R2 + R3, 2026-10-24; API: `scratchpad/mr/SWITCHOVER_FIX_API.md`):**
+  - **M1 (double import):** ONE switch-over operation at a time (process lock around run / retry / abort / revert /
+    recover → 409 `switchover_running`); a new run while `pending` is blocked (`switchover_pending`); the
+    high-water mark is re-read INSIDE `BEGIN IMMEDIATE` (moved → 409 `concurrent_import`, nothing written);
+    hedgefund.db **v26**: UNIQUE partial indexes `ux_cl_runs_legacy_old_id` / `ux_cl_decisions_legacy_old_id`
+    (`old_id … WHERE legacy = 1`; a database that already holds duplicates cannot get them — then NOT silent: a
+    critical alert `council_legacy_duplicates` at every start and the switch-over blocker `legacy_duplicates`
+    {table, rows}, visible in the dry run). Test:
+    two threads → one `done`, one `switchover_running`, no duplicate rows.
+  - **M2 (stuck pending):** a failure after `pending` keeps `pending` + `last_error` / `error_at` (audit
+    `council_switchover {stage: failed}`, critical alert `council_switchover_failed`), answered 503
+    `switchover_failed` {last_error}; `GET /v2/council/switchover` adds `pending` {tx, at, actor, previous, applied,
+    last_error, error_at} + `actions` {run, retry, abort, revert}; `GET /v2/council/state` adds `switchover_error`;
+    `POST /v2/council/switchover/retry` (same attempt) and `POST /v2/council/switchover/abort` (transaction not
+    applied → back to `previous` none / reverted; applied → like a revert with the old spend seeded; always Council
+    orders off and the old engine re-created with autopilot off); `recover()` at start retries once and on failure
+    leaves `pending` + alert — `main.py` then runs NO engine and logs it as an error.
+  - **Minors:** the old engine's `_stopping` is set before the up-to-120 s wait (no new cycle); revert / abort return
+    `old_engine_started` + `old_engine_error` (refusal or no loop reported, never swallowed); a revert of an already
+    reverted state answers 200 `already`; blocker `council_unavailable` when the service failed to build and the
+    switch-over answer carries `council_task_started` / `council_task_error`; `kill_all` treats `pending` like
+    `done`; a failing `/fund/kill` alias reports both halves as failed/unknown (no fake ok); `*.tmp` leftovers never
+    count as the pre-v25 backup (switch-over check AND `db.backup_before`); revert reads the state / spend off the
+    event loop and is refused in sandbox.
+- **The user's click-test (after the R2 + R3 build):** see the todo item S10-C.
 
 ## 23. Stage 10 — hardening, security, Kraken removal, .env removal (as-built, merged 2026-10-24)
 

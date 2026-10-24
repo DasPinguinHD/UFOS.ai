@@ -1044,9 +1044,11 @@ namespace UFOS.ai
             }
             PythonEnvSummaryText.Text = summary;
             var lastCheck = PythonEnvManager.LastOnlineCheckUtc;
-            PythonEnvSummaryText.ToolTip = lastCheck == null
+            var heldBack = statuses.SelectMany(st => st.HeldBack.Select(h => st.Name + ": " + h)).ToList();
+            PythonEnvSummaryText.ToolTip = (lastCheck == null
                 ? "No online update check yet (runs in the background at most once a day)."
-                : "Last online update check: " + lastCheck.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+                : "Last online update check: " + lastCheck.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture))
+                + (heldBack.Count > 0 ? "\nHeld back for ccxt (not counted as updates): " + string.Join(", ", heldBack) : "");
 
             SettingsUpdateDot.Visibility = PythonEnvManager.HasPending ? Visibility.Visible : Visibility.Collapsed;
             UpdatePythonPackagesButton.IsEnabled = !PythonEnvManager.IsUpdating;
@@ -1133,9 +1135,19 @@ namespace UFOS.ai
                         Foreground = PythonEnvBrush(!status.LastResultFailed ? "PositiveGreenBrush"
                                                     : skipped ? "CautionBrush" : "AccentRedBrush"),
                     });
+                    // Stage 10 lock (LOCK_API, make_lockfile exit 5): the optional broker set gets its own line; the main
+                    // update above still counts as done.
+                    if (status.LastResultNote != null)
+                    {
+                        text.Inlines.Add(new LineBreak());
+                        text.Inlines.Add(new Run(status.LastResultNote) { Foreground = PythonEnvBrush("CautionBrush") });
+                    }
                 }
                 panel.Children.Add(text);
             }
+            // Packages the lock holds back on purpose for ccxt ("# held-by-broker:") are not counted as updates — named here.
+            if (status.HeldBack.Count > 0)
+                panel.ToolTip = "Held back for ccxt (the Binance demo broker package pins them exactly): " + string.Join(", ", status.HeldBack);
             return panel;
         }
 

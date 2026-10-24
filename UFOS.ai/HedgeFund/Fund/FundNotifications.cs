@@ -55,6 +55,56 @@ namespace UFOS.ai.HedgeFund.Fund
         /// </summary>
         public static event Action<FundEvent>? AutopilotSwitchedOff;
 
+        // S10-C R3 (SPEC §22.8): after the switch-over the old engine is replaced — /fund/events answers 410 "replaced" and the toast
+        // source is the platform's monitoring alerts, which carry the Council's kinds (council_flip, council_order_filled,
+        // council_run_failed, council_budget_reached, council_orders_off) and are toasted by MonitoringNotifier. This poll then stops
+        // (and starts again after a revert). A source that cannot be read is never silent: SourceProblem is shown in the Council view.
+        private static bool _replaced;
+
+        /// <summary>True while the old engine is replaced by the Council (its events come from the monitoring alerts instead).</summary>
+        public static bool Replaced => _replaced;
+
+        /// <summary>Why the old engine's event toasts cannot be read right now, or null (cleared by the next good poll).</summary>
+        public static string? SourceProblem { get; private set; }
+
+        /// <summary>Raised on the UI thread when <see cref="SourceProblem"/> or <see cref="Replaced"/> changes.</summary>
+        public static event Action? ProblemChanged;
+
+        /// <summary>The Hedge Fund window learned the switch-over state (Council view). After a revert the poll restarts without replay.</summary>
+        public static void SetCouncilSwitchedOver(bool switchedOver)
+        {
+            if (switchedOver == _replaced) return;
+            _replaced = switchedOver;
+            if (!switchedOver) _lastId = null;   // the old engine is back: remember its current newest id first, no replay
+            SourceProblem = null;
+            RaiseProblemChanged();
+        }
+
+        private static void SetSourceProblem(string? problem)
+        {
+            if (string.Equals(problem, SourceProblem, StringComparison.Ordinal)) return;
+            SourceProblem = problem;
+            RaiseProblemChanged();
+        }
+
+        private static void RaiseProblemChanged()
+        {
+            try { ProblemChanged?.Invoke(); }
+            catch (Exception ex) { try { AppLog.Warn(LogModule, "Toast source handler failed.", ex); } catch { } }
+        }
+
+        /// <summary>A failed /fund/events read: 410 "replaced" moves the toast source to the monitoring alerts; anything else is shown.</summary>
+        private static void OnEventsFailure<T>(FundResult<T> result)
+        {
+            if (result.HttpStatus == 410)
+            {
+                SetCouncilSwitchedOver(true);
+                return;
+            }
+            SetSourceProblem("Engine event toasts could not be read (" + result.Describe() + ", "
+                             + DateTime.Now.ToString("HH:mm", CultureInfo.InvariantCulture) + ") — retried every 15 s.");
+        }
+
         /// <summary>Latest "autopilot" event seen since the app started (including the start-up scan), or null.</summary>
         public static FundEvent? LastAutopilotEvent { get; private set; }
 
@@ -169,7 +219,8 @@ namespace UFOS.ai.HedgeFund.Fund
         private static async Task PollAsync()
         {
             if (_busy) return;
-            // Nothing to ask while the backend isn't up (saves a failing request every 15 s).
+            if (_replaced) return;   // S10-C R3: the Council's events come from the monitoring alerts (MonitoringNotifier)
+            // Nothing to ask while the backend isn't up (saves a failing request every 15 s); MonitoringNotifier.PollProblem says so.
             if (!NewsroomBackend.Status.StartsWith("online", StringComparison.OrdinalIgnoreCase)) return;
             _busy = true;
             try
@@ -181,7 +232,13 @@ namespace UFOS.ai.HedgeFund.Fund
                 }
 
                 var result = await FundClient.GetEventsAsync(_lastId.Value);
-                if (!result.Ok || result.Value == null || result.Value.Count == 0) return;
+                if (!result.Ok || result.Value == null)
+                {
+                    OnEventsFailure(result);
+                    return;
+                }
+                SetSourceProblem(null);
+                if (result.Value.Count == 0) return;
 
                 var events = result.Value.OrderBy(e => e.Id).ToList();
                 _lastId = Math.Max(_lastId.Value, events.Max(e => e.Id));
@@ -212,6 +269,7 @@ namespace UFOS.ai.HedgeFund.Fund
             catch (Exception ex)
             {
                 try { AppLog.Warn(LogModule, "Hedge Fund event poll failed.", ex); } catch { }
+                SetSourceProblem("Engine event toasts could not be read (" + ex.GetType().Name + ") — retried every 15 s.");
             }
             finally
             {
@@ -226,7 +284,12 @@ namespace UFOS.ai.HedgeFund.Fund
             for (var page = 0; page < 200; page++)
             {
                 var result = await FundClient.GetEventsAsync(max);
-                if (!result.Ok || result.Value == null) return page == 0 ? null : max;
+                if (!result.Ok || result.Value == null)
+                {
+                    OnEventsFailure(result);
+                    return page == 0 ? null : max;
+                }
+                if (page == 0) SetSourceProblem(null);
                 if (result.Value.Count == 0) break;
                 // Not shown as a toast (no replay), but remembered so the window can explain
                 // why the autopilot is off after a restart.

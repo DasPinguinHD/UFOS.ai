@@ -21,6 +21,8 @@ namespace UFOS.ai.HedgeFund
             if (_monitoringView != null) return;
             _monitoringView = new MonitoringView();
             _monitoringView.BrokersRequested += () => OpenKeysWindow(brokers: true);
+            // S10-C: a Council alert → the Council view at the top of the Overview
+            _monitoringView.CouncilRequested += () => { if (NavOverviewButton.IsChecked != true) NavOverviewButton.IsChecked = true; OverviewScroll.ScrollToTop(); };
             MonitoringHost.Child = _monitoringView;
         }
 

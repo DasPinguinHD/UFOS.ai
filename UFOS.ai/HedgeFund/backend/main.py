@@ -571,17 +571,35 @@ async def main() -> None:
     fund_feed = fund_market.AlpacaFeed()
     fund_paper_broker = fund_broker.PaperBroker(fund_store, fund_feed.quote, dividends_fn=fund_feed.dividends,
                                                 bars_fn=fund_feed.daily_bars)
-    engine = fund_engine.FundEngine(
-        fund_feed, fund_paper_broker, fund_store,
-        macro_fn=lambda: macro_latest,
-        calendar_fn=lambda: list(calendar_latest.get("events") or []),
-        insider_fn=_insider_events,
-        # FRED source status: not ok (failing / key missing) -> macro agent unavailable (2026-10-02)
-        macro_status_fn=lambda: status.get("fred"),
-        backtest_feed=fund_feed)   # same feed: history since 2016 from the hedgefund.db bar cache
-    if sandbox_profile.is_sandbox():
-        engine.sandbox_off_reason = sandbox_profile.ENGINE_OFF     # autopilot + scheduled AI cycles off
-    fund_api.register(app, engine)
+    def _make_engine():
+        engine = fund_engine.FundEngine(
+            fund_feed, fund_paper_broker, fund_store,
+            macro_fn=lambda: macro_latest,
+            calendar_fn=lambda: list(calendar_latest.get("events") or []),
+            insider_fn=_insider_events,
+            # FRED source status: not ok (failing / key missing) -> macro agent unavailable (2026-10-02)
+            macro_status_fn=lambda: status.get("fred"),
+            backtest_feed=fund_feed)   # same feed: history since 2016 from the hedgefund.db bar cache
+        if sandbox_profile.is_sandbox():
+            engine.sandbox_off_reason = sandbox_profile.ENGINE_OFF     # autopilot + scheduled AI cycles off
+        return engine
+
+    # S10-C R2 (strategy_platform/SPEC.md §22.8): the Council switch-over state decides which engine runs —
+    # done → no FundEngine, the Council task runs; pending (crash mid switch-over) → finished idempotently, then
+    # done; still pending (the recovery failed — review M2) → NO engine, the error is stored with the state, raised
+    # as a critical alert (council_switchover_failed) and shown by the Council view with Retry / Abort;
+    # none / reverted / unreadable → the old engine as before (its start() refuses on an unreadable state).
+    try:
+        from strategy_platform.council import switchover as council_switchover
+        council_state = await asyncio.to_thread(council_switchover.recover)
+    except Exception as ex:   # noqa: BLE001
+        logger.error("Council switch-over state could not be checked: %s", ex)
+        council_state = "unreadable"
+    if council_state == "pending":
+        logger.error("Council switch-over is UNFINISHED (recovery at start failed) — no engine runs until the user "
+                     "retries or aborts it in the Council view (alert council_switchover_failed)")
+    engine = None if council_state in ("done", "pending") else _make_engine()
+    fund_api_obj = fund_api.register(app, engine)   # /fund/* decide per request from the switch-over state
     # S10-C R1 (strategy_platform/SPEC.md §22.1): the Council service on the same feed + newsroom accessors as the
     # old engine — built and registered for /v2/council/*, NOT started before the switch-over build (R2). A failure
     # is logged; the Council routes then answer "not running" and nothing else is blocked.
@@ -602,15 +620,16 @@ async def main() -> None:
         from strategy_platform.execution import migration as sp_migration
         sp_accounts.configure(quote_fn=fund_feed.quote, dividends_fn=fund_feed.dividends, bars_fn=fund_feed.daily_bars)
         sp_control.set_legacy_engine(engine)
-        engine.platform_kill_fn = sp_control.kill_platform
-        engine.platform_migrated_fn = sp_migration.platform_migrated
+        if engine is not None:
+            engine.platform_kill_fn = sp_control.kill_platform
+            engine.platform_migrated_fn = sp_migration.platform_migrated
         outcome = await asyncio.to_thread(sp_migration.recover)
         if outcome:
             logger.warning("Interrupted paper-account migration found at startup: %s", outcome)
         await asyncio.to_thread(sp_control.force_off_at_start)
     except Exception as ex:   # noqa: BLE001 — never blocks the start
         logger.error("Strategy Platform stage 7 wiring failed: %s", ex)
-        if getattr(engine, "platform_kill_fn", None) is None:
+        if engine is not None and getattr(engine, "platform_kill_fn", None) is None:
             # the pinned kill switch must SAY that its platform half could not run (audit 2026-10-18) — the
             # old-engine half still runs; /fund/kill answers platform {ok: false, error: <this reason>}
             _wiring_error = f"Strategy Platform stage 7 wiring failed at startup ({type(ex).__name__}: {ex})"[:200]
@@ -618,7 +637,22 @@ async def main() -> None:
             def _platform_kill_unavailable(reason=None, actor="user", _msg=_wiring_error):
                 raise RuntimeError(_msg)
             engine.platform_kill_fn = _platform_kill_unavailable
-    ai_budgets.register(app, engine)   # GET/PUT /ai/budgets (task B), same api_auth middleware
+    budgets_obj = ai_budgets.register(app, engine)   # GET/PUT /ai/budgets (task B), same api_auth middleware
+
+    def _on_old_engine(eng):
+        """A revert (SP §22.8) re-created the old engine: hand it to /fund/*, the AI budgets and the kill switch."""
+        from strategy_platform.execution import control as sp_control
+        from strategy_platform.execution import migration as sp_migration
+        eng.platform_kill_fn = sp_control.kill_platform
+        eng.platform_migrated_fn = sp_migration.platform_migrated
+        fund_api_obj.engine = eng
+        for src in budgets_obj.sources:
+            if isinstance(src, ai_budgets.FundSource):
+                src.engine = eng
+    try:
+        council_switchover.configure(_make_engine, _on_old_engine)
+    except NameError:         # the switch-over module failed to import above (logged)
+        pass
     v2_routes.register(app)   # /v2/* (Strategy Platform), behind the same api_auth middleware
     research = _install_research(app)   # /research/* (Market Research), same middleware; never raises
     # No per-request access log: the newsroom window polls every 10s, which
@@ -635,8 +669,21 @@ async def main() -> None:
                 site.name)
 
     # After the newsroom cache is loaded (load_from_store above): forces the
-    # autopilot off, first cycle after fund_engine.STARTUP_DELAY_SECONDS.
-    engine.start()
+    # autopilot off, first cycle after fund_engine.STARTUP_DELAY_SECONDS. After the Council switch-over (R2) the old
+    # engine does not exist and the Council task runs instead (its scheduled cycles only in the session, §22.5).
+    if engine is not None:
+        try:
+            engine.start()
+        except RuntimeError as ex:      # FundEngine.start refuses after / during a switch-over or on an unreadable state
+            logger.error("old engine not started: %s", ex)
+    elif council_state == "done":
+        try:
+            from strategy_platform.council import service as council_service
+            if council_service.default() is not None:
+                council_service.default().start()
+                logger.info("Council of AIs task started (switched over)")
+        except Exception as ex:   # noqa: BLE001
+            logger.error("Council task could not start: %s", ex)
     # Strategy Platform runtime (stage 7, SPEC §17.3): ticks every 60 s in its own task; never raises into the app.
     try:
         from strategy_platform.execution import control as sp_control

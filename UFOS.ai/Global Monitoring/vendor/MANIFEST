@@ -1,0 +1,6 @@
+# UFOS.ai Global Monitoring - vendored Natural Earth land outlines (S10-A2 M4).
+# Format: <file> <version> <source_url> <sha256> <fetched_at>   ('#' lines are comments)
+# package world-atlas@2.0.2, npm integrity sha512-IXfV0qwlKXpckz1FhwXVwKRjiIhOnWttOskm5CtxMsjgE/MXAYRHWJqgXOpM8IkcPBoXnyTU5lFHcYa5ChG0LQ==, licence ISC (data: Natural Earth, public domain)
+# extracted members: package/land-110m.json, package/LICENSE
+land-110m.json 2.0.2 https://registry.npmjs.org/world-atlas/-/world-atlas-2.0.2.tgz ead5f68119c49a9250902e7da303bcb209341bbb8fefe7369a439b48b704658a 2026-10-24T16:42:24+00:00
+LICENSE 2.0.2 https://registry.npmjs.org/world-atlas/-/world-atlas-2.0.2.tgz 8048290dfdb6e83fbed17e8985c8cfc4ce9da9b842642f3d3e497280790cfa31 2026-10-24T16:42:24+00:00

@@ -1,7 +1,8 @@
 """/v2/council/* (SP §22.11) — the Council of AIs as a platform strategy: state, runs, "Run now", params, the
-paper-council broker-params override (D9) and the Council orders switch. The switch-over / revert routes come with
-the R2 build. Council GETs do NOT touch the client heartbeat (SP §22.5). Errors ``{error, code}``, never a stack
-trace."""
+paper-council broker-params override (D9), the Council orders switch and (R2) the switch-over: GET
+``/v2/council/switchover`` (dry run + blockers), POST ``/v2/council/switchover`` (the user's dialog — the ONLY way the
+real switch-over happens) and POST ``/v2/council/switchover/revert``. Council GETs do NOT touch the client heartbeat
+(SP §22.5). Errors ``{error, code}``, never a stack trace."""
 from __future__ import annotations
 
 import asyncio
@@ -57,8 +58,12 @@ def _symbol_cards(detail: dict) -> list:
 def state_payload() -> dict:
     from strategy_platform.council import service, spend, store
     svc = service.default()
+    sw_error = None
     try:
         sw = store.switchover()
+        if sw == "pending":                 # R2 review M2: an unfinished attempt is visible with its error
+            from strategy_platform.council import switchover as sw_mod
+            sw_error = (sw_mod.state_info() or {}).get("last_error")
     except Exception:          # noqa: BLE001
         sw = "unreadable"
     params = None
@@ -91,7 +96,8 @@ def state_payload() -> dict:
     if since:
         days = max(0, (now - datetime.fromisoformat(since.replace("Z", "+00:00"))).days)
     last = runs[0] if runs else None
-    return {"active": sw == "done", "switchover": sw, "task": task, "orders_enabled": store.orders_enabled(),
+    return {"active": sw == "done", "switchover": sw, "switchover_error": sw_error, "task": task,
+            "orders_enabled": store.orders_enabled(),
             "label": service.LABEL, "record": {"since": since, "days": days,
                                                 "text": (f"forward paper record, {days} days, not validated"
                                                          if days is not None else None)},
@@ -276,6 +282,62 @@ class CouncilRoutesMixin:
             return 200, {"orders_enabled": True, "audit_id": aid}
         return await asyncio.to_thread(go)
 
+    # --- R2 (SP §22.8) ------------------------------------------------------------------------------------------
+    @staticmethod
+    def _reason(b: dict, errors: dict) -> str:
+        errors.update(_unknown(b, ("reason",)))
+        return _note(b, errors)
+
+    async def council_switchover_get(self, query: Mapping, body, match: Mapping):
+        from strategy_platform.council import switchover
+        from strategy_platform.execution import control
+        if set(query):
+            return _bad({k: "unknown parameter" for k in query})
+        try:
+            return 200, await asyncio.to_thread(switchover.dry_run, control.legacy_engine())
+        except switchover.SwitchoverError as ex:
+            return ex.status, ex.payload()
+
+    async def council_switchover_post(self, query: Mapping, body, match: Mapping):
+        from strategy_platform.council import switchover
+        from strategy_platform.execution import control
+        b = _body(body)
+        if b is None or set(query):
+            return _bad({"_": "expected a JSON object {reason?}"})
+        errors: dict = {}
+        reason = self._reason(b, errors)
+        if errors:
+            return _bad(errors)
+        try:
+            return 200, await switchover.run(reason, "user", control.legacy_engine())
+        except switchover.SwitchoverError as ex:
+            return ex.status, ex.payload()
+
+    async def _switchover_op(self, query, body, op_name: str):
+        from strategy_platform.council import switchover
+        b = _body(body)
+        if b is None or set(query):
+            return _bad({"_": "expected a JSON object {reason?}"})
+        errors: dict = {}
+        reason = self._reason(b, errors)
+        if errors:
+            return _bad(errors)
+        try:
+            return 200, await getattr(switchover, op_name)(reason, "user")
+        except switchover.SwitchoverError as ex:
+            return ex.status, ex.payload()
+
+    async def council_switchover_revert(self, query: Mapping, body, match: Mapping):
+        return await self._switchover_op(query, body, "revert")
+
+    async def council_switchover_retry(self, query: Mapping, body, match: Mapping):
+        """R2 review M2: the SAME unfinished attempt again (scratchpad/mr/SWITCHOVER_FIX_API.md §3)."""
+        return await self._switchover_op(query, body, "retry")
+
+    async def council_switchover_abort(self, query: Mapping, body, match: Mapping):
+        """R2 review M2: give up the unfinished attempt, back to the old engine (SWITCHOVER_FIX_API.md §5)."""
+        return await self._switchover_op(query, body, "abort")
+
 
 COUNCIL_ROUTES = (
     ("GET", "/v2/council/state", "council_state", False),
@@ -287,4 +349,9 @@ COUNCIL_ROUTES = (
     ("GET", "/v2/council/broker-params", "council_broker_params_get", False),
     ("PUT", "/v2/council/broker-params", "council_broker_params_put", True),
     ("PUT", "/v2/council/orders", "council_orders", True),
+    ("GET", "/v2/council/switchover", "council_switchover_get", False),
+    ("POST", "/v2/council/switchover", "council_switchover_post", True),
+    ("POST", "/v2/council/switchover/revert", "council_switchover_revert", True),
+    ("POST", "/v2/council/switchover/retry", "council_switchover_retry", True),
+    ("POST", "/v2/council/switchover/abort", "council_switchover_abort", True),
 )

@@ -58,7 +58,7 @@ namespace UFOS.ai.Shared
     internal static class PythonEnvironment
     {
         private const string AppLogModule = "Python env";
-        private const string LockFileName = ".venv.lock";
+        private const string VenvLockFileName = ".venv.lock";
         private const string HashFileName = "ufos-requirements.sha256";
         private const string PendingFileName = "ufos-install-pending";
         private const string BrokenReason = "the .venv is broken - its python.exe does not run";
@@ -256,7 +256,7 @@ namespace UFOS.ai.Shared
                 lockStream = await AcquireLockAsync(backendDir, moduleName, progress, ct).ConfigureAwait(false);
                 if (lockStream == null)
                 {
-                    SafeLog(moduleName, "Python environment: could not get " + Path.Combine(backendDir, LockFileName) +
+                    SafeLog(moduleName, "Python environment: could not get " + Path.Combine(backendDir, VenvLockFileName) +
                                         " (another install/update did not finish in time).", null, error: true);
                     return false;
                 }
@@ -473,7 +473,7 @@ namespace UFOS.ai.Shared
         private static async Task<FileStream?> AcquireLockAsync(string backendDir, string moduleName,
                                                                 IProgress<string>? progress, CancellationToken ct)
         {
-            var path = Path.Combine(backendDir, LockFileName);
+            var path = Path.Combine(backendDir, VenvLockFileName);
             var deadline = DateTime.UtcNow + LockWaitMax;
             var announced = false;
             var errors = 0;

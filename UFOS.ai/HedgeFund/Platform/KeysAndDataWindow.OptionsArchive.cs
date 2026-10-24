@@ -300,8 +300,22 @@ namespace UFOS.ai.HedgeFund.Platform
                 stack.Children.Add(MonUi.Pairs(rows));
                 if (!string.IsNullOrWhiteSpace(s.LastError))
                     stack.Children.Add(MonUi.Line("Last error: " + s.LastError, 10.5, FundPalette.Kill));
-                if (s.Config is JsonElement cfg && cfg.ValueKind == JsonValueKind.Object && cfg.TryGetProperty("provisional", out var prov) && prov.ValueKind == JsonValueKind.True)
-                    stack.Children.Add(MonUi.Line("Filters and cadence are PROVISIONAL (SPEC §21) until the OS0 data check confirms them.", 10.5, FundPalette.Risk));
+                // Click-test 2026-10-24: the filter (±10 %, ≤ 45 d) and the cadence (28 snapshots a day) are CONFIRMED by the user; only the
+                // keys the backend lists in config.provisional_keys (quote staleness, coverage) stay provisional until the RTH data check.
+                if (s.Config is JsonElement cfg && cfg.ValueKind == JsonValueKind.Object)
+                {
+                    var provisional = OaKeyList(cfg, "provisional_keys");
+                    var confirmed = OaKeyList(cfg, "confirmed_keys");
+                    if (provisional.Count > 0)
+                        stack.Children.Add(MonUi.Line("Still PROVISIONAL until the regular-trading-hours data check (SPEC §21): "
+                                                      + string.Join(", ", provisional.Select(k => OaKeyText(cfg, k))) + ".", 10.5, FundPalette.Risk));
+                    if (confirmed.Count > 0)
+                    {
+                        var by = cfg.TryGetProperty("confirmed_by", out var cb) && cb.ValueKind == JsonValueKind.String ? " (" + cb.GetString() + ")" : "";
+                        var shown = confirmed.Where(k => OaKeyLabels.ContainsKey(k)).Select(k => OaKeyText(cfg, k)).ToList();
+                        if (shown.Count > 0) stack.Children.Add(MonUi.Line("Confirmed: " + string.Join(", ", shown) + by + ".", 10.5, FundPalette.Dim));
+                    }
+                }
             }
             var blocked = OaActionsBlocked();
             if (blocked != null) stack.Children.Add(MonUi.Line("Register / Run once: " + blocked, 10.5, FundPalette.Risk));
@@ -352,6 +366,41 @@ namespace UFOS.ai.HedgeFund.Platform
 
         private static string OaInt(int? v) => v?.ToString(CultureInfo.InvariantCulture) ?? "—";
         private static string OaLong(long? v) => v?.ToString("N0", CultureInfo.InvariantCulture) ?? "—";
+
+        /// <summary>The options-archive config keys the card names (others in confirmed_keys are listed only via these).</summary>
+        private static readonly Dictionary<string, string> OaKeyLabels = new(StringComparer.Ordinal)
+        {
+            ["strike_band_pct"] = "strike band",
+            ["expiry_days"] = "expiries",
+            ["cadence_minutes"] = "cadence",
+            ["quote_max_age_s"] = "quote staleness",
+            ["coverage_min_pct"] = "coverage minimum",
+        };
+
+        private static List<string> OaKeyList(JsonElement cfg, string name)
+            => cfg.TryGetProperty(name, out var arr) && arr.ValueKind == JsonValueKind.Array
+                ? arr.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!).ToList()
+                : new List<string>();
+
+        /// <summary>"strike band ±10 %", "quote staleness ≤ 5 min", … from the config values the backend sends (key name when unknown).</summary>
+        private static string OaKeyText(JsonElement cfg, string key)
+        {
+            double? Num(string k) => cfg.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : null;
+            string F(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+            switch (key)
+            {
+                case "strike_band_pct": return Num(key) is double b ? "strike band ±" + F(b) + " %" : "strike band";
+                case "expiry_days": return Num(key) is double d ? "expiries ≤ " + F(d) + " days" : "expiries";
+                case "cadence_minutes":
+                    var slots = cfg.TryGetProperty("fixed_slots_ny", out var fs) && fs.ValueKind == JsonValueKind.Array
+                        ? string.Join(" / ", fs.EnumerateArray().Select(x => x.ToString())) : null;
+                    return (Num(key) is double c ? "intraday every " + F(c) + " min" : "cadence")
+                           + (slots != null ? " + fixed slots " + slots : "") + " + EOD";
+                case "quote_max_age_s": return Num(key) is double q ? "quote staleness ≤ " + F(q / 60.0) + " min" : "quote staleness";
+                case "coverage_min_pct": return Num(key) is double p ? "coverage ≥ " + F(p) + " %" : "coverage minimum";
+                default: return key;
+            }
+        }
 
         // ---------- actions (each audited) ----------
 

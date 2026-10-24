@@ -104,7 +104,14 @@ namespace UFOS.ai
                 ArticleWebView.CoreWebView2.PermissionRequested += (_, args) =>
                 {
                     args.State = CoreWebView2PermissionState.Deny;
+                    args.SavesInProfile = false;   // nothing is remembered
+                    args.Handled = true;           // decided here — WebView2 never shows its own prompt
                 };
+                // Click-test 2026-10-24: MarketWatch still showed "We'd like to send you some notifications — Allow / Dismiss".
+                // The browser prompt itself is denied above; that box is the site's OWN in-page "soft ask", shown while the
+                // page sees Notification.permission == "default". Every document therefore sees notifications (and the
+                // Permissions API answer for them) as already DENIED, so such soft asks are skipped.
+                await ArticleWebView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(NotificationsDeniedScript);
 
                 ArticleWebView.CoreWebView2.NavigationCompleted += (_, e) =>
                 {
@@ -145,6 +152,25 @@ namespace UFOS.ai
                     : _headline.Summary);
             }
         }
+
+        /// <summary>Runs before any page script: notifications report "denied", requestPermission resolves "denied",
+        /// navigator.permissions.query reports "denied" for notifications / push. Changes nothing else.</summary>
+        private const string NotificationsDeniedScript = @"(function () {
+  try {
+    if (window.Notification) {
+      Object.defineProperty(window.Notification, 'permission', { get: function () { return 'denied'; }, configurable: false });
+      window.Notification.requestPermission = function (cb) { try { if (typeof cb === 'function') cb('denied'); } catch (e) {} return Promise.resolve('denied'); };
+    }
+    if (navigator.permissions && navigator.permissions.query) {
+      var original = navigator.permissions.query.bind(navigator.permissions);
+      navigator.permissions.query = function (desc) {
+        var name = desc && desc.name;
+        if (name === 'notifications' || name === 'push') return Promise.resolve({ state: 'denied', status: 'denied', onchange: null });
+        return original(desc);
+      };
+    }
+  } catch (e) { }
+})();";
 
         // Plain (non-AI) text: the source feed's own teaser or a status message.
         private void ShowFallbackText(string text)
