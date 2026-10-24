@@ -44,6 +44,23 @@ namespace UFOS.ai.HedgeFund.Platform
         /// </summary>
         public static string? ToastProblem { get; private set; }
 
+        /// <summary>
+        /// Why the alert poll — the toast source of the platform AND (after the switch-over) of the Council of AIs — cannot be read right
+        /// now, or null. Shown in Monitoring and in the Council view (S10-C R3: no silent poll failure); cleared by the next good poll.
+        /// </summary>
+        public static string? PollProblem { get; private set; }
+
+        /// <summary>Raised on the UI thread when <see cref="PollProblem"/> changes.</summary>
+        public static event Action? ProblemChanged;
+
+        private static void SetPollProblem(string? problem)
+        {
+            if (string.Equals(problem, PollProblem, StringComparison.Ordinal)) return;
+            PollProblem = problem;
+            try { ProblemChanged?.Invoke(); }
+            catch (Exception ex) { LogOnce("Monitoring alert problem handler failed.", ex); }
+        }
+
         /// <summary>Unacked alerts at the last successful poll (null = never polled successfully).</summary>
         public static int? Unacked { get; private set; }
 
@@ -88,7 +105,11 @@ namespace UFOS.ai.HedgeFund.Platform
         private static async Task PollAsync()
         {
             if (_busy) return;
-            if (!NewsroomBackend.Status.StartsWith("online", StringComparison.OrdinalIgnoreCase)) return;
+            if (!NewsroomBackend.Status.StartsWith("online", StringComparison.OrdinalIgnoreCase))
+            {
+                SetPollProblem("Alert toasts paused — the Hedge Fund backend is not running (" + NewsroomBackend.Status + ").");
+                return;
+            }
             _busy = true;
             try
             {
@@ -97,13 +118,22 @@ namespace UFOS.ai.HedgeFund.Platform
                     var first = await PlatformClient.GetMonitoringAlertsAsync(0, 1, unackedOnly: false);
                     if (!first.Ok || first.Value == null)
                     {
-                        if (first.HttpStatus == 404) return; // older backend without stage 9 — nothing to poll
+                        if (first.HttpStatus == 404)
+                        {
+                            SetPollProblem("The running backend has no monitoring alerts (/v2/monitoring/alerts) — it is probably outdated; no alert toasts.");
+                            return;
+                        }
                         LogOnce("Monitoring alerts could not be read (" + first.Message + ").", null);
+                        SetPollProblem(Unreadable(first.Message));
                         return;
                     }
                     _failureLogged = false;
+                    SetPollProblem(null);
                     _lastId = first.Value.LastId ?? 0;
                     Unacked = first.Value.Unacked;
+                    // Lead decision 2026-10-24: a CRITICAL alert raised before this first poll (e.g. council_switchover_failed at the backend's
+                    // own start) is toasted once — critical only, each id once, remembered across restarts. Everything else is not replayed.
+                    await ToastUnackedCriticalOnceAsync();
                     Changed?.Invoke(Array.Empty<MonAlert>(), Unacked);
                     return;
                 }
@@ -112,9 +142,11 @@ namespace UFOS.ai.HedgeFund.Platform
                 if (!res.Ok || res.Value == null)
                 {
                     LogOnce("Monitoring alerts could not be read (" + res.Message + ") — the last known state is kept.", null);
+                    SetPollProblem(Unreadable(res.Message));
                     return;
                 }
                 _failureLogged = false;
+                SetPollProblem(null);
                 var fresh = (res.Value.Alerts ?? new List<MonAlert>()).Where(a => a.Id > _lastId.Value).OrderBy(a => a.Id).ToList();
                 if (fresh.Count > 0) _lastId = Math.Max(_lastId.Value, fresh.Max(a => a.Id));
                 if (res.Value.LastId is long last && last > _lastId.Value && fresh.Count == 0) _lastId = last;
@@ -141,6 +173,7 @@ namespace UFOS.ai.HedgeFund.Platform
             catch (Exception ex)
             {
                 LogOnce("Monitoring alert poll failed.", ex);
+                SetPollProblem(Unreadable(ex.GetType().Name));
             }
             finally
             {
@@ -168,6 +201,82 @@ namespace UFOS.ai.HedgeFund.Platform
         }
 
         private const string SettingPrefix = "The Windows toast setting could not be read";
+
+        // ---- first poll: unacked CRITICAL alerts once (lead decision 2026-10-24) ----
+
+        private const int MaxRemembered = 500;
+        private static string ToastedPath => System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UFOS.ai", "monitoring-toasted.json");
+
+        private static async Task ToastUnackedCriticalOnceAsync()
+        {
+            // the newest 500 ids at most (the list is ordered by id from "after"; a backend start raises its alert near the top)
+            var res = await PlatformClient.GetMonitoringAlertsAsync(Math.Max(0, (_lastId ?? 0) - 500), 500, unackedOnly: true);
+            if (!res.Ok || res.Value == null)
+            {
+                SetPollProblem(Unreadable(res.Message) + " (unseen critical alerts from before this start are in Monitoring → Alerts)");
+                return;
+            }
+            var critical = (res.Value.Alerts ?? new List<MonAlert>())
+                .Where(a => !a.Acked && a.Severity == "critical" && a.Toast)
+                .OrderBy(a => a.Id).ToList();
+            if (critical.Count == 0) return;
+            var toasted = ReadToasted();
+            var fresh = critical.Where(a => !toasted.Contains(a.Id)).ToList();
+            if (fresh.Count == 0) return;
+            if (ToastsWanted())
+            {
+                if (fresh.Count > MaxToastsPerPoll)
+                    Track(FundNotifications.ShowMonitoringAlert(fresh.Count + " unseen critical alerts",
+                        string.Join(" · ", fresh.Take(6).Select(a => a.Title ?? a.Kind ?? "")), "critical", fresh.Max(a => a.Id)));
+                else
+                    foreach (var a in fresh)
+                        Track(FundNotifications.ShowMonitoringAlert(a.Title ?? a.Kind ?? "Critical alert", a.Body ?? "", "critical", a.Id));
+            }
+            // muted / toasts off: consumed like every other alert (not toasted later) — they stay in the list and the rail badge
+            foreach (var a in fresh) toasted.Add(a.Id);
+            WriteToasted(toasted);
+        }
+
+        /// <summary>The ids already toasted by a first poll. An unreadable file is logged and treated as empty (worst case: one repeat).</summary>
+        private static HashSet<long> ReadToasted()
+        {
+            var set = new HashSet<long>();
+            try
+            {
+                if (!System.IO.File.Exists(ToastedPath)) return set;
+                using var doc = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(ToastedPath));
+                if (doc.RootElement.TryGetProperty("ids", out var ids) && ids.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    foreach (var e in ids.EnumerateArray())
+                        if (e.TryGetInt64(out var id)) set.Add(id);
+            }
+            catch (Exception ex)
+            {
+                try { AppLog.Warn(LogModule, "monitoring-toasted.json could not be read — an already shown critical alert may be toasted once more.", ex); } catch { }
+            }
+            return set;
+        }
+
+        private static void WriteToasted(HashSet<long> ids)
+        {
+            try
+            {
+                var keep = ids.OrderByDescending(i => i).Take(MaxRemembered).OrderBy(i => i).ToArray();
+                var dir = System.IO.Path.GetDirectoryName(ToastedPath)!;
+                System.IO.Directory.CreateDirectory(dir);
+                var temp = ToastedPath + ".tmp";
+                System.IO.File.WriteAllText(temp, System.Text.Json.JsonSerializer.Serialize(new { ids = keep }));
+                System.IO.File.Move(temp, ToastedPath, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                try { AppLog.Warn(LogModule, "monitoring-toasted.json could not be written — these critical alerts may be toasted again after a restart.", ex); } catch { }
+            }
+        }
+
+        private static string Unreadable(string reason)
+            => "Alerts could not be read (" + reason + ", " + DateTime.Now.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)
+               + ") — no alert toasts until the next good poll (every 15 s); open Monitoring → Alerts when it works again.";
 
         /// <summary>Records the outcome of one toast: a failure (not a mute) becomes <see cref="ToastProblem"/>; a success clears it.</summary>
         private static void Track(bool shown)

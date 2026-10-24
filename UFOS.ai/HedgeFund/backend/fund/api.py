@@ -68,11 +68,76 @@ def _body_dict(body, allow_empty: bool = True):
     return body, None
 
 
+REPLACED = "The old engine was replaced by the Council strategy — use /v2/council/*"
+
+
+def switch_state() -> str:
+    """The Council switch-over state, read per request (SP §22.8): none / pending / done / reverted / unreadable."""
+    try:
+        from strategy_platform.council import store as cl_store
+        from strategy_platform.storage import db as sp_db
+        if sp_db.db_path() is None:
+            return "none"
+        return cl_store.switchover()
+    except Exception:       # noqa: BLE001
+        logger.exception("Council switch-over state unreadable")
+        return "unreadable"
+
+
 class FundApi:
     """Route handlers (see module docstring)."""
 
     def __init__(self, engine):
         self.engine = engine
+
+    # --- SP §22.8 (R2): after the switch-over every /fund route answers 410, EXCEPT kill / resume (D6) -------------
+    async def replaced(self, name: str, query, body, match):
+        """(status, payload) when the route must not reach the old engine, else None."""
+        state = await asyncio.to_thread(switch_state)
+        if state in ("none", "reverted"):
+            return None
+        if name == "kill":
+            return await self.kill_forward(query, body, match)
+        if state == "unreadable":
+            return 503, {"error": "The Council switch-over state is unreadable — try again later.",
+                         "code": "state_unreadable"}
+        if name == "resume":
+            return await self.resume_forward(query, body, match)
+        return 410, {"error": REPLACED, "code": "replaced"}
+
+    async def kill_forward(self, query, body, match):
+        """/fund/kill after R2 = POST /v2/oms/kill (``control.kill_all``), audited with ``via``."""
+        from strategy_platform.execution import control
+        b, err = _body_dict(body)
+        if err:
+            b = {}
+        reason = b.get("reason") if isinstance(b.get("reason"), str) else None
+        try:
+            payload = await asyncio.to_thread(control.kill_all, (reason or "")[:200] or None, "user", "/fund/kill")
+        except Exception as ex:      # noqa: BLE001 — the kill switch always answers
+            logger.exception("/fund/kill (forwarded) failed")
+            unknown = "unknown — the kill request failed"          # review minor 5: never a fake ok
+            payload = {"platform": {"ok": False, "error": type(ex).__name__, "accounts": []},
+                       "legacy": {"ok": False, "applicable": None, "error": unknown},
+                       "council": {"applicable": None, "ok": False, "error": unknown}}
+        return 200, payload
+
+    async def resume_forward(self, query, body, match):
+        """/fund/resume after R2 = POST /v2/oms/resume for paper-council (``control.resume``), audited with ``via``;
+        the Council orders stay OFF."""
+        from strategy_platform.execution import accounts, control
+        from strategy_platform.execution.errors import TradingError
+        from strategy_platform.portfolio import views
+        b, err = _body_dict(body)
+        if err:
+            return _bad(err)
+        reason = b.get("reason") if isinstance(b.get("reason"), str) else ""
+        try:
+            acc = await asyncio.to_thread(control.resume, accounts.COUNCIL, (reason or "")[:500], "user",
+                                          "/fund/resume")
+            return 200, {"account": await asyncio.to_thread(views.account_summary, acc)}
+        except TradingError as ex:
+            return ex.status, {"error": ex.user_message, "code": ex.code}
 
     async def _call(self, fn, *args, thread: bool = False):
         try:
@@ -304,7 +369,9 @@ def register(app, engine) -> FundApi:
                     return web.json_response({"error": "invalid JSON body", "errors": {"_": "invalid JSON body"}},
                                              status=400)
             try:
-                status, payload = await handler(request.query, body, request.match_info)
+                guard = await api.replaced(name, request.query, body, request.match_info)
+                status, payload = guard if guard is not None else await handler(request.query, body,
+                                                                                request.match_info)
             except Exception:
                 logger.exception("/fund route %s failed", name)
                 return web.json_response({"error": "internal error in the fund engine (see backend.log)"},

@@ -17,6 +17,7 @@ BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKIP_DIRS = {".venv", "data", "__pycache__", "bin", "obj", "node_modules"}
 EXEMPT_FILES = {"tests/test_sandbox_profile.py", "tests/test_s10_council_parity.py", "tests/fund_testkit.py",
                 "tests/council_parity_testkit.py", "tests/test_s10_council_parity_scenarios.py",
+                "tests/test_s10_council_switchover.py",
                 "tests/crypto_testkit.py", "strategy_platform/execution/migration.py", "main.py", "ai_budgets.py",
                 "tests/test_s10_no_new_fund_imports.py"}
 EXEMPT_PREFIXES = ("fund/", "tests/test_fund_")

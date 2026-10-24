@@ -50,7 +50,7 @@ namespace UFOS.ai.HedgeFund.Platform
             }
             else _alertsError = res.Ok ? "Unexpected response from the backend (/v2/monitoring/alerts)." : PlatformClient.DescribeFailure(res);
             if (force) _signatures.Remove(SecAlerts);
-            RenderIfChanged(SecAlerts, new object?[] { _alerts, _alertsError, _alertsUnackedOnly, _selectedAlertId, MonitoringNotifier.ToastsWanted(), MonitoringNotifier.ToastProblem }, RenderAlerts);
+            RenderIfChanged(SecAlerts, new object?[] { _alerts, _alertsError, _alertsUnackedOnly, _selectedAlertId, MonitoringNotifier.ToastsWanted(), MonitoringNotifier.ToastProblem, MonitoringNotifier.PollProblem }, RenderAlerts);
         }
 
         private void RenderAlerts()
@@ -75,7 +75,7 @@ namespace UFOS.ai.HedgeFund.Platform
             {
                 FundSettings.MonitoringToasts = toasts.IsChecked == true;
                 _signatures.Remove(SecAlerts);
-                RenderIfChanged(SecAlerts, new object?[] { _alerts, _alertsError, _alertsUnackedOnly, _selectedAlertId, MonitoringNotifier.ToastsWanted(), MonitoringNotifier.ToastProblem }, RenderAlerts);
+                RenderIfChanged(SecAlerts, new object?[] { _alerts, _alertsError, _alertsUnackedOnly, _selectedAlertId, MonitoringNotifier.ToastsWanted(), MonitoringNotifier.ToastProblem, MonitoringNotifier.PollProblem }, RenderAlerts);
             };
             settings.Children.Add(toasts);
             var muted = FundSettings.MuteNotifications;
@@ -85,6 +85,8 @@ namespace UFOS.ai.HedgeFund.Platform
                 10.5, muted ? FundPalette.Risk : FundPalette.Faint));
             if (MonitoringNotifier.ToastProblem is string toastProblem)
                 settings.Children.Add(MonUi.Line(toastProblem, 10.5, FundPalette.Kill));
+            if (MonitoringNotifier.PollProblem is string pollProblem)
+                settings.Children.Add(MonUi.Line(pollProblem, 10.5, FundPalette.Kill));
             panel.Children.Add(FundUi.Panel(settings, new Thickness(14, 10, 14, 10), new Thickness(0, 0, 0, 10)));
 
             // controls
@@ -187,6 +189,15 @@ namespace UFOS.ai.HedgeFund.Platform
                 var open = MonUi.Small("Open account", "Open the account of this alert in Monitoring, Accounts and brokers");
                 open.Click += async (_, _) => await OpenAlertTargetAsync(a);
                 row.Children.Add(open);
+            }
+            // S10-C (SPEC §22.8, SWITCHOVER_FIX_API §7): Council alerts — incl. the critical council_switchover_failed (retry / abort there)
+            // and council_legacy_duplicates — open the Council view; label and severity come from the backend's kind list as for every alert
+            if (a.Kind != null && a.Kind.StartsWith("council_", StringComparison.Ordinal))
+            {
+                var c = MonUi.Small(a.Kind == "council_switchover_failed" ? "Council view — retry / abort…" : "Council view…",
+                                    "Open the Council of AIs at the top of the Overview");
+                c.Click += (_, _) => RequestCouncil();
+                row.Children.Add(c);
             }
             if (a.Kind is "reconciliation_halt" or "broker_disconnected" or "broker_reconnected")
             {

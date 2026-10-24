@@ -1253,8 +1253,14 @@ MIGRATIONS = [
         "CREATE INDEX IF NOT EXISTS ix_cl_ai_calls_run ON cl_ai_calls(run_id)",
         "CREATE INDEX IF NOT EXISTS ix_cl_runs_started ON cl_runs(started_at)",
     ]),
+    # v26 (SP §22.14, R2 review M1): one legacy row per old id — a second import of the old history is refused by
+    # the database itself (the switch-over lock + the high-water-mark re-check come first)
+    (26, [lambda conn: _legacy_unique_indexes(conn)]),
 ]
 SCHEMA_VERSION = MIGRATIONS[-1][0]
+# meta: the schema version a database was CREATED at (written once, by migrate() on an empty file) — the R2
+# switch-over needs a pre-v25 backup only for a database that existed before v25 (SP §22.8)
+META_CREATED_VERSION = "schema.created_version"
 TABLES = ("meta", "audit", "data_sources", "bars", "strategies", "strategy_versions", "strategy_transitions",
           "ext_observations", "corporate_actions", "seam_checks", "volumes", "backtest_runs",
           "strategy_families", "holdout_events", "validation_exceptions", "strategy_logic",
@@ -1304,11 +1310,26 @@ def _open(path: str) -> sqlite3.Connection:
     return conn
 
 
+def _legacy_unique_indexes(conn: sqlite3.Connection) -> None:
+    """UNIQUE partial indexes on cl_runs(old_id) / cl_decisions(old_id) WHERE legacy = 1. A database that already
+    holds duplicates (a double import before this fix) cannot get them: the migration goes on (refusing the whole
+    hedgefund.db would stop every platform function) but it is NOT silent — council.switchover raises a critical
+    alert at every start and blocks the switch-over with ``legacy_duplicates`` (table, rows)."""
+    for name, table in (("ux_cl_runs_legacy_old_id", "cl_runs"), ("ux_cl_decisions_legacy_old_id", "cl_decisions")):
+        try:
+            conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {table}(old_id) WHERE legacy = 1")
+        except sqlite3.IntegrityError:
+            logger.error("hedgefund.db v26: %s holds duplicate legacy rows — unique index %s NOT created; the "
+                         "switch-over is blocked (legacy_duplicates) and a critical alert is raised at start "
+                         "(SPEC §22.14)", table, name)
+
+
 def migrate(conn: sqlite3.Connection) -> int:
     """Brings the schema to SCHEMA_VERSION; safe to call any number of times."""
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     if current > SCHEMA_VERSION:
         raise sqlite3.DatabaseError(f"schema v{current} is newer than this code (v{SCHEMA_VERSION})")
+    born_empty = current == 0
     for version, statements in MIGRATIONS:
         if version <= current:
             continue
@@ -1325,6 +1346,10 @@ def migrate(conn: sqlite3.Connection) -> int:
                 conn.rollback()
             raise
         current = version
+    if born_empty and current >= 1:
+        conn.execute("INSERT OR IGNORE INTO meta (key, value, updated_at) VALUES (?, ?, ?)",
+                     (META_CREATED_VERSION, str(current), utc_now_iso()))
+        conn.commit()
     return current
 
 
@@ -1364,8 +1389,8 @@ def backup_before(conn: sqlite3.Connection, target: str, version: int, now: Opti
         return None
     folder = os.path.join(os.path.dirname(os.path.abspath(target)), "backups")
     prefix = f"{os.path.basename(target)}.pre-v{version}-"
-    if os.path.isdir(folder) and any(n.startswith(prefix) for n in os.listdir(folder)):
-        return None
+    if os.path.isdir(folder) and any(n.startswith(prefix) and not n.endswith(".tmp") for n in os.listdir(folder)):
+        return None                      # an existing COMPLETE copy (a *.tmp leftover of a crash does not count)
     stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
     dest = os.path.join(folder, prefix + stamp)
     os.makedirs(folder, exist_ok=True)

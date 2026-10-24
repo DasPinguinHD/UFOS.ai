@@ -16,3 +16,6 @@ data/gdelt_cooldown.json
 # per-start API session token (api_auth.py) — never commit
 data/api-token
 data/api-token.tmp
+# per-user non-secret settings (settings_file.py) - local only, never commit
+data/settings.json
+data/settings.json.tmp

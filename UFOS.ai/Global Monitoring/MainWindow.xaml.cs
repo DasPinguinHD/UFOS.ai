@@ -537,6 +537,8 @@ namespace UFOS.ai.GlobalMonitoring
             GlobeView.CoreWebView2.PermissionRequested += (s, args) =>
             {
                 args.State = CoreWebView2PermissionState.Deny;
+                args.SavesInProfile = false;   // nothing is remembered
+                args.Handled = true;           // decided here — WebView2 never shows its own prompt
             };
             GlobeView.CoreWebView2.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
             GlobeView.CoreWebView2.WebResourceRequested += GlobeCore_WebResourceRequested;

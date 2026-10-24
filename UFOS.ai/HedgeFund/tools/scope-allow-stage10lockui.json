@@ -4,7 +4,8 @@
   "files": [
     "UFOS.ai/Shared/PythonEnvironment.cs",
     "UFOS.ai/Services/PythonEnvManager.cs",
-    "UFOS.ai/MainWindow.xaml"
+    "UFOS.ai/MainWindow.xaml",
+    "UFOS.ai/MainWindow.xaml.cs"
   ],
-  "note": "Shared/PythonEnvironment.cs: stamp = SHA-256 of requirements.lock (requirements.txt before the first lock), lock check by its '# source: … sha256=' line (same texts as Get-LockProblem), install only 'pip install --require-hashes -r requirements.lock', missing/stale lock → stop with the exact make_lockfile.py command. Services/PythonEnvManager.cs: same stamp rule, status names a lock problem; 'Update Python packages' already runs run_*.ps1 -Upgrade -EnvOnly (H's scripts regenerate the lock). MainWindow.xaml: tooltip of 'Update Python packages'. NOTE: snapshot taken AFTER the edits (backups with the pre-change state in HedgeFund/backend/data/stage10lockui-backup/*.pre-s10l.stale); MainWindow.xaml also carries stage10secui's data-source line."
+  "note": "Shared/PythonEnvironment.cs: stamp = SHA-256 of requirements.lock (requirements.txt before the first lock), lock check by its '# source: … sha256=' line (same texts as Get-LockProblem), install only 'pip install --require-hashes -r requirements.lock', missing/stale lock → stop with the exact make_lockfile.py command. Services/PythonEnvManager.cs: same stamp rule, status names a lock problem; 'Update Python packages' already runs run_*.ps1 -Upgrade -EnvOnly (H's scripts regenerate the lock). MainWindow.xaml: tooltip of 'Update Python packages'. NOTE: snapshot taken AFTER the edits (backups with the pre-change state in HedgeFund/backend/data/stage10lockui-backup/*.pre-s10l.stale); MainWindow.xaml also carries stage10secui's data-source line. Amendment 1 (lead, LOCK_API exit 5 / held-by-broker): PythonEnvManager.cs — second result line 'Binance demo broker packages not installable: <# conflict: reason>' after Update Python packages; packages of the '# held-by-broker:' line are not counted as updates. MainWindow.xaml.cs — shows that line and a 'held back for ccxt' tooltip."
 }

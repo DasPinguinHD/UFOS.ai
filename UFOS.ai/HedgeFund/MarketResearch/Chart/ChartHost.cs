@@ -713,6 +713,8 @@ namespace UFOS.ai.HedgeFund.MarketResearch
         private void Core_PermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
         {
             e.State = CoreWebView2PermissionState.Deny;
+            e.SavesInProfile = false;   // nothing is remembered
+            e.Handled = true;           // decided here — WebView2 never shows its own prompt
         }
 
         private void Core_WebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)

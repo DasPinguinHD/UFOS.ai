@@ -133,6 +133,7 @@ namespace UFOS.ai.HedgeFund
                 await FlushParamsAsync();
             };
             EquityChartHost.Child = _equityChart;
+            InitCouncil();   // S10-C R3: Council view at the top of the Overview (HedgeFundWindow.Council.cs)
 
             // "▶ Run now" can call the AI judge / sentiment agent -> AI trigger tooltip.
             _runNowTooltip = "Runs one engine cycle now (Council of AIs: agents + judge). " + AiContent.TriggerTooltip +
@@ -755,9 +756,17 @@ namespace UFOS.ai.HedgeFund
 
         private async Task RefreshStateOnceAsync()
         {
+            // S10-C R3: after the switch-over the old engine is replaced — its /fund routes answer 410, nothing to poll
+            if (_councilReplaced) return;
             try
             {
                 var result = await FundClient.GetStateAsync();
+                if (!result.Ok && result.HttpStatus == 410)
+                {
+                    // replaced while this window was open (or before the Council view's first load): let the Council view decide the layout
+                    if (_councilView != null) await _councilView.RefreshAsync();
+                    return;
+                }
                 if (!result.Ok || result.Value == null)
                 {
                     ShowConnectionProblem(result.Status, result.Describe());
@@ -2482,11 +2491,15 @@ namespace UFOS.ai.HedgeFund
             // S10 review C1 (2026-10-24): POST /v2/oms/kill (control.kill_all) runs the platform kill (all platform accounts, brokers
             // included) AND the old engine's kill; each half reports its own result — this one button covers both.
             var values = FundDialogs.Form(this, "Kill switch",
-                "This halts BOTH engines immediately.\n\n" +
-                "Old engine (Overview):\n" +
-                "• the autopilot is switched off,\n" +
-                "• every simulated position is closed with market orders (queued until the next open while the market is closed),\n" +
-                "• no autopilot orders until you resume the engine.\n\n" +
+                (_councilReplaced
+                    ? "This halts all paper trading immediately.\n\n" +
+                      "Council of AIs:\n" +
+                      "• the Council orders are switched off and its working orders are cancelled (paper-council's positions are closed with the platform accounts below).\n\n"
+                    : "This halts BOTH engines immediately.\n\n" +
+                      "Old engine (Overview):\n" +
+                      "• the autopilot is switched off,\n" +
+                      "• every simulated position is closed with market orders (queued until the next open while the market is closed),\n" +
+                      "• no autopilot orders until you resume the engine.\n\n") +
                 "Strategy Platform (Portfolio & Trading — every platform paper account):\n" +
                 "• auto trading is switched off,\n" +
                 "• all working orders are cancelled and every position is closed,\n" +
@@ -2534,9 +2547,31 @@ namespace UFOS.ai.HedgeFund
             var ok = true;
             var ordersFailed = 0;
             var notFlat = false;
-            // S10 C1: /v2/oms/kill reports the old engine's half as {ok, error, halted} — its closing orders are listed in the Overview
+            // S10 C1 / S10-C (§22.8): /v2/oms/kill reports the old engine's half as {ok, error, halted, orders} before the switch-over and as
+            // "not applicable" after it; the Council half {applicable, ok, orders_enabled, cancelled_orders, error} after it.
             var legacy = r?.Legacy;
-            if (legacy == null)
+            var council = r?.Council;
+            var switchedOver = council?.Applicable == true || legacy?.Applicable == false;
+            if (switchedOver)
+            {
+                lines.Add("Old engine: not applicable — switched over to the Council.");
+                if (council?.Applicable != true)
+                {
+                    ok = false;
+                    lines.Add("Council: no result reported — check the Council view (its orders switch must be off).");
+                }
+                else if (council.Ok != true)
+                {
+                    ok = false;
+                    lines.Add("Council: NOT confirmed — " + (string.IsNullOrWhiteSpace(council.Error) ? "the orders switch is still on" : council.Error!.Trim()));
+                }
+                else
+                {
+                    lines.Add("Council: orders switched off, " + (council.CancelledOrders ?? 0).ToString(Inv) + " working Council order(s) cancelled "
+                              + "(paper-council's positions are closed with the platform accounts below).");
+                }
+            }
+            else if (legacy == null)
             {
                 ok = false;
                 lines.Add("Old engine: no result reported — check the Overview.");
@@ -2548,8 +2583,9 @@ namespace UFOS.ai.HedgeFund
             }
             else
             {
+                var oldOrders = legacy.Orders?.Count ?? 0;
                 lines.Add(legacy.Halted == true
-                    ? "Old engine: halted; its positions are being closed (closing orders: Overview → Orders)."
+                    ? "Old engine: halted; " + (oldOrders == 0 ? "no positions to close." : oldOrders.ToString(Inv) + " closing order(s) placed (Overview → Orders).")
                     : "Old engine: the kill ran, but the halt is not reported as active — check the Overview.");
                 if (legacy.Halted != true) ok = false;
             }
@@ -2603,27 +2639,29 @@ namespace UFOS.ai.HedgeFund
             var title = notFlat ? "Kill switch — a broker is NOT verified flat, check the results"
                 : !ok ? "Kill switch — check the results"
                 : ordersFailed > 0 ? "Halted — some closing orders failed"
+                : switchedOver ? "All paper trading halted"
                 : "Both engines halted";
             return (title, string.Join("\n\n", lines));
         }
 
         private async void ResumeButton_Click(object sender, RoutedEventArgs e)
         {
-            if (!FundDialogs.Confirm(this, "Resume the engine?",
-                    "Clears the halt so runs may trade again. The autopilot stays off — switch it on in Execution → Autonomous if wanted.",
-                    "Resume"))
-                return;
+            // S10-C R3 (SPEC §22.8): one dialog — the halted platform accounts (paper-main, paper-council, broker accounts) and, only while
+            // the old engine still runs and is halted, the old engine. One POST /v2/oms/resume per chosen account, /fund/resume for the old engine.
             ResumeButton.IsEnabled = false;
             try
             {
-                var result = await FundClient.ResumeAsync();
-                if (!result.Ok) FundDialogs.Info(this, "Resume failed", result.Describe());
+                await OpenResumeDialogAsync();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn("HedgeFund", "Resume dialog failed.", ex);
+                FundDialogs.Info(this, "Resume", "The resume dialog failed (" + ex.GetType().Name + "). Resume single accounts in Portfolio & Trading.");
             }
             finally
             {
                 ResumeButton.IsEnabled = true;
             }
-            await RefreshStateAsync();
         }
 
         private async void ExecuteButton_Click(object sender, RoutedEventArgs e)

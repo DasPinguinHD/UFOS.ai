@@ -335,7 +335,8 @@
                 </Grid>
 
                 <!-- ===================== Right column: Session Data ===================== -->
-                <Grid Grid.Column="2" Margin="0,10,0,10">
+                <!-- Click-test 2026-10-24: a right margin so the column never touches the screen edge when maximized -->
+                <Grid Grid.Column="2" Margin="0,10,16,10">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
@@ -348,8 +349,11 @@
 
                     <Label Grid.Row="0" Content="Session Data" FontWeight="Bold" FontSize="16" Foreground="White" Padding="0" />
 
-                    <!-- Connection status -->
-                    <Grid Grid.Row="1" Margin="0,16,0,0">
+                    <!-- Connection status + YouTube URL. A StackPanel (not one Grid with Auto columns): the URL TextBox must
+                         never widen Auto columns with its text — that pushed this column past the right screen edge
+                         (click-test 2026-10-24, maximized on 1920 px). -->
+                    <StackPanel Grid.Row="1" Margin="0,16,0,0">
+                    <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
@@ -358,10 +362,9 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         <Ellipse x:Name="ConnectionIndicator" Width="12" Height="12" Fill="Gray" Stroke="#222" StrokeThickness="1" VerticalAlignment="Center" Grid.Column="0" Grid.Row="0" Grid.RowSpan="2"/>
-                        <TextBlock x:Name="ConnectionStatusText" Text="Disconnected" Foreground="#FFBFBFBF" FontSize="12" Grid.Column="1" Grid.Row="0" Margin="8,0,0,0"/>
+                        <TextBlock x:Name="ConnectionStatusText" Text="Disconnected" Foreground="#FFBFBFBF" FontSize="12" Grid.Column="1" Grid.Row="0" Margin="8,0,0,0" TextTrimming="CharacterEllipsis"/>
                         <TextBlock x:Name="ConnectionLastText" Text="last: -" Foreground="#FF8F8F8F" FontSize="11" Grid.Column="1" Grid.Row="1" Margin="8,0,0,0"/>
                         <StackPanel Grid.Column="2" Grid.Row="0" Grid.RowSpan="2" Orientation="Horizontal" VerticalAlignment="Center">
                             <Button x:Name="LogsButton" Content="Logs" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="52" Click="ShowLogs_Click" Margin="8,0,0,0"/>
@@ -369,16 +372,13 @@
                         </StackPanel>
                         <!-- S10-E (user 2026-10-24): the stream URL lives in backend\data\settings.json (youtube_url), edited here —
                              no .env. Save validates (https YouTube URL), writes the file atomically and restarts the backend. -->
-                        <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,10,0,0">
+                    </Grid>
+                        <Grid Margin="0,10,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
                             <TextBlock Text="YouTube URL" Foreground="#FFBFBFBF" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
                             <TextBox x:Name="YouTubeUrlBox" Grid.Column="1" FontSize="11" Background="#101010" Foreground="#FFE0E0E0" BorderBrush="#2A2A2A"
                                      Padding="4,2" MaxLength="500" VerticalContentAlignment="Center"
@@ -386,10 +386,11 @@
                                      ToolTip="The live stream the agent transcribes (https://www.youtube.com/… or https://youtu.be/…). Saved in backend\data\settings.json."/>
                             <Button x:Name="SaveYouTubeUrlButton" Grid.Column="2" Content="Save &amp; restart" Style="{StaticResource RoundedDarkButtonStyle}" MinWidth="52"
                                     Margin="8,0,0,0" Click="SaveYouTubeUrlButton_Click" AutomationProperties.Name="Save the YouTube URL and restart the backend"/>
-                            <TextBlock x:Name="YouTubeUrlStatusText" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Text="" TextWrapping="Wrap"
-                                       FontSize="10" Foreground="#FF8F8F8F" Margin="0,4,0,0" Visibility="Collapsed"/>
                         </Grid>
-                    </Grid>
+                        <!-- outside the Grid: a wrapping text spanning Auto columns would widen them -->
+                        <TextBlock x:Name="YouTubeUrlStatusText" Text="" TextWrapping="Wrap"
+                                   FontSize="10" Foreground="#FF8F8F8F" Margin="0,4,0,0" Visibility="Collapsed"/>
+                    </StackPanel>
 
                     <!-- Confidence history (moved out of the title bar, where it used to overflow into
                          this row by coincidence of hardcoded pixel margins) -->

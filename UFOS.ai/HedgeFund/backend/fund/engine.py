@@ -233,6 +233,23 @@ def _order_title(r: OrderResult, prefix: str) -> str:
 
 # --- the engine ------------------------------------------------------------------
 
+
+def switchover_refusal() -> Optional[str]:
+    """Why the old engine may not run (SP §22.8): the Council switch-over is pending / done, or its state is
+    unreadable (fail closed); None when it may run (none / reverted, or no hedgefund.db open at all — then the
+    Council cannot exist either and the old engine runs as before)."""
+    try:
+        from strategy_platform.council import store as cl_store
+        from strategy_platform.storage import db as sp_db
+        if sp_db.db_path() is None:
+            return None
+        state = cl_store.switchover()
+    except Exception as ex:      # noqa: BLE001
+        return f"the Council switch-over state is unreadable ({type(ex).__name__})"
+    if state in ("pending", "done"):
+        return "the old engine was replaced by the Council strategy"
+    return None
+
 class FundEngine:
     """See the module docstring."""
 
@@ -492,6 +509,10 @@ class FundEngine:
         the autopilot off (SPEC §2: at every backend start)."""
         if self.running:
             return self._task
+        # SP §22.8 (R2): never again after the Council switch-over (pending / done) — also when the state is unreadable
+        why = switchover_refusal()
+        if why or getattr(self, "_switchover_refused", False):
+            raise RuntimeError(why or "the old engine was replaced by the Council strategy")
         try:
             was_on = self.store.get_autopilot()
             self.store.set_autopilot(False)

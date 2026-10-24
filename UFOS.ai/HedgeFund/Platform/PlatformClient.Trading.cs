@@ -873,14 +873,22 @@ namespace UFOS.ai.HedgeFund.Platform
     {
         [JsonPropertyName("platform")] public JsonElement? Platform { get; set; }
         [JsonPropertyName("legacy")] public TradingKillLegacy? Legacy { get; set; }
+        /// <summary>S10-C (SPEC §22.8): {applicable: false} before the switch-over; after it the forced-off Council switch.</summary>
+        [JsonPropertyName("council")] public TradingKillCouncil? Council { get; set; }
     }
 
-    /// <summary>The old engine's half of /v2/oms/kill: {ok, error, halted} — no closing-order list (the Overview shows its orders).</summary>
+    /// <summary>
+    /// The old engine's half of /v2/oms/kill (SPEC §22.8): before the switch-over {ok, error, halted, orders} (its closing orders passed
+    /// through); after it {ok: true, applicable: false, note: "not applicable — switched over to the Council"} (never a failure).
+    /// </summary>
     internal sealed class TradingKillLegacy
     {
         [JsonPropertyName("ok")] public bool Ok { get; set; }
         [JsonPropertyName("error")] public string? Error { get; set; }
         [JsonPropertyName("halted")] public bool? Halted { get; set; }
+        [JsonPropertyName("applicable")] public bool? Applicable { get; set; }
+        [JsonPropertyName("note")] public string? Note { get; set; }
+        [JsonPropertyName("orders")] public List<JsonElement>? Orders { get; set; }
     }
 
     internal sealed class TradingKillHalf

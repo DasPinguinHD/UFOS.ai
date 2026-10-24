@@ -42,6 +42,11 @@ namespace UFOS.ai.Services
         /// <summary>Result of the last manual "Update Python packages" run in this session.</summary>
         public string? LastResult { get; set; }
         public bool LastResultFailed { get; set; }
+        /// <summary>Second line of the last update (Hedge Fund: the optional Binance demo broker set could not be installed).</summary>
+        public string? LastResultNote { get; set; }
+        /// <summary>Packages the lock holds below their newest version on purpose ("# held-by-broker:" line, kept for ccxt) —
+        /// not counted as updates.</summary>
+        public List<string> HeldBack { get; set; } = new();
     }
 
     /// <summary>
@@ -76,7 +81,7 @@ namespace UFOS.ai.Services
 
         private static readonly object Sync = new();
         private static IReadOnlyList<PythonEnvModuleStatus> _statuses = Array.Empty<PythonEnvModuleStatus>();
-        private static readonly Dictionary<string, (string Text, bool Failed)> LastResults = new();
+        private static readonly Dictionary<string, (string Text, bool Failed, string? Note)> LastResults = new();
         private static int _busy; // 1 while an update or online check runs
 
         /// <summary>Raised (on any thread) when <see cref="Statuses"/> or <see cref="IsUpdating"/> changed.</summary>
@@ -149,8 +154,12 @@ namespace UFOS.ai.Services
                         status.RequiredReason = GetInstallReason(module.BackendDir);
                         if (state.Modules.TryGetValue(known.Name, out var check))
                         {
-                            // Outdated info only applies to the venv as it was checked.
-                            if (status.RequiredReason == null) status.Outdated = check.Outdated.ToList();
+                            // Outdated info only applies to the venv as it was checked. Packages the lock holds back for the
+                            // broker set (ccxt pins them exactly — "# held-by-broker:") are not updates (LOCK_API).
+                            var held = ReadHeldByBroker(module.BackendDir);
+                            status.HeldBack = held.Values.ToList();
+                            if (status.RequiredReason == null)
+                                status.Outdated = check.Outdated.Where(o => !held.ContainsKey(NormalizeName(o.Split(' ')[0]))).ToList();
                             status.CheckError = check.Error;
                         }
                     }
@@ -165,6 +174,7 @@ namespace UFOS.ai.Services
                     {
                         status.LastResult = last.Text;
                         status.LastResultFailed = last.Failed;
+                        status.LastResultNote = last.Note;
                     }
                 }
                 list.Add(status);
@@ -390,6 +400,52 @@ namespace UFOS.ai.Services
 
         private static string NormalizeName(string name) => Regex.Replace(name.ToLowerInvariant(), "[-_.]+", "-");
 
+        /// <summary>
+        /// "# held-by-broker: certifi 2026.6.17 (alone: 2026.10.19), …" of requirements.lock (make_lockfile.py --update): normalized
+        /// name → "certifi 2026.6.17 (newest alone: 2026.10.19)". Empty without a lock or without that line.
+        /// </summary>
+        internal static Dictionary<string, string> ReadHeldByBroker(string backendDir)
+        {
+            var held = new Dictionary<string, string>(StringComparer.Ordinal);
+            var line = ReadHeaderLine(Path.Combine(backendDir, "requirements.lock"), "# held-by-broker:");
+            if (line == null) return held;
+            foreach (var part in line.Split(", ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var name = part.Split(' ')[0];
+                if (name.Length > 0) held[NormalizeName(name)] = part.Replace("(alone:", "(newest alone:", StringComparison.Ordinal);
+            }
+            return held;
+        }
+
+        /// <summary>The second result line when requirements-broker.lock is a "not installable" lock (its "# conflict:" line), else null.</summary>
+        internal static string? BrokerConflictNote(string backendDir)
+        {
+            var conflict = ReadHeaderLine(Path.Combine(backendDir, "requirements-broker.lock"), "# conflict:");
+            return conflict == null ? null : "Binance demo broker packages not installable: " + Shorten(conflict);
+        }
+
+        /// <summary>The text after <paramref name="prefix"/> of the first matching header line ('#' lines at the top), or null.</summary>
+        private static string? ReadHeaderLine(string path, string prefix)
+        {
+            try
+            {
+                if (!File.Exists(path)) return null;
+                foreach (var raw in File.ReadLines(path))
+                {
+                    var line = raw.Trim();
+                    if (line.Length == 0) continue;
+                    if (!line.StartsWith("#", StringComparison.Ordinal)) break;   // header ends at the first package line
+                    if (line.StartsWith(prefix, StringComparison.Ordinal))
+                    {
+                        var text = line.Substring(prefix.Length).Trim();
+                        return text.Length == 0 ? null : text;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
+            return null;
+        }
+
         // ------------------------------------------------------------------ manual upgrade
 
         /// <summary>
@@ -419,7 +475,9 @@ namespace UFOS.ai.Services
                     }
                     var (text, failed, changed) = await UpdateModuleAsync(module, progress);
                     if (changed) anyUpdated = true;
-                    SetResult(known.Name, text, failed);
+                    // make_lockfile.py exit 5: the main lock was regenerated alone and requirements-broker.lock names the
+                    // conflict — the main update still counts; the broker set gets its own line (LOCK_API).
+                    SetResult(known.Name, text, failed, BrokerConflictNote(module.BackendDir));
                     RefreshOffline();
                 }
                 LogLine($"===== {DateTime.Now:yyyy-MM-dd HH:mm:ss} done =====");
@@ -527,10 +585,10 @@ namespace UFOS.ai.Services
 
         private static string Shorten(string text) => text.Length <= 140 ? text : text.Substring(0, 137) + "...";
 
-        private static void SetResult(string module, string text, bool failed)
+        private static void SetResult(string module, string text, bool failed, string? note = null)
         {
-            lock (Sync) LastResults[module] = (text, failed);
-            var line = $"{module}: {text}";
+            lock (Sync) LastResults[module] = (text, failed, note);
+            var line = $"{module}: {text}" + (note != null ? " | " + note : "");
             if (failed) AppLog.Warn(LogModule, line); else AppLog.Info(LogModule, line);
             AppendUpdateLog(line);
         }

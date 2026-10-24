@@ -83,6 +83,9 @@ namespace UFOS.ai.HedgeFund.Platform
 
         /// <summary>"Keys &amp; data → Brokers…": the host opens Settings at its Brokers section.</summary>
         public event Action? BrokersRequested;
+        /// <summary>S10-C: an alert of the Council of AIs asks for the Council view (Overview).</summary>
+        public event Action? CouncilRequested;
+        internal void RequestCouncil() => CouncilRequested?.Invoke();
 
         public MonitoringView()
         {
@@ -448,6 +451,8 @@ namespace UFOS.ai.HedgeFund.Platform
                 _bannerHost.Children.Add(MonUi.Callout("The monitor task reported a problem (trading is not affected): " + err, FundPalette.Risk, MonUi.RiskSurface));
             if (MonitoringNotifier.ToastProblem is string toastProblem)
                 _bannerHost.Children.Add(BannerWithButton(toastProblem, FundPalette.Risk, MonUi.RiskSurface, "Open alerts", "Open the alert list", () => SelectTab(SecAlerts)));
+            if (MonitoringNotifier.PollProblem is string pollProblem)   // S10-C R3: the alert poll (toast source) is never silent
+                _bannerHost.Children.Add(MonUi.Callout(pollProblem, FundPalette.Risk, MonUi.RiskSurface));
             var paused = (_overview?.Strategies ?? new List<MonStrategy>()).Where(s => s.IsPaused).ToList();
             if (paused.Count > 0)
             {

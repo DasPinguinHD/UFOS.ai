@@ -168,9 +168,66 @@ class FundSource:
         return (float(fund_params.DEFAULTS["ai_daily_budget_usd"]), float(lim["min"]), float(lim["max"]),
                 float(lim.get("step", 0.1)))
 
+    @staticmethod
+    def _council_state() -> str:
+        """SP §22.2: from the Council switch-over on the limit is ``cl_params.ai_daily_budget_usd`` and the spend the
+        Council's ONE counter (``council.ai_spend``)."""
+        try:
+            from strategy_platform.council import store as cl_store
+            return cl_store.switchover()
+        except Exception:     # noqa: BLE001
+            return "unreadable"
+
+    def _council_entries(self, now, default, lo, hi, step, day):
+        from strategy_platform.core import llm
+        from strategy_platform.council import spend
+        from strategy_platform.council import store as cl_store
+        try:
+            got = cl_store.latest_params()
+            if got is None:
+                raise RuntimeError("the Council has no parameters")
+            limit = float(got[1]["ai_daily_budget_usd"])
+        except Exception as ex:     # noqa: BLE001
+            logger.error("ai budgets: Council params unreadable", exc_info=True)
+            return [_error_entry(self.KEY, self.LABEL, self.GROUP, "day", day, lo, hi, step, default, self.NOTES,
+                                 self.COST, _safe_message(ex), "next_cycle")]
+        spent = spend.spent_today(now)
+        if spent is None:
+            return [_entry(self.KEY, self.LABEL, self.GROUP, "day", day, limit, default, lo, hi, step, None,
+                           self.NOTES, self.COST, applies="next_cycle", status="error",
+                           message=llm.SPEND_UNREADABLE_MESSAGE)]
+        e = _entry(self.KEY, self.LABEL, self.GROUP, "day", day, limit, default, lo, hi, step, float(spent),
+                   self.NOTES, self.COST, applies="next_cycle")
+        if e["status"] == "blocked":
+            e["message"] = llm.AI_DISABLED_MESSAGE if limit <= 0 else llm.BUDGET_REACHED_MESSAGE
+        return [e]
+
+    def _council_put(self, value) -> None:
+        from strategy_platform.council import params as cp
+        from strategy_platform.council import store as cl_store
+        from strategy_platform.storage import db as sp_db
+        got = cl_store.latest_params()
+        if got is None:
+            raise PutRefused(409, {"error": "The Council has no parameters.", "kind": "NotActive"})
+        clean, errs = cp.validate({"ai_daily_budget_usd": value}, got[1])
+        if errs:
+            raise PutRefused(400, {"error": "invalid input", "errors": {"limit_usd": "; ".join(errs.values())}})
+        merged = cp.merge(got[1], clean)
+        try:
+            with sp_db._connect() as conn:
+                conn.execute("INSERT INTO audit (ts, actor, action, detail_json) VALUES (?, 'user', 'council_params', "
+                             "?)", (sp_db.utc_now_iso(), sp_db._dumps({"changes": clean, "via": "/ai/budgets"})))
+                cl_store.add_params(merged, "user", "AI budget (Settings → AI budgets)", "user", conn=conn)
+        except Exception as ex:     # noqa: BLE001 — audit-first: nothing written
+            raise PutRefused(503, {"error": "audit log unavailable — the action was not carried out",
+                                   "kind": "AuditUnavailable"}) from ex
+
     def entries(self, now):
         default, lo, hi, step = self._meta()
         day = now.date().isoformat()
+        state = self._council_state()
+        if state in ("pending", "done"):
+            return self._council_entries(now, default, lo, hi, step, day)
         if self.engine is None:
             return [_error_entry(self.KEY, self.LABEL, self.GROUP, "day", day, lo, hi, step, default, self.NOTES,
                                  self.COST, "The fund engine is not running.", "next_cycle")]
@@ -221,6 +278,8 @@ class FundSource:
         return None
 
     def put(self, key, value):
+        if self._council_state() in ("pending", "done"):
+            return self._council_put(value)
         if self.engine is None:
             raise PutRefused(503, {"error": "The fund engine is not running.", "kind": "EngineUnavailable"})
         from fund.engine import EngineError

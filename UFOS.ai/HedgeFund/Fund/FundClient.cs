@@ -84,8 +84,14 @@ namespace UFOS.ai.HedgeFund.Fund
             return SendAsync<FundKillResponse>(HttpMethod.Post, "/fund/kill", body, TimeSpan.FromSeconds(150));
         }
 
-        public static Task<FundResult<JsonElement>> ResumeAsync()
-            => SendAsync<JsonElement>(HttpMethod.Post, "/fund/resume", new Dictionary<string, object?>(), DefaultTimeout);
+        /// <summary>POST /fund/resume {reason?} — the note is sent when given (after R2 the route forwards it to the platform resume of
+        /// paper-council and audits it; the old engine's own resume does not record a note).</summary>
+        public static Task<FundResult<JsonElement>> ResumeAsync(string? reason = null)
+        {
+            var body = new Dictionary<string, object?>();
+            if (!string.IsNullOrWhiteSpace(reason)) body["reason"] = reason.Trim();
+            return SendAsync<JsonElement>(HttpMethod.Post, "/fund/resume", body, DefaultTimeout);
+        }
 
         public static Task<FundResult<List<FundRunSummary>>> GetRunsAsync(int limit = 50)
             => SendAsync<List<FundRunSummary>>(HttpMethod.Get, "/fund/runs?limit=" + limit.ToString(CultureInfo.InvariantCulture), null, DefaultTimeout);

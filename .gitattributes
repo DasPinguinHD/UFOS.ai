@@ -61,3 +61,9 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+###############################################################################
+# Vendored third-party files are pinned by sha256 (vendor/MANIFEST): never
+# convert their line endings on checkout (2026-10-24, chart engine_modified).
+###############################################################################
+**/vendor/** -text

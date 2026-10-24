@@ -174,6 +174,28 @@ function Get-LockProblem([string]$Req, [string]$Lock, [string]$Name) {
 	return $null
 }
 
+# The broker lock must come from the same joint resolution as the CURRENT requirements.lock (its "# with:" line;
+# main and broker share one venv) and must not be a "not installable" lock (its "# conflict:" line, written when
+# make_lockfile.py exits 5). $null when it can be installed, otherwise the reason with the command to run.
+function Get-BrokerLockProblem {
+	$with = Select-String -LiteralPath $OptionalLock -Pattern '^# with: requirements\.lock sha256=([0-9a-f]{64})$' | Select-Object -First 1
+	if ($null -eq $with) {
+		return ('requirements-broker.lock was made before the joint resolution - run: .venv\Scripts\python.exe ' + $LockToolHint + ' --update')
+	}
+	if (-not (Test-Path -LiteralPath $ReqLock)) {
+		return ('requirements.lock missing - run once (needs internet): .venv\Scripts\python.exe ' + $LockToolHint)
+	}
+	$mainHash = (Get-FileHash -LiteralPath $ReqLock -Algorithm SHA256).Hash.ToLowerInvariant()
+	if ($with.Matches[0].Groups[1].Value -ne $mainHash) {
+		return ('requirements-broker.lock was made for another requirements.lock - run: .venv\Scripts\python.exe ' + $LockToolHint + ' --update')
+	}
+	$conflict = Select-String -LiteralPath $OptionalLock -Pattern '^# conflict: (.+)$' | Select-Object -First 1
+	if ($null -ne $conflict) {
+		return ('ccxt cannot be installed together with requirements.lock: ' + $conflict.Matches[0].Groups[1].Value)
+	}
+	return $null
+}
+
 # Returns $null when no install is needed, otherwise a short reason.
 function Get-InstallReason {
 	if (-not (Test-Path -LiteralPath $VenvPython)) { return 'no .venv yet' }
@@ -315,8 +337,15 @@ function Invoke-EnvSetup {
 		# "pip install --upgrade" in place (stage 10, pinned dependencies).
 		Write-Out 'Regenerating requirements.lock (make_lockfile.py --update, needs internet)...'
 		& $VenvPython $LockTool --update | Out-ScriptHost
-		if ($LASTEXITCODE -ne 0) {
-			Write-EnvMarker ('failed could not regenerate requirements.lock (make_lockfile.py exited with code ' + $LASTEXITCODE + ' - offline? see log)')
+		$lockExit = $LASTEXITCODE
+		if ($lockExit -eq 5) {
+			# exit 5: requirements.lock was regenerated ALONE - the optional broker set (ccxt) cannot be resolved
+			# together with it. requirements-broker.lock names the conflict and the broker step below reports it
+			# on the binance-demo broker; the main environment never fails because of ccxt.
+			Write-Out 'requirements.lock regenerated; the optional broker set (ccxt) cannot be installed together with it - see requirements-broker.lock.'
+		}
+		elseif ($lockExit -ne 0) {
+			Write-EnvMarker ('failed could not regenerate requirements.lock (make_lockfile.py exited with code ' + $lockExit + ' - offline? see log)')
 			return
 		}
 	}
@@ -382,8 +411,11 @@ function Invoke-OptionalInstall {
 	}
 	$now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 	$lockProblem = Get-LockProblem $OptionalRequirements $OptionalLock 'requirements-broker.lock'
+	if (-not $lockProblem) { $lockProblem = Get-BrokerLockProblem }
 	if ($lockProblem) {
-		Set-Content -LiteralPath $OptionalStatusFile -Value ('failed ' + $hash + ' ' + $now + ' ' + $lockProblem) -Encoding Ascii
+		$statusReason = ($lockProblem -replace '[^\x20-\x7E]', ' ').Trim()
+		if ($statusReason.Length -gt 280) { $statusReason = $statusReason.Substring(0, 280) }
+		Set-Content -LiteralPath $OptionalStatusFile -Value ('failed ' + $hash + ' ' + $now + ' ' + $statusReason) -Encoding Ascii
 		Write-Out ('Optional broker package (ccxt) not installed - only the Binance demo broker is unavailable: ' + $lockProblem)
 		return
 	}

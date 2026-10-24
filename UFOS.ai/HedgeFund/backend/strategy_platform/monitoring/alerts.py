@@ -39,6 +39,10 @@ KINDS = {
     "council_run_failed": {"severity": "warning", "toast": True, "label": "Council of AIs — cycle failed"},
     "council_budget_reached": {"severity": "warning", "toast": True, "label": "Council of AIs — AI budget reached"},
     "council_orders_off": {"severity": "warning", "toast": True, "label": "Council of AIs — orders switched off"},
+    "council_switchover_failed": {"severity": "critical", "toast": True,          # R2 review M2
+                                  "label": "Council of AIs — switch-over did not finish"},
+    "council_legacy_duplicates": {"severity": "critical", "toast": True,          # v26 index not possible
+                                  "label": "Council of AIs — duplicate imported history"},
 }
 CURSOR_KEY = "mon.alerts.audit_cursor"
 BROKER_DOWN_MINUTES = 10           # default — user confirm
