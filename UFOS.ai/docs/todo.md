@@ -157,6 +157,10 @@ One `dotnet build`, then per item. Full step lists: `todo-archive/2026-10.md` se
 - [ ] Backlog from the Reels interest profile R1–R8 (`claude/reels-interest-profile.md`) — not scheduled.
 
 ## 5. Smaller open items
+- [ ] Click-test 2026-10-25 (lead, remote): full screen OK on the Research chart, macro view, equity curve, orders table;
+  FRED notice OK in Macro, Calendar and Keys & data. Findings: (1) the Orders focus mode shows rows without column
+  headers; (2) the Overview equity curve's SPY line shows sharp one-day spikes around late Sep / early Oct — check the
+  benchmark series for bad bars. Not yet clicked: globe, backtest report, loop grid, Transaction Log, System Logs.
 
 - [ ] LiveStream Agent: handle `verdict_history` in `WebSocketService.cs` (restored verdicts after a restart).
 - [ ] Analysis & Reasoning: typed follow-up questions (small chat per analysis, labelled, tier switch, cost hint).
