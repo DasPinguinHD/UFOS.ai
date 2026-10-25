@@ -8,7 +8,7 @@ in `todo-archive/2026-10.md` section B. Open task / contract files for agents: `
 `HedgeFund/backend/strategy_platform/SPEC.md` (SP), `HedgeFund/backend/market_research/SPEC.md` (MR),
 `HedgeFund/backend/fund/SPEC.md` (old engine); file map `HedgeFund/docs/CODEMAP.md`; rules `CLAUDE.md`.
 
-Last updated: 2026-10-24 (DOCS-SLIM)
+Last updated: 2026-10-25 (TILES wired)
 
 ## 1. Now — in this order
 
@@ -34,16 +34,15 @@ Last updated: 2026-10-24 (DOCS-SLIM)
   no failed half, Council orders OFF; Resume paper-council → halt cleared, orders stay OFF; (5) app closed longer than
   the heartbeat minutes → auto trading off; (6) Settings → AI budgets: the Council budget edits; (7) optional "Revert"
   → the old engine runs again; (8) a half-finished switch-over shows the error with "Retry" / "Abort".
-- [x] **GET /v2/portfolio/summary** (Agent P) — BUILT 2026-10-25 (SP §17.15, `UFOS.ai/docs/tasks/PORTFOLIO_SUMMARY_API.md`;
-  tests green). Next: W wires the Hedge Fund tile provider to its fields. Original brief: stored values only — equity, day P&L from stored snapshots, open
-  position count, auto-trading / kill / halt state, Council orders state; no broker calls, no market data,
-  token-protected, cheap enough for a 30 s poll; for the MainWindow tile (W; `UFOS.ai/docs/tasks/TILES_API.md` §10.4 —
-  the HedgeFund tile shows "not available yet" until the route exists, then its Live figures are wired).
 - [ ] **TILES — module tile previews** (Live / last view blurred / illustration via ⋯ menu; mandatory for every
-  module) — owner W. `UFOS.ai/docs/tasks/TILES_TASK.md` + `TILES_API.md` (decisions §10). Slice c built 2026-10-24:
-  project `UFOS.ai.ModuleTiles` + main-app / module providers as `*.cs.staged` (wiring pending, label tiles0); GM
-  `GET /events/summary` built (H). Open: wiring + build + click-test; the Hedge Fund Live figures after
-  `GET /v2/portfolio/summary`.
+  module). `UFOS.ai/docs/tasks/TILES_TASK.md` + `TILES_API.md` (decisions §10). WIRED 2026-10-25 (cloud lead session,
+  label tiles0): `*.cs.staged` → `*.cs`, project `UFOS.ai.ModuleTiles` referenced by the main app + the three modules +
+  `UFOS.ai.slnx`, `MainAppSettings` accepts `tile_modes`, host started in `MainWindow.Window_Loaded`; Hedge Fund Live
+  figures from `GET /v2/portfolio/summary` (Equity · Day P&L · Trading + sparkline, SP §25.2). Static checks + offline
+  parser check only. **Open (user): build + click-test** — each tile's ⋯ menu (Live / Last view / Illustration, Delete
+  last view), Live figures with each backend on and off ("backend off — as of HH:MM" after it was on once), the two
+  not-built tiles show the Illustration with "module not built yet", a Last view picture appears after a module window was
+  open and active ≥ 60 s (blurred, numbers unreadable), sandbox → SANDBOX chip and no picture.
 - [ ] **Newsroom Disclosures (INSIDER-RET)** — backend slices a–c DONE 2026-10-24 (H; SP §24,
   `UFOS.ai/docs/tasks/INSIDER_RET_API.md`). Next: W's Disclosures UI (Insider tab, Track record, status line with
   "Start backfill"; "⛶" via `FundUi.FullScreenButton`), then CONGRESS (`CONGRESS_TASK.md` / `CONGRESS_API.md`).

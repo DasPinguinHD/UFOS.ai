@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -11,19 +13,17 @@ using UFOS.ai.Shared;
 namespace UFOS.ai.HedgeFund.Tiles
 {
     /// <summary>
-    /// Hedge Fund tile preview (TILES_API §3 + lead decision §10.4). Live = <c>GET /v2/portfolio/summary</c> (stored values only —
-    /// no broker call, no market data), which Agent P builds after DOCS-SLIM; its fields are not final, so this provider does
-    /// NOT call it yet and shows a visible "not available yet" (lead 2026-10-24: "don't guess fields"). It only probes
-    /// GET /health (no token, 800 ms) for "backend off" and the sandbox flag — the tile never starts the backend.
-    /// TODO(TILES, after P's route): equity, day P&amp;L (+ sparkline if the route carries points), positions count, auto trading,
-    /// halts — from the route's confirmed fields.
+    /// Hedge Fund tile preview (TILES_API §3 + lead decision §10.4). Live = <c>GET /v2/portfolio/summary</c> (SP §17.15, stored
+    /// values only — no broker call, no market data, does not touch the dead-man heartbeat), mapped by
+    /// <see cref="HedgeFundTileSummary"/>: equity, day P&amp;L, trading state (+ sparkline of paper-main). GET /health (no token,
+    /// 800 ms) decides "backend off" — the tile never starts the backend. Sandbox figures (health or payload "mode": "sandbox")
+    /// carry the SANDBOX chip and are never stored.
     /// Last view: the Hedge Fund window, the Research pop-out and the Financial Newsroom (any of them, however opened); no
     /// picture while the sandbox strip is shown or the backend reports sandbox mode.
     /// </summary>
     public sealed class HedgeFundTilePreview : IModuleTilePreview
     {
         public const int Port = 8867;
-        public const string SummaryNotBuilt = "not available yet — the Hedge Fund backend has no tile summary route (GET /v2/portfolio/summary) yet";
         private static volatile bool _lastHealthSandbox;
         private readonly LoopbackReader _reader = new(Port, () => BackendAuth.ReadToken(BackendAuth.FindBackendDir("HedgeFund", "backend")), "Hedge Fund backend");
 
@@ -37,7 +37,18 @@ namespace UFOS.ai.HedgeFund.Tiles
             var health = await _reader.HealthAsync(ct).ConfigureAwait(false);
             _lastHealthSandbox = health.Running && health.Sandbox;
             if (!health.Running) return TileLiveResult.BackendOff();
-            return TileLiveResult.Unavailable(SummaryNotBuilt, health.Sandbox);
+            var r = await _reader.GetJsonAsync("/v2/portfolio/summary", ct).ConfigureAwait(false);
+            if (!r.Ok) return TileLiveResult.Unavailable(r.Problem ?? "no answer", health.Sandbox);
+            try
+            {
+                var result = HedgeFundTileSummary.Parse(r.Body!);
+                // sandbox when the payload's "mode" OR /health says so — such figures are shown with the chip, never stored
+                return health.Sandbox && !result.Sandbox ? result with { Sandbox = true } : result;
+            }
+            catch (Exception ex) when (ex is JsonException || ex is KeyNotFoundException || ex is InvalidOperationException || ex is FormatException)
+            {
+                return TileLiveResult.Unavailable("unexpected answer from the Hedge Fund backend (" + ex.GetType().Name + ")", health.Sandbox);
+            }
         }
 
         public Drawing CreateIllustration()

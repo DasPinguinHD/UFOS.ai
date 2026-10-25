@@ -53,6 +53,7 @@ namespace UFOS.ai
         private DispatcherTimer? _overviewRefreshTimer;
         private bool _ufoFlightStarted;
         private AiBudgetsWindow? _aiBudgetsWindow;
+        private UFOS.ai.Tiles.ModuleTileHost? _tileHost;   // module tile previews (TILES, label tiles0)
 
         public MainWindow()
         {
@@ -228,6 +229,33 @@ namespace UFOS.ai
             PythonEnvManager.Changed += OnPythonEnvChanged;
             RenderPythonEnvStatus();
             _ = InitPythonEnvAsync();
+
+            StartTilePreviews();
+        }
+
+        // Module tile previews (TILES_TASK.md / TILES_API.md, user decisions 2026-10-24): Live / Last view / Illustration per tile
+        // via its "⋯" button. Live never starts a backend and never makes an AI or paid call (the providers' contract).
+        // A failure here is logged (System Logs) and leaves the tiles as they were — they still open their modules.
+        private void StartTilePreviews()
+        {
+            try
+            {
+                _tileHost = new UFOS.ai.Tiles.ModuleTileHost(this, new (Button, UFOS.ai.ModuleTiles.IModuleTilePreview)[]
+                {
+                    (HedgeFundTile, new UFOS.ai.HedgeFund.Tiles.HedgeFundTilePreview()),
+                    (LiveStreamAgentTile, new UFOS.ai.LiveStreamTiles.LiveStreamAgentTilePreview()),
+                    (SentimentOptimizationTile, new UFOS.ai.Tiles.NotBuiltTilePreview("sentiment-optimization", "Sentiment Optimization")),
+                    (StrategyDiscoveryTile, new UFOS.ai.Tiles.NotBuiltTilePreview("strategy-discovery", "Strategy Discovery")),
+                    (SystemLogsTile, new UFOS.ai.Tiles.SystemLogsTilePreview()),
+                    (TransactionLogTile, new UFOS.ai.Tiles.TransactionLogTilePreview()),
+                    (GlobalMonitoringTile, new UFOS.ai.GlobalMonitoring.Tiles.GlobalMonitoringTilePreview()),
+                });
+                _tileHost.Start();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Tiles", "The module tile previews could not be started — the tiles show no preview", ex);
+            }
         }
 
         private void Window_Closing(object? sender, CancelEventArgs e)

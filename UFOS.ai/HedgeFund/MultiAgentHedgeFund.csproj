@@ -30,6 +30,7 @@
   <ItemGroup>
     <!-- App-wide "Backend Log" window (AppLog), used by the Financial Newsroom backend launcher (Newsroom/NewsroomBackend.cs). -->
     <ProjectReference Include="..\UFOS.ai.Logging\UFOS.ai.Logging.csproj" />
+    <ProjectReference Include="..\UFOS.ai.ModuleTiles\UFOS.ai.ModuleTiles.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- Market Research chart page (stage MR3a): chart.html/.js/.css + vendor/ are served from the output

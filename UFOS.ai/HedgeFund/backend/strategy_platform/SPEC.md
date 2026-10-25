@@ -1246,5 +1246,9 @@ As-delivered notes (W, 2026-10-24): → spec-archive/pending-docs-2026-10-24-25.
   Live). A mode a module cannot offer is a disabled menu item with its reason, and the tile shows the Illustration with
   that reason. Contracts in the public project `UFOS.ai.ModuleTiles`; providers live in the modules (GET-only loopback
   reads: Global Monitoring `GET /events/summary?hours=24`, LiveStream Agent `GET /verdicts?limit=1` labelled "last
-  verdict" (AI), Hedge Fund `GET /v2/portfolio/summary` — built 2026-10-25, §17.15; the provider wires its fields).
-  Status: slice c files staged (`*.cs.staged`), wiring pending.
+  verdict" (AI), Hedge Fund `GET /v2/portfolio/summary` (§17.15) → Equity (primary-currency total; other currencies
+  only in the detail line, never added up), Day P&L (+ % of the day reference), Trading (KILLED / HALTED / kill pending,
+  else auto ON|OFF, + Council ON|OFF after the switch-over), sparkline from paper-main's stored snapshots; a value the
+  route lacks reads "not available" with the route's reason). A static test keeps the C# parser's field names in step with
+  the route payload (`tests/test_tiles_static.py`). Status: wired 2026-10-25 (static checks + offline parser check);
+  user build + click-test pending.

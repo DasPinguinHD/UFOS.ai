@@ -21,12 +21,15 @@
     <Page Remove="Global Monitoring\**\*.xaml" />
     <ApplicationDefinition Remove="Global Monitoring\**\App.xaml" />
     <Compile Remove="UFOS.ai.Logging\**\*.cs" />
+    <!-- module tile previews (TILES, label tiles0): own public contract project -->
+    <Compile Remove="UFOS.ai.ModuleTiles\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <None Include="HedgeFund\MultiAgentHedgeFund.csproj" />
     <None Include="Global Monitoring\GlobalMonitoring.csproj" />
     <None Include="UFOS.ai.Logging\UFOS.ai.Logging.csproj" />
+    <None Include="UFOS.ai.ModuleTiles\UFOS.ai.ModuleTiles.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -34,6 +37,7 @@
     <ProjectReference Include="HedgeFund\MultiAgentHedgeFund.csproj" />
     <ProjectReference Include="Global Monitoring\GlobalMonitoring.csproj" />
     <ProjectReference Include="UFOS.ai.Logging\UFOS.ai.Logging.csproj" />
+    <ProjectReference Include="UFOS.ai.ModuleTiles\UFOS.ai.ModuleTiles.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -19,8 +19,9 @@ Read first: `CLAUDE.md` (rules), `UFOS.ai/docs/todo.md` (priorities), this folde
   CLAUDE.md as single rule source (now versioned), task files here, README "Data sources & licensing", licence
   clean-up (synthetic parity bars, `check_repo_data.py`, local real-data variant + export tool), FRED API notice,
   full-screen building block + 6 places, Global Monitoring `GET /events/summary`, INSIDER-RET backend slices a–c.
-- Staged, not wired: TILES phase 1 (`*.cs.staged`; wiring script described in `TILES_API.md`); waits for the
-  user's click-test of the full-screen build and for `GET /v2/portfolio/summary`.
+- TILES wired 2026-10-25 (cloud session, label tiles0; see `TILES_API.md` §11): all tile files compiled in, Hedge Fund
+  Live figures from `GET /v2/portfolio/summary`. Not built by an agent (nuget.org is blocked in the cloud container) —
+  the user's VS build + click-test (todo §1 "TILES") come next, together with the open full-screen click-test points.
 
 ## Open decisions / dates
 - **Mon 2026-10-26:** options RTH check `verify_alpaca_options.py` (14:30–21:00 Berlin); the old engine's 2 queued
@@ -32,7 +33,7 @@ Read first: `CLAUDE.md` (rules), `UFOS.ai/docs/todo.md` (priorities), this folde
   (`LSA_SOURCES_TASK.md`).
 
 ## Next work (order)
-1. `GET /v2/portfolio/summary` → TILES wiring + click-test.
+1. User: build + click-test TILES (and the remaining full-screen places); fix build errors first.
 2. INSIDER-RET UI ("Disclosures" section with Insider / Congress / Track record tabs) → CONGRESS backend + UI.
 3. LSA-SRC (interview first).
 4. R4/R5 after the switch-over and its click-test; then stage 11, Depth & Range, OS2–OS5 (todo §4).

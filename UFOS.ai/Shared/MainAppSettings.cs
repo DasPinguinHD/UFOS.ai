@@ -10,8 +10,9 @@ namespace UFOS.ai.Shared
     /// the backends' data/settings.json (ENV_API §4): an unknown key, a wrong type or an invalid value is an error with the
     /// message "app-settings.json: &lt;key&gt;: &lt;reason&gt;" — never silently ignored. Keys never go here (Credential Manager only):
     /// a key whose name contains key / secret / token / password is refused.
-    /// Read on every use (like the keys), so an edit applies without a restart. Written only by the one-time .env import
-    /// (Hedge Fund ⚙ Keys & data) — which is why it lives in Shared (linked into every module project).
+    /// Read on every use (like the keys), so an edit applies without a restart. Written by the one-time .env import
+    /// (Hedge Fund ⚙ Keys & data) — which is why it lives in Shared (linked into every module project) — and by the main
+    /// window's tile "⋯" menu (key <see cref="TileModesKey"/>, TILES 2026-10-25).
     ///
     ///   { "openrouter_base_url": "https://openrouter.ai/api/v1", "openrouter_model": "deepseek/deepseek-chat-v3-0324" }
     /// </summary>
@@ -19,6 +20,9 @@ namespace UFOS.ai.Shared
     {
         public const string OpenRouterBaseUrlKey = "openrouter_base_url";
         public const string OpenRouterModelKey = "openrouter_model";
+        /// <summary>Preview mode per module tile (an object). Accepted here and validated by the main app's Tiles/TileModeSettings.cs
+        /// (strict: an invalid entry is shown in the tile, never dropped) — this loader only reads the OpenRouter keys.</summary>
+        public const string TileModesKey = "tile_modes";
         public const string DefaultOpenRouterBaseUrl = "https://openrouter.ai/api/v1";
         public const string DefaultOpenRouterModel = "deepseek/deepseek-chat-v3-0324";
         private const int MaxFileBytes = 64 * 1024;
@@ -64,6 +68,7 @@ namespace UFOS.ai.Shared
                     var lower = name.ToLowerInvariant();
                     if (lower.Contains("key") || lower.Contains("secret") || lower.Contains("token") || lower.Contains("password"))
                         throw new MainAppSettingsException($"app-settings.json: {name}: keys and secrets are never stored here — set them in ⚙ Keys & data and remove this entry.");
+                    if (name == TileModesKey) continue;   // validated by Tiles/TileModeSettings.cs (main app)
                     if (name != OpenRouterBaseUrlKey && name != OpenRouterModelKey)
                         throw new MainAppSettingsException($"app-settings.json: {name}: unknown setting.");
                     if (prop.Value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(prop.Value.GetString()))

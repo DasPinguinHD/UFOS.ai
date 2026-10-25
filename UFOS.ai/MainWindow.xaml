@@ -411,7 +411,7 @@
                         </Button>
 
                         <!-- Sentiment Optimization (not built yet -> illustrative only) -->
-                        <Button Margin="0,0,14,14" Template="{StaticResource ModuleTileButtonTemplate}"
+                        <Button x:Name="SentimentOptimizationTile" Margin="0,0,14,14" Template="{StaticResource ModuleTileButtonTemplate}"
                                 Background="{StaticResource ModuleTileBackgroundBrush}" BorderBrush="{StaticResource AccentBorderBrush}"
                                 BorderThickness="1" Padding="16" Click="OpenSentimentOptimization_Click">
                             <Grid VerticalAlignment="Stretch">
@@ -435,7 +435,7 @@
                         </Button>
 
                         <!-- Trading Strategy Discovery (not built yet -> illustrative only) -->
-                        <Button Margin="0,0,14,14" Template="{StaticResource ModuleTileButtonTemplate}"
+                        <Button x:Name="StrategyDiscoveryTile" Margin="0,0,14,14" Template="{StaticResource ModuleTileButtonTemplate}"
                                 Background="{StaticResource ModuleTileBackgroundBrush}" BorderBrush="{StaticResource AccentBorderBrush}"
                                 BorderThickness="1" Padding="16" Click="OpenTradingStrategyDiscovery_Click">
                             <Grid VerticalAlignment="Stretch">
