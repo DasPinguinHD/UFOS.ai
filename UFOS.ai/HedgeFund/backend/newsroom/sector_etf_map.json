@@ -1,0 +1,397 @@
+{
+ "schema": 1,
+ "source": "Agent H mapping of SEC SIC codes to SPDR Select Sector ETFs (GICS sectors), 2026-10-24 - an approximation: SIC predates GICS. Accepted as documented by the lead 2026-10-24 21:05 (INSIDER_RET_API.md section 11.8). Edit here; first matching rule wins.",
+ "etfs": [
+  "XLK",
+  "XLF",
+  "XLV",
+  "XLE",
+  "XLI",
+  "XLY",
+  "XLP",
+  "XLU",
+  "XLB",
+  "XLRE",
+  "XLC"
+ ],
+ "rules": [
+  {
+   "sic_from": 800,
+   "sic_to": 899,
+   "etf": "XLB",
+   "label": "Forestry"
+  },
+  {
+   "sic_from": 100,
+   "sic_to": 999,
+   "etf": "XLP",
+   "label": "Agriculture"
+  },
+  {
+   "sic_from": 1200,
+   "sic_to": 1399,
+   "etf": "XLE",
+   "label": "Coal, oil & gas extraction"
+  },
+  {
+   "sic_from": 1000,
+   "sic_to": 1099,
+   "etf": "XLB",
+   "label": "Metal mining"
+  },
+  {
+   "sic_from": 1400,
+   "sic_to": 1499,
+   "etf": "XLB",
+   "label": "Non-metallic mining"
+  },
+  {
+   "sic_from": 1531,
+   "sic_to": 1531,
+   "etf": "XLY",
+   "label": "Homebuilders"
+  },
+  {
+   "sic_from": 1500,
+   "sic_to": 1799,
+   "etf": "XLI",
+   "label": "Construction"
+  },
+  {
+   "sic_from": 2000,
+   "sic_to": 2199,
+   "etf": "XLP",
+   "label": "Food & tobacco"
+  },
+  {
+   "sic_from": 2200,
+   "sic_to": 2399,
+   "etf": "XLY",
+   "label": "Textiles & apparel"
+  },
+  {
+   "sic_from": 2400,
+   "sic_to": 2499,
+   "etf": "XLB",
+   "label": "Lumber & wood"
+  },
+  {
+   "sic_from": 2500,
+   "sic_to": 2599,
+   "etf": "XLY",
+   "label": "Furniture"
+  },
+  {
+   "sic_from": 2600,
+   "sic_to": 2699,
+   "etf": "XLB",
+   "label": "Paper"
+  },
+  {
+   "sic_from": 2700,
+   "sic_to": 2799,
+   "etf": "XLC",
+   "label": "Printing & publishing"
+  },
+  {
+   "sic_from": 2833,
+   "sic_to": 2836,
+   "etf": "XLV",
+   "label": "Pharmaceuticals & biologics"
+  },
+  {
+   "sic_from": 2840,
+   "sic_to": 2844,
+   "etf": "XLP",
+   "label": "Soap, cleaners & cosmetics"
+  },
+  {
+   "sic_from": 2800,
+   "sic_to": 2899,
+   "etf": "XLB",
+   "label": "Chemicals"
+  },
+  {
+   "sic_from": 2900,
+   "sic_to": 2999,
+   "etf": "XLE",
+   "label": "Petroleum refining"
+  },
+  {
+   "sic_from": 3000,
+   "sic_to": 3099,
+   "etf": "XLB",
+   "label": "Rubber & plastics"
+  },
+  {
+   "sic_from": 3100,
+   "sic_to": 3199,
+   "etf": "XLY",
+   "label": "Leather"
+  },
+  {
+   "sic_from": 3200,
+   "sic_to": 3399,
+   "etf": "XLB",
+   "label": "Stone, glass & primary metals"
+  },
+  {
+   "sic_from": 3400,
+   "sic_to": 3499,
+   "etf": "XLI",
+   "label": "Fabricated metal products"
+  },
+  {
+   "sic_from": 3570,
+   "sic_to": 3579,
+   "etf": "XLK",
+   "label": "Computer & office equipment"
+  },
+  {
+   "sic_from": 3500,
+   "sic_to": 3599,
+   "etf": "XLI",
+   "label": "Industrial machinery"
+  },
+  {
+   "sic_from": 3630,
+   "sic_to": 3639,
+   "etf": "XLY",
+   "label": "Household appliances"
+  },
+  {
+   "sic_from": 3600,
+   "sic_to": 3699,
+   "etf": "XLK",
+   "label": "Electronic equipment"
+  },
+  {
+   "sic_from": 3711,
+   "sic_to": 3711,
+   "etf": "XLY",
+   "label": "Motor vehicles"
+  },
+  {
+   "sic_from": 3713,
+   "sic_to": 3714,
+   "etf": "XLY",
+   "label": "Truck bodies & vehicle parts"
+  },
+  {
+   "sic_from": 3700,
+   "sic_to": 3799,
+   "etf": "XLI",
+   "label": "Transportation equipment"
+  },
+  {
+   "sic_from": 3812,
+   "sic_to": 3812,
+   "etf": "XLI",
+   "label": "Defense electronics"
+  },
+  {
+   "sic_from": 3841,
+   "sic_to": 3851,
+   "etf": "XLV",
+   "label": "Medical instruments"
+  },
+  {
+   "sic_from": 3873,
+   "sic_to": 3873,
+   "etf": "XLY",
+   "label": "Watches & clocks"
+  },
+  {
+   "sic_from": 3800,
+   "sic_to": 3899,
+   "etf": "XLK",
+   "label": "Instruments"
+  },
+  {
+   "sic_from": 3900,
+   "sic_to": 3999,
+   "etf": "XLY",
+   "label": "Miscellaneous manufacturing"
+  },
+  {
+   "sic_from": 4600,
+   "sic_to": 4699,
+   "etf": "XLE",
+   "label": "Pipelines"
+  },
+  {
+   "sic_from": 4000,
+   "sic_to": 4799,
+   "etf": "XLI",
+   "label": "Transportation"
+  },
+  {
+   "sic_from": 4800,
+   "sic_to": 4899,
+   "etf": "XLC",
+   "label": "Communications"
+  },
+  {
+   "sic_from": 4922,
+   "sic_to": 4923,
+   "etf": "XLE",
+   "label": "Natural gas transmission"
+  },
+  {
+   "sic_from": 4950,
+   "sic_to": 4959,
+   "etf": "XLI",
+   "label": "Waste management"
+  },
+  {
+   "sic_from": 4900,
+   "sic_to": 4999,
+   "etf": "XLU",
+   "label": "Utilities"
+  },
+  {
+   "sic_from": 5122,
+   "sic_to": 5122,
+   "etf": "XLV",
+   "label": "Drugs wholesale"
+  },
+  {
+   "sic_from": 5140,
+   "sic_to": 5149,
+   "etf": "XLP",
+   "label": "Groceries wholesale"
+  },
+  {
+   "sic_from": 5000,
+   "sic_to": 5199,
+   "etf": "XLI",
+   "label": "Wholesale"
+  },
+  {
+   "sic_from": 5400,
+   "sic_to": 5499,
+   "etf": "XLP",
+   "label": "Food stores"
+  },
+  {
+   "sic_from": 5912,
+   "sic_to": 5912,
+   "etf": "XLP",
+   "label": "Drug stores"
+  },
+  {
+   "sic_from": 5200,
+   "sic_to": 5999,
+   "etf": "XLY",
+   "label": "Retail"
+  },
+  {
+   "sic_from": 6770,
+   "sic_to": 6770,
+   "etf": null,
+   "label": "Blank checks (SPACs)"
+  },
+  {
+   "sic_from": 6798,
+   "sic_to": 6798,
+   "etf": "XLRE",
+   "label": "Real estate investment trusts"
+  },
+  {
+   "sic_from": 6500,
+   "sic_to": 6599,
+   "etf": "XLRE",
+   "label": "Real estate"
+  },
+  {
+   "sic_from": 6000,
+   "sic_to": 6499,
+   "etf": "XLF",
+   "label": "Banks, brokers & insurance"
+  },
+  {
+   "sic_from": 6700,
+   "sic_to": 6799,
+   "etf": "XLF",
+   "label": "Holding & investment offices"
+  },
+  {
+   "sic_from": 7370,
+   "sic_to": 7379,
+   "etf": "XLK",
+   "label": "Software & IT services"
+  },
+  {
+   "sic_from": 7310,
+   "sic_to": 7319,
+   "etf": "XLC",
+   "label": "Advertising"
+  },
+  {
+   "sic_from": 7810,
+   "sic_to": 7829,
+   "etf": "XLC",
+   "label": "Motion pictures"
+  },
+  {
+   "sic_from": 7300,
+   "sic_to": 7399,
+   "etf": "XLI",
+   "label": "Business services"
+  },
+  {
+   "sic_from": 7000,
+   "sic_to": 7099,
+   "etf": "XLY",
+   "label": "Hotels"
+  },
+  {
+   "sic_from": 7200,
+   "sic_to": 7299,
+   "etf": "XLY",
+   "label": "Personal services"
+  },
+  {
+   "sic_from": 7900,
+   "sic_to": 7999,
+   "etf": "XLY",
+   "label": "Amusement & recreation"
+  },
+  {
+   "sic_from": 8731,
+   "sic_to": 8731,
+   "etf": "XLV",
+   "label": "Biological research"
+  },
+  {
+   "sic_from": 8000,
+   "sic_to": 8099,
+   "etf": "XLV",
+   "label": "Health services"
+  },
+  {
+   "sic_from": 8200,
+   "sic_to": 8299,
+   "etf": "XLY",
+   "label": "Educational services"
+  },
+  {
+   "sic_from": 8700,
+   "sic_to": 8799,
+   "etf": "XLI",
+   "label": "Engineering & management services"
+  },
+  {
+   "sic_from": 9995,
+   "sic_to": 9995,
+   "etf": null,
+   "label": "Non-operating establishments"
+  },
+  {
+   "sic_from": 9999,
+   "sic_to": 9999,
+   "etf": null,
+   "label": "Nonclassifiable"
+  }
+ ]
+}

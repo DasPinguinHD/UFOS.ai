@@ -58,6 +58,9 @@
                                    Foreground="{StaticResource AccentAmberBrush}" VerticalAlignment="Center" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,6,0">
+                        <!-- MR-FS rule (user 2026-10-24): the globe fills the whole monitor (Shared/FullScreenHost.cs); Esc / F11 exit -->
+                        <Button x:Name="FullScreenButton" Background="Transparent" BorderThickness="0" Padding="4,0" Margin="0,0,4,0" Cursor="Hand"
+                                Foreground="{StaticResource TertiaryForegroundBrush}" FontSize="11" Content="⛶" VerticalAlignment="Center" />
                         <Button x:Name="MinimizeButton" Click="MinimizeButton_Click" Template="{StaticResource PillButtonTemplate}"
                                 Width="14" Height="14" Margin="6,0" Background="{StaticResource AccentAmberBrush}" BorderBrush="Transparent">
                             <TextBlock Text="—" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -70,7 +73,7 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="1" Margin="14,10,14,14">
+            <Grid x:Name="GlobeArea" Grid.Row="1" Margin="14,10,14,14">
                 <Border Background="#FF0F0F0F" CornerRadius="6" ClipToBounds="True">
                     <Grid>
                         <wv2:WebView2 x:Name="GlobeView" Visibility="Collapsed" />

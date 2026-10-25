@@ -96,6 +96,7 @@ from newsroom import db as newsroom_db
 from newsroom import store as newsroom_store
 from newsroom import ai as newsroom_ai
 from newsroom import insider_summary
+from newsroom import disclosures_api, disclosures_backfill, disclosures_service   # Disclosures (INSIDER-RET)
 from newsroom import fred_collector, sec_edgar_collector, macro_derived
 from newsroom import calendar_collector
 from newsroom import keys as newsroom_keys
@@ -353,6 +354,7 @@ async def main() -> None:
         # Every filing goes to the archive (new -> insert, known -> last_seen);
         # only the display window goes to the in-memory store.
         newsroom_db.upsert_insider(event)
+        disclosures_service.on_insider_event(event)     # P/S trades -> disclosure_trades (never raises)
         if not is_outside_display_window(event):
             insider_store.add(event)
 
@@ -565,6 +567,7 @@ async def main() -> None:
     app.router.add_get("/newsroom/overview", _newsroom_overview)
     app.router.add_post("/newsroom/analysis", _newsroom_analysis)
     app.router.add_get("/newsroom/ai-history", _newsroom_ai_history)
+    disclosures_api.register(app)   # /newsroom/disclosures/* (INSIDER-RET), same api_auth middleware
 
     # HedgeFund autonomous loop (paper trading only). Market data from Alpaca via the
     # Strategy Platform data layer (bars cached in hedgefund.db); the engine never raises into the app.
@@ -718,6 +721,11 @@ async def main() -> None:
                                                         delays.get(name, 0.0)))
              for name, module in NEWSROOM_SOURCES.items()]
     tasks.append(asyncio.create_task(_prune_forever()))
+    tasks.append(asyncio.create_task(disclosures_service.run_forever(), name="disclosures-daily"))
+    try:   # a backfill that was running when the backend stopped is shown as paused (the user resumes it)
+        await asyncio.to_thread(disclosures_backfill.BACKFILL.recover_after_restart)
+    except Exception as ex:  # noqa: BLE001 — the status endpoint shows the store problem
+        logger.warning("Disclosures backfill state not checked: %s", ex)
     logger.info("Started Financial Newsroom collectors: %s", ", ".join(NEWSROOM_SOURCES))
 
     await asyncio.gather(*tasks)

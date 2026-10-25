@@ -66,8 +66,8 @@ class StorageCase(unittest.TestCase):
 
 class SchemaTest(StorageCase):
     def test_schema_version_and_trading_tables(self):
-        self.assertEqual(db.SCHEMA_VERSION, 3)
-        self.assertEqual(self.raw("PRAGMA user_version")[0][0], 3)
+        self.assertEqual(db.SCHEMA_VERSION, 4)            # v4 (2026-10-24): disclosure tables (INSIDER-RET)
+        self.assertEqual(self.raw("PRAGMA user_version")[0][0], 4)
         tables = {r[0] for r in self.raw("SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertTrue(set(db.TABLES) <= tables)
         cols = {t: [r[1] for r in self.raw(f"PRAGMA table_info({t})")] for t in TRADING}

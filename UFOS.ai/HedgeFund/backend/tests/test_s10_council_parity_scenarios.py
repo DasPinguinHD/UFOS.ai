@@ -307,7 +307,21 @@ class WallClockTest(ScenarioCase):
         self.assertEqual(spy.violations(), {})
 
 
+class SyntheticBarsTest(ScenarioCase):
+    """The committed fixture: SYNTHETIC bars of the real fixture's shape (licence clean-up 2026-10-25)."""
+    now = datetime(2026, 10, 26, 13, 0, tzinfo=UTC)                     # Mon after the fixture's last bar
+
+    def test_synthetic_bars_fixture(self):
+        self.harness(world_cls=kit.SyntheticBarsWorld, old_params={"watchlist": kit.REAL_SYMBOLS})
+        self.assertEqual(len(self.h.world.daily_bars("SPY", 400)), 260)
+        recs, mism = self.run_ticks(kit.lockstep_ticks(self.now.date(), 1)[:6])
+        self.assert_parity(mism)
+        self.assertGreater(len(self.h.llm.logs["new"]), 0)
+
+
+@unittest.skipUnless(kit.real_bars_available(), kit.REAL_BARS_MISSING)
 class RealDataTest(ScenarioCase):
+    """The user's own real bars (local, git-ignored) — skipped with the reason when the file is absent."""
     now = datetime(2026, 10, 26, 13, 0, tzinfo=UTC)                     # Mon after the fixture's last bar
 
     def test_real_data_fixture(self):

@@ -35,6 +35,18 @@
 
   .sidebar { background: var(--panel); border-right: 1px solid var(--panel-border); padding: 14px 12px; overflow-y: auto; }
   .sidebar.right { border-right: none; border-left: 1px solid var(--panel-border); }
+  /* MR-FS (full screen, host message "fullscreen"): layer toggles as a floating menu, event feed collapsible */
+  .fs-controls { display: none; position: absolute; top: 10px; left: 12px; z-index: 30; gap: 6px; }
+  body.fullscreen .fs-controls { display: flex; }
+  .fs-controls button { background: var(--panel); color: var(--hi); border: 1px solid var(--panel-border); border-radius: 6px;
+                        padding: 4px 10px; font: 11px 'Segoe UI', sans-serif; cursor: pointer; }
+  .fs-controls button:hover { border-color: var(--lo); }
+  body.fullscreen #app { grid-template-columns: 1fr 300px; position: relative; }
+  body.fullscreen.feed-collapsed #app { grid-template-columns: 1fr; }
+  body.fullscreen.feed-collapsed #rightSidebar { display: none; }
+  body.fullscreen #leftSidebar { display: none; position: absolute; top: 44px; left: 12px; width: 240px; max-height: 75%;
+                                 z-index: 30; border: 1px solid var(--panel-border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.6); }
+  body.fullscreen.layers-open #leftSidebar { display: block; }
 
   /* Matches the WPF app's own scrollbar design system (DesignSystem.xaml:
      ScrollTrackBrush #242424 / ScrollThumbBrush #4A4A4A / ScrollThumbHoverBrush
@@ -124,6 +136,10 @@
   </div>
   <div class="sidebar right" id="rightSidebar"></div>
 </div>
+<div class="fs-controls" id="fsControls">
+  <button id="fsLayersBtn" aria-expanded="false" aria-controls="leftSidebar" aria-label="Show or hide the layer toggles">Layers ▾</button>
+  <button id="fsFeedBtn" aria-expanded="true" aria-controls="rightSidebar" aria-label="Show or hide the event feed">Feed ▸</button>
+</div>
 
 <script>
 (function () {
@@ -187,6 +203,8 @@
         flushTokenWaiters();
       } else if (data && data.type === 'naturalEarth') {
         onNaturalEarthAnswer(data);
+      } else if (data && data.type === 'fullscreen') {
+        setFullScreen(data.on === true);
       }
     });
   }
@@ -1177,6 +1195,30 @@
     state.zoom = newZoom;
     renderGlobe();
   }, { passive: false });
+
+  // MR-FS: full screen (host message) — the layer toggles become a floating menu, the event feed can be collapsed
+  function setFullScreen(on) {
+    document.body.classList.toggle('fullscreen', on);
+    document.body.classList.remove('layers-open');
+    document.body.classList.remove('feed-collapsed');
+    syncFsButtons();
+  }
+  function syncFsButtons() {
+    var layersOpen = document.body.classList.contains('layers-open');
+    var feedOpen = !document.body.classList.contains('feed-collapsed');
+    var lb = document.getElementById('fsLayersBtn');
+    var fb = document.getElementById('fsFeedBtn');
+    if (lb) { lb.textContent = layersOpen ? 'Layers \u25B4' : 'Layers \u25BE'; lb.setAttribute('aria-expanded', layersOpen ? 'true' : 'false'); }
+    if (fb) { fb.textContent = feedOpen ? 'Feed \u25B8' : 'Feed \u25C2'; fb.setAttribute('aria-expanded', feedOpen ? 'true' : 'false'); }
+  }
+  document.getElementById('fsLayersBtn').addEventListener('click', function () {
+    document.body.classList.toggle('layers-open');
+    syncFsButtons();
+  });
+  document.getElementById('fsFeedBtn').addEventListener('click', function () {
+    document.body.classList.toggle('feed-collapsed');
+    syncFsButtons();
+  });
 
   renderLeftSidebar();
   renderAll();

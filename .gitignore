@@ -9,12 +9,12 @@
 *.user
 *.userosscache
 *.sln.docstates
-CLAUDE.md
+# (2026-10-25: CLAUDE.md is versioned now - single rule source / single todo, public repo)
 # Private planning docs: only the repo-root docs/ folder (incl. docs/todo.md) and the second todo copy
 # UFOS.ai/docs/todo.md stay unversioned; UFOS.ai/docs/ and UFOS.ai/HedgeFund/docs/ are versioned
 # (user decision 2026-10-24).
 /docs/
-/UFOS.ai/docs/todo.md
+# (2026-10-25: /UFOS.ai/docs/todo.md is versioned now - single rule source / single todo, public repo)
 # Agent rollback copies (renamed instead of deleted; removed in the stage-10 deletion steps) and local backup
 # folders (e.g. HedgeFund/backend/data/stage10*-backup/) are never versioned (2026-10-24).
 *.stale

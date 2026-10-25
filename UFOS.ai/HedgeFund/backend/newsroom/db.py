@@ -59,6 +59,7 @@ PRICES_RETENTION_DAYS = 730       # trading table "prices" (market data: 2 years
 FUND_RUNS_RETENTION_DAYS = 90     # fund_runs + their fund_agent_scores (by started_at), except runs
                                   # that produced a recommendation or an order (kept: decision inputs)
 FUND_EVENTS_RETENTION_DAYS = 30   # fund_events (UI notifications)
+DISCLOSURES_RETENTION_DAYS = 730  # disclosure_trades + their returns, by filing date (user decision 2026-10-24)
 DB_FILENAME = "newsroom.db"
 BUSY_TIMEOUT_SECONDS = 5
 
@@ -248,11 +249,50 @@ MIGRATIONS = [
                                       ("drawdown_pct", "REAL")]),
         "CREATE INDEX IF NOT EXISTS ix_orders_status ON orders(status)",
     ]),
+    # v4 (2026-10-24, INSIDER-RET / CONGRESS): the Disclosures section — trades (insider + congress, core fields
+    # only, kept 2 years), their returns, issuer SIC codes and job state (newsroom/disclosure_db.py).
+    (4, [
+        """CREATE TABLE IF NOT EXISTS disclosure_trades (
+               id TEXT PRIMARY KEY,                 -- 'insider:<accession>:<P|S>' | 'congress:<row id>'
+               source TEXT NOT NULL,                -- 'insider' | 'congress'
+               accession TEXT, form TEXT,           -- insider: '4' | '4/A'
+               accepted_at TEXT,                    -- UTC ISO-8601 EDGAR acceptance time (null = unknown)
+               acceptance_state TEXT,               -- 'found' | 'pending' (backfill, not looked up yet) | 'missing'
+               filing_date TEXT NOT NULL,           -- YYYY-MM-DD (retention key)
+               issuer_cik TEXT, ticker TEXT, issuer_name TEXT,
+               owner_cik TEXT, owner_name TEXT, role_class TEXT, roles_raw TEXT, co_reporters INTEGER DEFAULT 0,
+               code TEXT NOT NULL,                  -- 'P' | 'S' ('X' = other congress type, not measured)
+               shares REAL, value_usd REAL, avg_price REAL,
+               trade_date_first TEXT, trade_date_last TEXT,
+               plan_10b5_1 INTEGER, plan_source TEXT, cluster INTEGER DEFAULT 0,
+               measurable INTEGER NOT NULL, not_measurable_reason TEXT,
+               official_url TEXT, origin TEXT NOT NULL, first_seen TEXT NOT NULL, updated_at TEXT NOT NULL,
+               chamber TEXT, party TEXT, state TEXT, office TEXT, owner_type TEXT,
+               amount_low REAL, amount_high REAL, amount_label TEXT, days_to_file INTEGER, is_late INTEGER,
+               asset_type TEXT, filing_type TEXT, source_ingested_at TEXT)""",
+        "CREATE INDEX IF NOT EXISTS ix_disc_trades_source_date ON disclosure_trades(source, filing_date)",
+        "CREATE INDEX IF NOT EXISTS ix_disc_trades_ticker ON disclosure_trades(ticker)",
+        "CREATE INDEX IF NOT EXISTS ix_disc_trades_issuer ON disclosure_trades(issuer_cik)",
+        """CREATE TABLE IF NOT EXISTS disclosure_returns (
+               trade_id TEXT NOT NULL, start TEXT NOT NULL, horizon INTEGER NOT NULL,
+               state TEXT NOT NULL,                 -- 'complete' | 'running' | 'not_measurable'
+               sessions_done INTEGER, entry_ts TEXT, entry_basis TEXT, entry_price REAL,
+               etf TEXT, etf_entry_price REAL, exit_date TEXT, exit_price REAL, etf_exit_price REAL,
+               r_stock REAL, r_etf REAL, excess REAL, score REAL, reason TEXT, computed_at TEXT NOT NULL,
+               PRIMARY KEY (trade_id, start, horizon))""",
+        """CREATE TABLE IF NOT EXISTS issuer_sic (
+               cik TEXT PRIMARY KEY, sic INTEGER, sic_description TEXT, tickers_json TEXT,
+               fetched_at TEXT NOT NULL)""",
+        """CREATE TABLE IF NOT EXISTS disclosure_jobs (
+               key TEXT PRIMARY KEY, state TEXT NOT NULL, progress_json TEXT, last_error TEXT,
+               updated_at TEXT NOT NULL)""",
+    ]),
 ]
 TABLES = ("insider_filings", "macro_observations", "calendar_snapshot", "ai_results", "meta",
           "prices", "signals", "orders", "positions", "equity_curve",
           "fund_params", "fund_runs", "fund_agent_scores", "fund_recommendations", "fund_events",
-          "fund_audit", "fund_cash_ledger", "fund_backtests")
+          "fund_audit", "fund_cash_ledger", "fund_backtests",
+          "disclosure_trades", "disclosure_returns", "issuer_sic", "disclosure_jobs")
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 _path = None
@@ -692,7 +732,8 @@ def ai_history(feature: str = None, limit: int = 20) -> list:
 def prune(now: datetime = None, insider_days: int = INSIDER_RETENTION_DAYS,
           ai_days: int = AI_RESULTS_RETENTION_DAYS, calendar_grace_days: int = CALENDAR_GRACE_DAYS,
           prices_days: int = PRICES_RETENTION_DAYS, fund_runs_days: int = FUND_RUNS_RETENTION_DAYS,
-          fund_events_days: int = FUND_EVENTS_RETENTION_DAYS) -> dict:
+          fund_events_days: int = FUND_EVENTS_RETENTION_DAYS,
+          disclosures_days: int = DISCLOSURES_RETENTION_DAYS) -> dict:
     """Retention run (startup + daily):
       insider filings older than insider_days (by filed_at, which falls back
         to first_seen at insert time), AI results older than ai_days,
@@ -729,6 +770,11 @@ def prune(now: datetime = None, insider_days: int = INSIDER_RETENTION_DAYS,
             f"DELETE FROM fund_agent_scores WHERE run_id IN ({prunable})", (runs_cut,)).rowcount
         fund["fund_runs"] = conn.execute(f"DELETE FROM fund_runs WHERE id IN ({prunable})", (runs_cut,)).rowcount
         fund["fund_events"] = conn.execute("DELETE FROM fund_events WHERE ts < ?", (events_cut,)).rowcount
+        # Disclosures (INSIDER-RET / CONGRESS, 2026-10-24): trades + their returns older than 2 years by filing date
+        disc_cut = (now - timedelta(days=disclosures_days)).astimezone(timezone.utc).date().isoformat()
+        conn.execute("DELETE FROM disclosure_returns WHERE trade_id IN "
+                     "(SELECT id FROM disclosure_trades WHERE filing_date < ?)", (disc_cut,))
+        n_disc = conn.execute("DELETE FROM disclosure_trades WHERE filing_date < ?", (disc_cut,)).rowcount
         n3 = 0
         row = conn.execute("SELECT payload_json FROM calendar_snapshot WHERE id = 1").fetchone()
         if row:
@@ -754,4 +800,7 @@ def prune(now: datetime = None, insider_days: int = INSIDER_RETENTION_DAYS,
         logger.info("SQLite prune (fund): %s", ", ".join(f"{v} {k}" for k, v in sorted(fund.items())))
     result = {"insider": n1, "ai_results": n2, "calendar_events": n3, "prices": n4}
     result.update(fund)
+    if n_disc:
+        logger.info("SQLite prune: %d disclosure trade(s) older than %d days removed", n_disc, disclosures_days)
+        result["disclosures"] = n_disc
     return result

@@ -94,6 +94,12 @@ namespace UFOS.ai.GlobalMonitoring
         public MainWindow()
         {
             InitializeComponent();
+            // MR-FS (user 2026-10-24): the globe area fills the whole monitor; the page shows the layer toggles as a floating menu and the
+            // event feed collapsible while full screen (globe.html "fullscreen" message). Esc / F11 / the bar's button exit.
+            UFOS.ai.Shared.FullScreenHost.Wire(FullScreenButton, () => GlobeArea, "Global Monitoring");
+            UFOS.ai.Shared.FullScreenHost.RegisterF11(this, () => GlobeArea, "Global Monitoring");
+            UFOS.ai.Shared.FullScreenHost.Changed += OnFullScreenChanged;
+            Closed += (_, _) => UFOS.ai.Shared.FullScreenHost.Changed -= OnFullScreenChanged;
             ApplyScreenSizeSafeguards();
             // user request 2026-10-23: the main content windows start maximized (within the work area: WM_GETMINMAXINFO hook);
             // WPF raises no StateChanged for the initial state, so the maximized look (square corners) is applied once here
@@ -864,6 +870,13 @@ namespace UFOS.ai.GlobalMonitoring
             using var stream = assembly.GetManifestResourceStream(resourceName);
             using var reader = new StreamReader(stream!);
             return reader.ReadToEnd();
+        }
+
+        private void OnFullScreenChanged(Window window, bool on)
+        {
+            if (!ReferenceEquals(window, this) || !_globePageLive) return;
+            try { GlobeView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "fullscreen", on })); }
+            catch (Exception ex) { AppLog.Warn("Global Monitoring", "Could not tell the globe page about full screen.", ex); }
         }
 
         private void Window_Closing(object? sender, CancelEventArgs e)

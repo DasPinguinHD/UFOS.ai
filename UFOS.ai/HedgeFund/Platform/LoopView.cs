@@ -62,6 +62,10 @@ namespace UFOS.ai.HedgeFund.Platform
         private readonly List<LoopEvent> _events = new();
         private long? _lastEventId;
         private string? _bodySignature;
+        // CHART_FULLSCREEN: the generation × slot grid sits in this persistent host, so its full screen (Shared/FullScreenHost) survives
+        // the 2-s poll re-renders — while it is full screen only the grid is refreshed in place, the rest of the body on exit.
+        private readonly Border _gridHost = new();
+        private bool _bodyRenderPending;
         private string? _connectionProblem;
         private int _connectionAttempts;
         private int _pollCount;
@@ -169,6 +173,16 @@ namespace UFOS.ai.HedgeFund.Platform
 
             _poll = new DispatcherTimer { Interval = PollInterval };
             _poll.Tick += async (_, _) => await PollAsync();
+            FullScreenHost.RegisterF11(_gridHost, () => _gridHost, "Loop population", PopulationHeader);
+            // after the grid's full screen ended (Esc / button / F11) the body re-renders once with what changed meanwhile
+            _gridHost.SizeChanged += (_, _) =>
+            {
+                if (!_bodyRenderPending || FullScreenHost.IsActive(_gridHost)) return;
+                Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                {
+                    if (_bodyRenderPending && !FullScreenHost.IsActive(_gridHost)) RenderBody();
+                }));
+            };
             IsVisibleChanged += (_, _) => UpdatePolling();
             PreviewKeyDown += async (_, e) =>
             {
@@ -615,6 +629,19 @@ namespace UFOS.ai.HedgeFund.Platform
 
         private void RenderBody()
         {
+            if (FullScreenHost.IsActive(_gridHost) && _detail is LoopDetail fd
+                && (fd.Generations ?? new List<LoopGeneration>()).Count > 0)
+            {
+                var fgens = fd.Generations!.OrderBy(g => g.Generation ?? 0).ToList();
+                foreach (var g in fgens)
+                    foreach (var v in g.Variants ?? new List<LoopVariant>())
+                        if (v.Id != null) _variantsById[v.Id] = v;
+                _gridHost.Child = GridPanel(fd, fgens);
+                _bodyRenderPending = true;
+                return;
+            }
+            if (FullScreenHost.IsActive(_gridHost)) FullScreenHost.ActiveFor(_gridHost)?.Exit();   // the grid is gone (no generation)
+            _bodyRenderPending = false;
             var offset = _bodyScroll.VerticalOffset;
             _body.Children.Clear();
             _variantsById.Clear();
@@ -634,7 +661,8 @@ namespace UFOS.ai.HedgeFund.Platform
             }
             else
             {
-                _body.Children.Add(GridPanel(d, gens));
+                _gridHost.Child = GridPanel(d, gens);
+                _body.Children.Add(_gridHost);
                 var latest = gens.Last().Generation ?? 0;
                 foreach (var g in gens) _body.Children.Add(GenerationElement(g, (g.Generation ?? 0) == latest));
             }
@@ -821,8 +849,13 @@ namespace UFOS.ai.HedgeFund.Platform
 
         private FrameworkElement GridPanel(LoopDetail d, List<LoopGeneration> gens)
         {
-            var stack = new StackPanel();
-            stack.Children.Add(FundUi.Text("Generations × variants", 12.5, FundPalette.TextBright, bold: true));
+            // DockPanel + ScrollViewer: in full screen the panel has a finite height and the grid scrolls; in the body it sizes to content
+            var stack = new DockPanel { LastChildFill = true };
+            var heading = FundUi.Text("Generations × variants", 12.5, FundPalette.TextBright, bold: true);
+            heading.VerticalAlignment = VerticalAlignment.Center;
+            var headRow = FundUi.HeadingWithFullScreen(heading, FundUi.FullScreenButton(_gridHost, "Loop population", PopulationHeader, registerF11: false));
+            DockPanel.SetDock(headRow, Dock.Top);
+            stack.Children.Add(headRow);
             var slots = Math.Max(d.Config?.Variants ?? 0, gens.SelectMany(g => g.Variants ?? new List<LoopVariant>()).Select(v => v.Slot ?? 0).DefaultIfEmpty(0).Max());
             var grid = new Grid { Margin = new Thickness(0, 6, 0, 4) };
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
@@ -854,12 +887,23 @@ namespace UFOS.ai.HedgeFund.Platform
                 }
                 row++;
             }
-            stack.Children.Add(grid);
-            stack.Children.Add(Line("★ kept (elite, carried over) · ↻ refined in the next generation · ✕ culled · ≡ duplicate (not eligible) · ! failed · … in progress · "
-                                    + "score = Sharpe − penalties (deterministic, no AI). Enter / click a cell to open the variant.", 10, FundPalette.Faint));
+            var legend = Line("★ kept (elite, carried over) · ↻ refined in the next generation · ✕ culled · ≡ duplicate (not eligible) · ! failed · … in progress · "
+                                    + "score = Sharpe − penalties (deterministic, no AI). Enter / click a cell to open the variant.", 10, FundPalette.Faint);
+            DockPanel.SetDock(legend, Dock.Bottom);
+            stack.Children.Add(legend);
+            stack.Children.Add(new ScrollViewer { Content = grid, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false });
             var panel = FundUi.Panel(stack, new Thickness(12, 10, 12, 10), new Thickness(0, 0, 0, 10));
             AutomationProperties.SetName(panel, "Grid of generations and variant slots");
             return panel;
+        }
+
+        /// <summary>Full-screen bar text of the population grid: seed, status, generations.</summary>
+        private string PopulationHeader()
+        {
+            var d = _detail;
+            if (d == null) return "no loop selected";
+            return LoopText.SeedLabel(d.Seed, null, _strategyNames, 80) + " · " + LoopText.StatusLabel(d.Status)
+                   + " · " + (d.Generations?.Count ?? 0).ToString(Inv) + " generation(s)";
         }
 
         private Button GridCell(LoopGeneration g, LoopVariant v)
@@ -887,6 +931,7 @@ namespace UFOS.ai.HedgeFund.Platform
         private void FocusVariant(string? variantId, int generation)
         {
             if (variantId == null) return;
+            if (FullScreenHost.IsActive(_gridHost)) FullScreenHost.ActiveFor(_gridHost)?.Exit();   // the variant opens in the body below
             _expanded["g:" + generation.ToString(Inv)] = true;
             _expanded["v:" + variantId] = true;
             RenderBody();

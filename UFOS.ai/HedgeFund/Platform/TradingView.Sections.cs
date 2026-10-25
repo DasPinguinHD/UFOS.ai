@@ -599,6 +599,11 @@ namespace UFOS.ai.HedgeFund.Platform
                 await LoadOrderDetailAsync(force: true);
             };
             p.Children.Add(_orderList);
+            // CHART_FULLSCREEN place 7: the blotter in focus mode (Shared/FullScreenHost; F11 in the list too, Esc exits)
+            var list = _orderList;
+            var focus = FundUi.FullScreenButton(list, "Orders", () => _orderCount?.Text);
+            focus.Margin = new Thickness(0, 0, 10, 0);
+            top.Children.Insert(1, focus);
 
             _orderDetailHost = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
             AutomationProperties.SetName(_orderDetailHost, "Order details");

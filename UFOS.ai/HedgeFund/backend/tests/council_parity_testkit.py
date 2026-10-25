@@ -181,18 +181,31 @@ class World:
 
 
 REAL_SYMBOLS = ["SPY", "QQQ", "TLT", "GLD", "BTC-USD"]
-REAL_BARS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "council_parity_real_bars.json")
+# Licence clean-up 2026-10-25: real Alpaca bars are licensed market data and are NOT in the repository any more.
+# The user's own export lives in the git-ignored data folder (HedgeFund/tools/export_council_parity_bars.py re-creates it from a
+# COPY of hedgefund.db); the committed tests use SYNTHETIC bars of the same shape (council_parity_synth_bars.py).
+REAL_BARS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "local_fixtures",
+                         "council_parity_real_bars.json")
+REAL_BARS_MISSING = ("local real-data fixture absent: backend/data/local_fixtures/council_parity_real_bars.json "
+                     "(git-ignored, the user's own Alpaca bars) — create it with "
+                     "'python HedgeFund/tools/export_council_parity_bars.py' from the repository root")
 
 
-class RealWorld(World):
-    """The frozen real-data fixture (SP §22.10 (c)): the daily bars of ``REAL_SYMBOLS`` come from
-    ``council_parity_real_bars.json`` (last 260 days up to 2026-10-23, exported once from a copy of the stage-10
-    backup); intraday quotes wiggle around the previous real close as in ``World``."""
+def real_bars_available() -> bool:
+    return os.path.isfile(REAL_BARS)
+
+
+class BarDocWorld(World):
+    """``World`` whose daily bars of ``REAL_SYMBOLS`` come from a fixture document ({"symbols": {sym: {"bars":
+    [[date, open, high, low, close, volume], ...]}}}); intraday quotes wiggle around the previous close as in
+    ``World``. Subclasses provide ``load_doc``."""
+
+    def load_doc(self) -> dict:
+        raise NotImplementedError
 
     def __init__(self, clock):
         super().__init__(clock)
-        with open(REAL_BARS, encoding="utf-8") as fh:
-            doc = json.load(fh)
+        doc = self.load_doc()
         self.real = {sym: {date.fromisoformat(b[0]): b for b in v["bars"]} for sym, v in doc["symbols"].items()}
 
     def _series(self, sym: str, until: date) -> Dict[date, float]:
@@ -206,6 +219,26 @@ class RealWorld(World):
         today = self.ny_date(self.clock())
         rows = [b for d, b in sorted(self.real[symbol].items()) if d < today][-days:]
         return [Bar(date=b[0], open=b[1], high=b[2], low=b[3], close=b[4], volume=b[5]) for b in rows]
+
+
+class SyntheticBarsWorld(BarDocWorld):
+    """The committed variant: SYNTHETIC bars of the real fixture's shape (seeded random walk, generated at test time)."""
+
+    def load_doc(self) -> dict:
+        import importlib.util          # by path: works whether tests/ is on sys.path or a package
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "council_parity_synth_bars.py")
+        spec = importlib.util.spec_from_file_location("council_parity_synth_bars", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.generate()
+
+
+class RealWorld(BarDocWorld):
+    """The local real-data variant (SP §22.10 (c)): the user's own export, read from the git-ignored data folder."""
+
+    def load_doc(self) -> dict:
+        with open(REAL_BARS, encoding="utf-8") as fh:
+            return json.load(fh)
 
 
 class ScriptedLLM:

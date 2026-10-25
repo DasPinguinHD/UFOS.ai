@@ -445,7 +445,8 @@ namespace UFOS.ai.HedgeFund.Platform
             var crossesSeam = string.CompareOrdinal(start ?? "", seamDate) < 0 && string.CompareOrdinal(end ?? "", seamDate) > 0;
 
             // ----- charts -----
-            Section("Equity vs benchmark");
+            var runLabel = (card.StrategyName ?? _strategyName ?? card.StrategyId ?? "Strategy") + " · v" + (card.Version?.ToString(Inv) ?? "?")
+                           + " · " + (start ?? "?") + " … " + (end ?? "?");
             var dates = (card.Curve?.Dates ?? new List<string>()).Select(ParseDate).ToList();
             var equity = card.Curve?.Equity ?? new List<double?>();
             var bench = card.Curve?.Benchmark ?? new List<double?>();
@@ -456,6 +457,7 @@ namespace UFOS.ai.HedgeFund.Platform
             var xMax = dates.LastOrDefault(d => d.HasValue);
             var cursorGroup = new ChartCursorGroup();
             var eqChart = new BacktestLineChart(drawdown: false) { Height = 230, CursorGroup = cursorGroup };
+            Section("Equity vs benchmark", FundUi.FullScreenButton(eqChart, "Backtest equity vs benchmark", () => runLabel));
             eqChart.SetData(Zip(dates, equity), "Strategy", Zip(dates, bench), benchSymbol, capital, seam,
                             "seam " + seamDate + " · Tiingo | Alpaca", "No equity curve in this run card.", xMin, xMax,
                             "Equity chart: strategy equity against " + benchSymbol + " buy-and-hold"
@@ -464,8 +466,8 @@ namespace UFOS.ai.HedgeFund.Platform
             _report.Children.Add(Line("Blue: strategy equity · grey dashed: " + benchSymbol + " buy-and-hold (same costs and dividends) · hairline: starting capital · hover or focus a chart (arrow keys) for values"
                                       + (crossesSeam ? " · amber: data seam " + seamDate + " (before: Tiingo, scaled at the seam; from it: Alpaca)" : ""), 10.5, FundPalette.Faint));
 
-            Section("Drawdown");
             var ddChart = new BacktestLineChart(drawdown: true) { Height = 130, CursorGroup = cursorGroup };
+            Section("Drawdown", FundUi.FullScreenButton(ddChart, "Backtest drawdown", () => runLabel));
             ddChart.SetTooltipExtra("Equity", Zip(dates, equity));
             ddChart.SetData(Drawdown(dates, equity), "Drawdown", null, null, null, seam, "seam", "No equity curve in this run card.", xMin, xMax,
                             "Drawdown chart: percent below the running equity peak");
@@ -620,6 +622,7 @@ namespace UFOS.ai.HedgeFund.Platform
 
         private void RenderSignalQuality(JsonElement? sq)
         {
+            var sqHeading = _report.Children.Count;
             Section("Signal quality");
             if (sq == null)
             {
@@ -634,6 +637,8 @@ namespace UFOS.ai.HedgeFund.Platform
                     .ToList();
                 var chart = new IcDecayChart { Height = 130 };
                 chart.SetData(bars);
+                ReplaceSection(sqHeading, "Signal quality", FundUi.FullScreenButton(chart, "Backtest IC decay",
+                    () => (_card?.StrategyName ?? _strategyName ?? _card?.StrategyId ?? "Strategy") + " · v" + (_card?.Version?.ToString(Inv) ?? "?")));
                 AutomationProperties.SetName(chart, "IC decay chart: mean rank IC of the signal against the 1-day return at lags "
                                                     + string.Join(", ", bars.Select(b => b.Item1 + " = " + (b.Item2 is double v ? v.ToString("0.000", Inv) : "not available"))));
                 _report.Children.Add(FundUi.Panel(chart, new Thickness(8, 8, 8, 6), new Thickness(0, 0, 0, 4)));
@@ -946,11 +951,28 @@ namespace UFOS.ai.HedgeFund.Platform
             return panel;
         }
 
-        private void Section(string title)
+        private void Section(string title, Button? fullScreen = null) => _report.Children.Add(SectionHeading(title, fullScreen));
+
+        /// <summary>Swaps the plain heading added at <paramref name="index"/> for one with the "⛶" control (chart known only later).</summary>
+        private void ReplaceSection(int index, string title, Button fullScreen)
+        {
+            if (index < 0 || index >= _report.Children.Count) return;
+            _report.Children.RemoveAt(index);
+            _report.Children.Insert(index, SectionHeading(title, fullScreen));
+        }
+
+        private static FrameworkElement SectionHeading(string title, Button? fullScreen)
         {
             var t = FundUi.Text(title, 12, FundPalette.Text, bold: true);
-            t.Margin = new Thickness(0, 14, 0, 6);
-            _report.Children.Add(t);
+            if (fullScreen == null)
+            {
+                t.Margin = new Thickness(0, 14, 0, 6);
+                return t;
+            }
+            t.VerticalAlignment = VerticalAlignment.Center;
+            var row = FundUi.HeadingWithFullScreen(t, fullScreen);
+            row.Margin = new Thickness(0, 10, 0, 4);
+            return row;
         }
 
         /// <summary>

@@ -159,6 +159,14 @@ namespace UFOS.ai
                 var moduleCombo = new ComboBox { Width = 160, Background = new SolidColorBrush(Color.FromRgb(26, 26, 26)), Foreground = Brushes.White, BorderBrush = new SolidColorBrush(Color.FromRgb(42, 42, 42)) };
                 filterPanel.Children.Add(filterLabel);
                 filterPanel.Children.Add(moduleCombo);
+                // CHART_FULLSCREEN place 7: the log text in focus mode (Shared/FullScreenHost; F11 too, Esc exits focus mode first)
+                var fullScreenBtn = new Button
+                {
+                    Content = "⛶", Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(7, 0, 7, 0), FontSize = 11,
+                    Background = new SolidColorBrush(Color.FromRgb(26, 26, 26)), Foreground = Brushes.White,
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(42, 42, 42)), Cursor = Cursors.Hand,
+                };
+                filterPanel.Children.Add(fullScreenBtn);
                 filterBar.Child = filterPanel;
                 Grid.SetRow(filterBar, 1);
                 root.Children.Add(filterBar);
@@ -193,6 +201,9 @@ namespace UFOS.ai
 
                 contentGrid.Children.Add(tb);
                 root.Children.Add(contentGrid);
+                Func<string?> fullScreenHeader = () => (moduleCombo.SelectedItem as string ?? AllModulesLabel) + " · " + tb.LineCount + " lines";
+                UFOS.ai.Shared.FullScreenHost.Wire(fullScreenBtn, () => contentGrid, title, fullScreenHeader);
+                UFOS.ai.Shared.FullScreenHost.RegisterF11(win, () => contentGrid, title, fullScreenHeader);
 
                 outer.Child = root;
                 win.Content = outer;
@@ -249,7 +260,8 @@ namespace UFOS.ai
                 timer.Tick += (s, ev) => { RefreshModuleFilter(); RefreshLogText(); };
                 win.Closed += (s, ev) => timer.Stop();
                 // Close on Escape key when this dynamic window is focused
-                win.PreviewKeyDown += (s, ev) => { try { if (ev.Key == Key.Escape) win.Close(); } catch { } };
+                // (in focus mode Esc only ends the focus mode — FullScreenHost handles it)
+                win.PreviewKeyDown += (s, ev) => { try { if (ev.Key == Key.Escape && UFOS.ai.Shared.FullScreenHost.ActiveFor(win) == null) win.Close(); } catch { } };
                 timer.Start();
 
                 win.Show();

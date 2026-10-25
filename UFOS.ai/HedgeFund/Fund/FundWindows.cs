@@ -283,6 +283,34 @@ namespace UFOS.ai.HedgeFund.Fund
             };
         }
 
+        /// <summary>
+        /// The standard "⛶" full-screen control (Shared/FullScreenHost: tooltip "Full screen (Esc to exit)", Esc exits) in the dashboard
+        /// look. F11 with the keyboard focus inside <paramref name="f11Scope"/> (default: the target) enters as well.
+        /// Pass <paramref name="registerF11"/> = false when the button is re-created for a persistent target (register F11 once instead).
+        /// </summary>
+        public static Button FullScreenButton(FrameworkElement target, string title, Func<string?>? headerText = null, UIElement? f11Scope = null,
+                                              bool registerF11 = true)
+        {
+            var b = MakeButton("⛶");
+            b.Padding = new Thickness(8, 1, 8, 1);
+            b.MinHeight = 22;
+            b.FontSize = 11;
+            b.VerticalAlignment = VerticalAlignment.Center;
+            FullScreenHost.Wire(b, () => target, title, headerText);
+            if (registerF11) FullScreenHost.RegisterF11(f11Scope ?? target, () => target, title, headerText);
+            return b;
+        }
+
+        /// <summary>A heading row: <paramref name="heading"/> left, the "⛶" control (<see cref="FullScreenButton"/>) right.</summary>
+        public static DockPanel HeadingWithFullScreen(UIElement heading, Button fullScreen)
+        {
+            var row = new DockPanel { LastChildFill = true };
+            DockPanel.SetDock(fullScreen, Dock.Right);
+            row.Children.Add(fullScreen);
+            row.Children.Add(heading);
+            return row;
+        }
+
         public static TextBox Input(string initial, bool mono = true)
         {
             var box = new TextBox
