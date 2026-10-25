@@ -1,0 +1,9 @@
+{
+  "label": "docsslim0",
+  "approved": "lead, 2026-10-24 (DOCS-SLIM task, user request 20:40 Berlin: ONE todo file UFOS.ai/docs/todo.md, done items to UFOS.ai/docs/todo-archive/<yyyy-mm>.md, root docs/todo.md removed)",
+  "files": [
+    "UFOS.ai/docs/todo-archive/2026-09.md",
+    "UFOS.ai/docs/todo-archive/2026-10.md"
+  ],
+  "note": "New archive files (verbatim done items + a frozen snapshot of the long-form open items). The root docs/todo.md copy was moved (not deleted) to HedgeFund/backend/data/docsslim0-backup/root-docs-todo.md.stale; the pre-slim UFOS.ai/docs/todo.md is kept there as UFOS.ai-docs-todo.md.pre-docs-slim.stale. The label was created after the files were written (docs-only change) — reviewed by the lead."
+}

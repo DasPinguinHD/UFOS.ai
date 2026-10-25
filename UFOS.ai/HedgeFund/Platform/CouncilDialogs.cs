@@ -80,6 +80,10 @@ namespace UFOS.ai.HedgeFund.Platform
                 foreach (var b in blockers)
                 {
                     _body.Children.Add(Bullet((b.Message ?? b.Code ?? "unknown blocker") + (string.IsNullOrWhiteSpace(b.Code) ? "" : "  [" + b.Code + "]"), FundPalette.Kill));
+                    if (!string.IsNullOrWhiteSpace(b.Table) || b.Rows != null)
+                        _body.Children.Add(Bullet("Table " + (b.Table ?? "(not named)") + " · "
+                                                  + (b.Rows is long n ? n.ToString(System.Globalization.CultureInfo.InvariantCulture) + " duplicate row(s)" : "row count not reported"),
+                                                  FundPalette.Kill, indent: 22));
                     if (CouncilPending.BlockerHint(b.Code) is { Length: > 0 } hint) _body.Children.Add(Bullet(hint, FundPalette.Risk, indent: 22));
                 }
             }

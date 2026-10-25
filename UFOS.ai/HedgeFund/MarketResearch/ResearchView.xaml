@@ -650,7 +650,7 @@
                     </Grid.ColumnDefinitions>
 
                     <!-- Chart card (MR3): toolbar (timeframe · type · RTH/extended) · feed chips · ChartHost (WebView2). -->
-                    <Border Grid.Column="0" Style="{StaticResource CardStyle}" MinHeight="420" Padding="10,10,10,10" AutomationProperties.Name="Chart">
+                    <Border x:Name="ChartCard" Grid.Column="0" Style="{StaticResource CardStyle}" MinHeight="420" Padding="10,10,10,10" AutomationProperties.Name="Chart">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -694,6 +694,9 @@
                                               Checked="MarkersToggle_Changed" Unchecked="MarkersToggle_Changed"
                                               ToolTip="Show markers: insider buys/sells (SEC Form 4), FOMC decisions and economic releases (Financial Newsroom); for a symbol opened from a backtest also its entries/exits, best/worst periods and drawdowns. Earnings dates: unavailable (no source)."
                                               AutomationProperties.Name="Chart markers" />
+                                <!-- MR-FS (user 2026-10-24): true full screen of this card (Shared/FullScreenHost.cs) — same chart instance, Esc / F11 exit -->
+                                <Button x:Name="ChartFullScreenButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="⛶" FontSize="12"
+                                        Padding="8,1" Margin="6,0,0,0" />
                             </WrapPanel>
                             <!-- Feed labels: where the candles come from (plan Q2 / SPEC §7.1); never colour alone. -->
                             <WrapPanel x:Name="ChartChips" Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,0" Visibility="Collapsed">

@@ -42,6 +42,7 @@ namespace UFOS.ai.HedgeFund.Newsroom
         {
             InitializeComponent();
             DayList.ItemsSource = _days;
+            FredAttribution.Fill(FredNoticeText, (Brush)FindResource("AccentGreenBrush"));   // FRED API terms: notice + link
             // Same pattern as MacroIndicatorsView: the timer lives as long as the view,
             // runs at Normal priority, skips ticks while the view isn't visible, refreshes
             // right away when it becomes visible again and is stopped by Shutdown().

@@ -1,0 +1,10 @@
+{
+  "label": "gmsummary0",
+  "approved": "lead, 2026-10-24 (after the R2+R3 commit 4df6db3): Global Monitoring read-only tile endpoint GET /events/summary per scratchpad/mr/GM_SUMMARY_API.md (Agent H)",
+  "files": [
+    "UFOS.ai/Global Monitoring/backend/main.py",
+    "UFOS.ai/Global Monitoring/backend/events_summary.py",
+    "UFOS.ai/Global Monitoring/backend/tests/test_events_summary.py"
+  ],
+  "note": "main.py: import + handler _events_summary (pure read of the in-memory store/source status, 400 on a bad hours value) + route + docstring line. events_summary.py (new): parse_hours / summarize. tests/test_events_summary.py (new): counts, window boundary, undated, unknown categories, feed status, strict hours, pure-read and token guards. Backup: HedgeFund/backend/data/gmsummary0-backup/main.py.pre-gmsummary.stale."
+}

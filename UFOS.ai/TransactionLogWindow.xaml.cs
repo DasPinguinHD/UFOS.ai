@@ -35,6 +35,9 @@ namespace UFOS.ai
             UFOS.ai.Shared.WindowMaximize.ConstrainToWorkArea(this);
             UFOS.ai.Shared.WindowMaximize.StartMaximized(this);
             Window_StateChanged(this, EventArgs.Empty);
+            // CHART_FULLSCREEN place 7: the request list in focus mode (same building block as the charts)
+            UFOS.ai.Shared.FullScreenHost.Wire(FullScreenButton, () => EntriesPanel, "Transaction Log", FullScreenHeader);
+            UFOS.ai.Shared.FullScreenHost.RegisterF11(this, () => EntriesPanel, "Transaction Log", FullScreenHeader);
 
             _reloadDebounce = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
             {
@@ -311,6 +314,10 @@ namespace UFOS.ai
 
         // Maximized: square corners. The WM_GETMINMAXINFO hook (Shared/WindowMaximize.cs, 2026-10-23) fits the maximized window
         // to the monitor's work area, so no frame padding is needed any more.
+        private string FullScreenHeader()
+            => "all time " + TotalAllTimeText.Text + " · this month " + TotalMonthText.Text + " · today " + TotalTodayText.Text
+               + " · " + RequestCountText.Text + " requests";
+
         private void Window_StateChanged(object? sender, EventArgs e)
         {
             if (WindowState == WindowState.Maximized)

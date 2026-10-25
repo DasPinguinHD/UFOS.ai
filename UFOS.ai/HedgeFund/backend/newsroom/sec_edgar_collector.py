@@ -44,11 +44,12 @@ import xml.etree.ElementTree as ET
 
 import aiohttp
 
-from config import SEC_EDGAR_POLL_SECONDS, SEC_EDGAR_MIN_REQUEST_INTERVAL_SECONDS
+from config import SEC_EDGAR_POLL_SECONDS
 from strategy_platform import secrets as _secrets
 from strategy_platform.core.errors import UserFacingError
 from .store import make_event
 from . import keys as _keys
+from .sec_limiter import LIMITER as _sec_limiter   # one fair-access limiter for live + daily job + backfill
 
 logger = logging.getLogger(__name__)
 
@@ -223,10 +224,10 @@ async def _fetch_details(session: aiohttp.ClientSession, filing_index_url: str, 
     """filing_index_url is the Atom <link>, e.g.
     https://www.sec.gov/Archives/edgar/data/<cik>/<acc-no-dashes>/<acc>-index.htm"""
     directory = filing_index_url.rsplit("/", 1)[0]
+    await _sec_limiter.wait_async()
     async with session.get(directory + "/index.json", headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
         resp.raise_for_status()
         listing = await resp.json(content_type=None)
-    await asyncio.sleep(SEC_EDGAR_MIN_REQUEST_INTERVAL_SECONDS)
 
     names = [item.get("name", "") for item in listing.get("directory", {}).get("item", [])]
     xml_names = [n for n in names if n.lower().endswith(".xml")]
@@ -237,10 +238,10 @@ async def _fetch_details(session: aiohttp.ClientSession, filing_index_url: str, 
 
     last_error = None
     for name in xml_names[:2]:
+        await _sec_limiter.wait_async()
         async with session.get(f"{directory}/{name}", headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             resp.raise_for_status()
             body = (await resp.read()).strip()  # bytes: ElementTree honors the XML encoding declaration
-        await asyncio.sleep(SEC_EDGAR_MIN_REQUEST_INTERVAL_SECONDS)
         try:
             return _parse_form4(body)
         except Exception as ex:
@@ -327,11 +328,11 @@ async def _fetch_feed_page(session: aiohttp.ClientSession, headers: dict, start:
     last_error = None
     for attempt in range(2):
         try:
+            await _sec_limiter.wait_async()          # shared slot: stays under the 10 req/s fair-access limit
             async with session.get(FEED_URL, params=params, headers=headers,
                                    timeout=aiohttp.ClientTimeout(total=FEED_PAGE_TIMEOUT_SECONDS)) as resp:
                 resp.raise_for_status()
                 body = await resp.text()
-            await asyncio.sleep(SEC_EDGAR_MIN_REQUEST_INTERVAL_SECONDS)  # stay well under the 10 req/s limit
             return ET.fromstring(body).findall("atom:entry", ATOM_NS)
         except Exception as ex:
             last_error = ex
@@ -437,6 +438,7 @@ async def _poll_once(session: aiohttp.ClientSession, emit, report_status) -> Non
             # are ignored by the globe frontend and the popup's DTO.
             event["details"] = details
             event["filed_at"] = filed_at
+            event["form"] = "4/A" if feed_title.startswith("4/A") else "4"   # Disclosures: amendments not measured
             emit(event)
             placed += 1
         except Exception:

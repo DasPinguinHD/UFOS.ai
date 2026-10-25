@@ -272,6 +272,8 @@
                 </StackPanel>
                 <TextBlock Text="US and euro-area rates, inflation, jobs and market stress from FRED (Federal Reserve Bank of St. Louis) — proof-of-concept data — information, not a recommendation."
                            FontSize="10.5" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
+                <!-- FRED API terms: required notice + link to the terms (filled in code: FredAttribution.Fill) -->
+                <TextBlock x:Name="FredNoticeText" FontSize="10" Margin="0,2,0,0" Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
                 <TextBlock x:Name="LastUpdatedText" Text="" FontSize="9.5" Margin="0,3,0,0" FontFamily="Consolas"
                            Foreground="{StaticResource QuietForegroundBrush}" TextWrapping="Wrap" />
             </StackPanel>
@@ -289,12 +291,15 @@
                              ToolTip="Monthly averages since 2000" />
                 <Button x:Name="RefreshButton" Content="↻ Refresh" Click="RefreshButton_Click" Margin="10,0,0,0"
                         Template="{StaticResource RefreshButtonTemplate}" Foreground="{StaticResource MacroGreenBrush}" FontSize="11" />
+                <!-- Full screen of the whole macro view (Shared/FullScreenHost; F11 too, Esc exits); the charts are zoomed to the screen. -->
+                <Button x:Name="FullScreenButton" Content="⛶" Margin="6,0,0,0"
+                        Template="{StaticResource RefreshButtonTemplate}" Foreground="{StaticResource MacroGreenBrush}" FontSize="11" />
             </StackPanel>
         </Grid>
 
         <Grid Grid.Row="1">
             <ScrollViewer x:Name="ListScrollViewer" VerticalScrollBarVisibility="Auto">
-                <StackPanel>
+                <StackPanel x:Name="MacroListContent">
                     <!-- Macro regime map (backend: newsroom/macro_derived.py regime()). Growth momentum ×
                          inflation momentum, current month + 12-month trail. Drawn in code (DrawRegime). -->
                     <!-- Regime unavailable (backend 2026-10-02: macro.regime = null + macro.unavailable, e.g.

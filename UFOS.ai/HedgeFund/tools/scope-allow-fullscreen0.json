@@ -1,0 +1,14 @@
+{
+  "label": "fullscreen0",
+  "approved": "user rule 2026-10-24 (relayed by the lead; CHART_FULLSCREEN_TASK.md): ONE shared full-screen building block in Shared/ used by every chart / map / dense table, incl. the Global Monitoring globe (place 2)",
+  "files": [
+    "UFOS.ai/Shared/FullScreenHost.cs",
+    "UFOS.ai/Global Monitoring/MainWindow.xaml",
+    "UFOS.ai/Global Monitoring/MainWindow.xaml.cs",
+    "UFOS.ai/Global Monitoring/globe.html",
+    "UFOS.ai/TransactionLogWindow.xaml",
+    "UFOS.ai/TransactionLogWindow.xaml.cs",
+    "UFOS.ai/LiveStreamAgent/BackendLogsWindow.cs"
+  ],
+  "note": "Shared/FullScreenHost.cs (NEW, internal, linked into all 4 assemblies): in-place full screen (no re-parenting, so WebView2 pages are not reloaded) over the whole monitor incl. taskbar, top bar with title/header text + Exit, Esc/F11 exit, exact window-state restore. Global Monitoring: title-bar '⛶' button + F11 for the globe area (MainWindow.xaml / .xaml.cs), globe.html: full-screen mode posted from C# — layer toggles as a floating menu, event feed collapsible (CSP placeholders untouched). NOTE: snapshot taken AFTER the edits; pre-change copies in HedgeFund/backend/data/fullscreen-backup/GM_*.pre-fs.stale. Place 7 (dense tables: Transaction Log, System Logs in the main app) will be added by amendment if it touches files outside HedgeFund. Amendment 1 (place 7, dense tables in focus mode): TransactionLogWindow.xaml/.xaml.cs — '⛶' next to Open folder, the request list (EntriesPanel) full screen, bar shows the totals; LiveStreamAgent/BackendLogsWindow.cs (System Logs window) — '⛶' in the filter bar, the log text full screen, Esc ends focus mode before it closes the window. Pre-change copies: fullscreen-backup/TransactionLogWindow.*.pre-fs.stale, LSA_BackendLogsWindow.cs.pre-fs.stale."
+}

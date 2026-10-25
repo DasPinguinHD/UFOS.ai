@@ -133,6 +133,8 @@ namespace UFOS.ai.HedgeFund
                 await FlushParamsAsync();
             };
             EquityChartHost.Child = _equityChart;
+            FullScreenHost.Wire(EquityFullScreenButton, () => EquityChartHost, "Equity curve vs SPY", EquityFullScreenHeader);
+            FullScreenHost.RegisterF11(EquityCurvePanel, () => EquityChartHost, "Equity curve vs SPY", EquityFullScreenHeader);
             InitCouncil();   // S10-C R3: Council view at the top of the Overview (HedgeFundWindow.Council.cs)
 
             // "▶ Run now" can call the AI judge / sentiment agent -> AI trigger tooltip.
@@ -3003,6 +3005,10 @@ namespace UFOS.ai.HedgeFund
         }
 
         // ---------- equity curve ----------
+
+        /// <summary>Full-screen bar text of the equity curve: equity, day and total P&amp;L as shown in the Overview.</summary>
+        private string EquityFullScreenHeader()
+            => "Equity " + EquityValueText.Text + " · day " + DayPnlText.Text + " · total " + TotalPnlText.Text + " · paper";
 
         private async Task LoadEquityAsync()
         {

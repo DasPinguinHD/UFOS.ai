@@ -49,7 +49,7 @@ class MigrationV3Test(FundStoreCase):
         conn.commit()
         conn.close()
         self.assertTrue(db.init(v2, legacy=""))
-        self.assertEqual(db.storage_info()["schema_version"], 3)
+        self.assertEqual(db.storage_info()["schema_version"], db.SCHEMA_VERSION)   # v2 -> current (v4)
         conn = sqlite3.connect(v2)
         try:
             cols = {t: {r[1] for r in conn.execute(f"PRAGMA table_info({t})")}
@@ -66,7 +66,7 @@ class MigrationV3Test(FundStoreCase):
             # re-running the v3 steps (user_version forced back) must not fail on ADD COLUMN
             conn.execute("PRAGMA user_version = 2")
             conn.commit()
-            self.assertEqual(db.migrate(conn), 3)
+            self.assertEqual(db.migrate(conn), db.SCHEMA_VERSION)       # v3 + v4 steps re-run cleanly
         finally:
             conn.close()
         self.assertEqual(store.get_positions()[0]["symbol"], "SPY")

@@ -18,6 +18,10 @@ Architecture (see docs/global-monitoring-system-plan.md, Section 2/3):
                                  wants it over HTTP instead of waiting for
                                  the WS "snapshot" message); optional
                                  ?category=geopolitics (etc.) filters it
+    GET /events/summary?hours=24
+                              -> module tile: events of the last N hours per category +
+                                 feed status; a pure read, wakes no collector
+                                 (events_summary.py, contract GM_SUMMARY_API)
     GET /localnews?city=&country=&lat=&lon=
                               -> real headlines about that city (Google News RSS),
                                  used by the "click a capital star" feature
@@ -62,6 +66,7 @@ import localnews
 import persistence
 import refresh
 import storage
+import events_summary
 from broadcast import Broadcaster
 import api_auth
 from config import HEALTH_PORT, ASSESS_REUSE_SECONDS, REFRESH_MIN_SECONDS, DEFAULT_ALLOWED_ORIGINS
@@ -228,6 +233,16 @@ async def main() -> None:
             snapshot = [e for e in snapshot if e.get("category") == category]
         _refresh_stale_sources()
         return web.json_response(snapshot, headers=CORS_HEADERS)
+
+    async def _events_summary(request):
+        # Module tile (GM_SUMMARY_API, 2026-10-24): events of the last N hours per category + feed status. A PURE
+        # read of the in-memory list and status - unlike /events it never wakes the collectors (no network, no storage).
+        try:
+            hours = events_summary.parse_hours(request.query.get("hours"))
+        except ValueError:
+            return web.json_response({"error": events_summary.HOURS_ERROR}, status=400, headers=CORS_HEADERS)
+        return web.json_response(events_summary.summarize(store.snapshot(), source_status, COLLECTORS, hours),
+                                 headers=CORS_HEADERS)
 
     async def _localnews(request):
         city = request.query.get("city", "").strip()
@@ -401,6 +416,7 @@ async def main() -> None:
     health_app.router.add_get("/version", _version)
     health_app.router.add_post("/shutdown", _shutdown)
     health_app.router.add_get("/events", _events)
+    health_app.router.add_get("/events/summary", _events_summary)
     health_app.router.add_get("/localnews", _localnews)
     health_app.router.add_post("/assess", _assess)
     health_app.router.add_post("/localnews-summary", _localnews_summary)

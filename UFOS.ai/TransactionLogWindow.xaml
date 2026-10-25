@@ -73,6 +73,12 @@
                                 ToolTip="Open %LOCALAPPDATA%\UFOS.ai in Explorer">
                             <TextBlock Text="Open folder" FontSize="11.5" Foreground="{StaticResource PrimaryForegroundBrush}" />
                         </Button>
+                        <!-- Focus mode: the request list full screen (Shared/FullScreenHost; F11 too, Esc exits) -->
+                        <Button x:Name="FullScreenButton" Template="{StaticResource RoundedDarkButtonTemplate}"
+                                Padding="9,5" Margin="8,0,0,0" Background="{StaticResource ControlBackgroundBrush}"
+                                BorderBrush="{StaticResource ControlBorderBrush}" BorderThickness="1" Cursor="Hand">
+                            <TextBlock Text="⛶" FontSize="11.5" Foreground="{StaticResource PrimaryForegroundBrush}" />
+                        </Button>
                     </StackPanel>
 
                     <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -126,7 +132,7 @@
                 </DockPanel>
 
                 <!-- Entries, newest first -->
-                <Border Grid.Row="2" Background="{StaticResource ModulePanelBackgroundBrush}" BorderBrush="{StaticResource AccentBorderBrush}"
+                <Border x:Name="EntriesPanel" Grid.Row="2" Background="{StaticResource ModulePanelBackgroundBrush}" BorderBrush="{StaticResource AccentBorderBrush}"
                         BorderThickness="1" CornerRadius="{StaticResource MediumCornerRadius}" Padding="4">
                     <Grid>
                         <ListBox x:Name="EntriesList" Background="Transparent" BorderThickness="0"

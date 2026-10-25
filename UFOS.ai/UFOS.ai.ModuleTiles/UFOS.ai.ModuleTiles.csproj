@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Module tile previews (TILES_API.md §10.1, lead 2026-10-24): the PUBLIC contract (IModuleTilePreview) plus the shared
+       storage / blur / capture code. Referenced by the main app and every module project; each module implements its
+       provider in its own project. Shared/*.cs cannot carry the interface (compiled INTERNAL into every assembly). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- same version as the main app and the modules -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UFOS.ai.Logging\UFOS.ai.Logging.csproj" />
+  </ItemGroup>
+
+</Project>

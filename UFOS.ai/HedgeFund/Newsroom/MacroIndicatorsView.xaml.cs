@@ -50,6 +50,9 @@ namespace UFOS.ai.HedgeFund.Newsroom
             DerivedList.ItemsSource = _derived;
             EuropeList.ItemsSource = _europe;
             SignalRulesList.ItemsSource = _series;
+            FredAttribution.Fill(FredNoticeText, (Brush)FindResource("MacroGreenBrush"));   // FRED API terms: notice + link
+            UFOS.ai.Shared.FullScreenHost.Wire(FullScreenButton, () => this, "Macro indicators", () => LastUpdatedText.Text);
+            UFOS.ai.Shared.FullScreenHost.RegisterF11(this, () => this, "Macro indicators", () => LastUpdatedText.Text);
             _autoRefreshTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = AutoRefreshInterval };
             _autoRefreshTimer.Tick += async (s, e) =>
             {
@@ -771,7 +774,21 @@ namespace UFOS.ai.HedgeFund.Newsroom
         private void View_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             // The view grows/shrinks with the window in both directions.
-            if (e.WidthChanged || e.HeightChanged) UpdateRegimeLayout();
+            if (e.WidthChanged || e.HeightChanged)
+            {
+                UpdateFullScreenZoom();
+                UpdateRegimeLayout();
+            }
+        }
+
+        /// <summary>
+        /// Full screen (Shared/FullScreenHost) zooms the charts with the screen: the sparklines are drawn at a fixed pixel size, so the
+        /// list content gets a layout scale (1 … 2) that keeps ≥ 1500 px of layout width (four card columns, inline regime map).
+        /// </summary>
+        private void UpdateFullScreenZoom()
+        {
+            var scale = UFOS.ai.Shared.FullScreenHost.IsActive(this) ? Math.Clamp((ActualWidth - 44) / 1500.0, 1.0, 2.0) : 1.0;
+            MacroListContent.LayoutTransform = scale > 1.001 ? new ScaleTransform(scale, scale) : Transform.Identity;
         }
 
         private bool IsRegimeRoomy()

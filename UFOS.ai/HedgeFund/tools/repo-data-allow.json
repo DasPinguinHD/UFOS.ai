@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "about": "Reviewed false positives of HedgeFund/tools/check_repo_data.py: exact path + rule + reason. Add an entry only after checking the file holds no real market or personal data.",
+  "entries": [
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/test_mr_data_bars.py",
+      "rule": "provider.alpaca",
+      "reason": "fake Alpaca API response with invented round values (e.g. o 10 / h 11 / l 9) — reviewed, not market data",
+      "reviewed": "Agent H 2026-10-25"
+    },
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/test_mr_data_gate.py",
+      "rule": "provider.alpaca",
+      "reason": "fake Alpaca API response with invented round values (e.g. o 10 / h 11 / l 9) — reviewed, not market data",
+      "reviewed": "Agent H 2026-10-25"
+    },
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/test_mr_hub.py",
+      "rule": "provider.alpaca",
+      "reason": "fake Alpaca API response with invented round values (e.g. o 10 / h 11 / l 9) — reviewed, not market data",
+      "reviewed": "Agent H 2026-10-25"
+    },
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/test_mr_hub_candles.py",
+      "rule": "provider.alpaca",
+      "reason": "fake Alpaca API response with invented round values (e.g. o 10 / h 11 / l 9) — reviewed, not market data",
+      "reviewed": "Agent H 2026-10-25"
+    },
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/test_mr_hub_ws.py",
+      "rule": "provider.alpaca",
+      "reason": "fake Alpaca API response with invented round values (e.g. o 10 / h 11 / l 9) — reviewed, not market data",
+      "reviewed": "Agent H 2026-10-25"
+    },
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/test_sp_data_alpaca.py",
+      "rule": "provider.alpaca",
+      "reason": "fake Alpaca API response with invented round values (e.g. o 10 / h 11 / l 9) — reviewed, not market data",
+      "reviewed": "Agent H 2026-10-25"
+    },
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/test_sp_data_registry.py",
+      "rule": "provider.alpaca",
+      "reason": "fake Alpaca API response with invented round values (e.g. o 10 / h 11 / l 9) — reviewed, not market data",
+      "reviewed": "Agent H 2026-10-25"
+    },
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/tr_synthetic_fixture.py",
+      "rule": "personal.iban",
+      "reason": "invented IBANs of the SYNTHETIC Trade Republic export (incl. the public example IBAN of German banking documentation) — the test asserts they never reach the database",
+      "reviewed": "Agent H 2026-10-25"
+    },
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/test_sp_tr_import.py",
+      "rule": "personal.iban",
+      "reason": "the same invented IBANs as tr_synthetic_fixture.py (privacy assertions of the importer)",
+      "reviewed": "Agent H 2026-10-25"
+    },
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/test_licence_data.py",
+      "rule": "personal.account",
+      "reason": "fixtures of the scanner's own tests (invented account numbers)",
+      "reviewed": "Agent H 2026-10-25"
+    },
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/test_licence_data.py",
+      "rule": "personal.iban",
+      "reason": "fixtures of the scanner's own tests (public example IBANs)",
+      "reviewed": "Agent H 2026-10-25"
+    },
+    {
+      "path": "UFOS.ai/HedgeFund/backend/tests/test_licence_data.py",
+      "rule": "provider.alpaca",
+      "reason": "fixtures of the scanner's own tests (invented Alpaca-shaped records)",
+      "reviewed": "Agent H 2026-10-25"
+    }
+  ]
+}

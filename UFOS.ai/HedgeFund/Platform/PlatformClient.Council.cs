@@ -211,6 +211,9 @@ namespace UFOS.ai.HedgeFund.Platform
     {
         [JsonPropertyName("code")] public string? Code { get; set; }
         [JsonPropertyName("message")] public string? Message { get; set; }
+        // legacy_duplicates (SWITCHOVER_FIX_API addendum): the affected table (cl_runs | cl_decisions) and the duplicate row count
+        [JsonPropertyName("table")] public string? Table { get; set; }
+        [JsonPropertyName("rows")] public long? Rows { get; set; }
     }
 
     internal sealed class CouncilSwitchoverPlan

@@ -616,7 +616,17 @@ namespace UFOS.ai.HedgeFund.Platform
                 AddCell(row, 2, FundUi.Text(statusText, 11.5, statusBrush, bold: status == "ok" || status == "error"));
                 AddCell(row, 3, FundUi.Text(FundFormat.LocalTime(s.LastOkAt, "yyyy-MM-dd HH:mm"), 11, FundPalette.Dim, mono: true));
                 AddCell(row, 4, FundUi.Text(string.IsNullOrWhiteSpace(message) ? "—" : message, 11, FundPalette.Dim));
-                AddCell(row, 5, FundUi.Text(s.LicenceText, 10.5, FundPalette.Faint));
+                var licence = FundUi.Text(s.LicenceText, 10.5, FundPalette.Faint);
+                if (string.Equals((s.Source ?? "").Trim(), "fred", StringComparison.OrdinalIgnoreCase))
+                {
+                    // FRED API terms: the required notice + a link to the terms, under the licence text of the FRED row
+                    licence.Inlines.Add(new System.Windows.Documents.LineBreak());
+                    licence.Inlines.Add(new System.Windows.Documents.Run(UFOS.ai.HedgeFund.Newsroom.FredAttribution.Notice + " "));
+                    licence.Inlines.Add(UFOS.ai.HedgeFund.Newsroom.FredAttribution.CreateLink(FundPalette.Focus));
+                    AutomationProperties.SetName(licence, s.LicenceText + ". " + UFOS.ai.HedgeFund.Newsroom.FredAttribution.Notice
+                                                          + " Link: " + UFOS.ai.HedgeFund.Newsroom.FredAttribution.TermsLinkText + ".");
+                }
+                AddCell(row, 5, licence);
                 row++;
             }
         }

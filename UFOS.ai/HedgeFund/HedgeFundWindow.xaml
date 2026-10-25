@@ -875,11 +875,15 @@
                             </Border>
 
                             <!-- Equity curve vs SPY (EquityChart is created in code and placed into EquityChartHost) -->
-                            <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                            <Border x:Name="EquityCurvePanel" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12,10">
                                 <StackPanel>
                                     <Grid Margin="0,0,0,6">
-                                        <TextBlock Text="Equity curve" FontSize="12" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" />
-                                        <TextBlock Text="vs SPY" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                        <TextBlock Text="Equity curve" FontSize="12" FontWeight="SemiBold" Foreground="#FFBFBFBF" HorizontalAlignment="Left" VerticalAlignment="Center" />
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <TextBlock Text="vs SPY" FontFamily="Consolas" FontSize="10.5" Foreground="#FF6A6A6A" VerticalAlignment="Center" />
+                                            <!-- Shared/FullScreenHost: full screen of the chart (F11 inside the panel too, Esc exits) -->
+                                            <Button x:Name="EquityFullScreenButton" Style="{StaticResource RoundedDarkButtonStyle}" Content="⛶" FontSize="11" Padding="7,0" Margin="8,0,0,0" />
+                                        </StackPanel>
                                     </Grid>
                                     <Border x:Name="EquityChartHost" Height="130" />
                                     <TextBlock x:Name="EquityChartNote" Text="Blue: paper equity · grey dashed: SPY scaled to the starting capital" FontSize="10" Foreground="#FF6A6A6A" TextWrapping="Wrap" Margin="0,6,0,0" />

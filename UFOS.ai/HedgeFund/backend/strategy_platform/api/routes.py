@@ -1960,7 +1960,7 @@ async def read_body(request):
 
 
 # Sandbox profile (SPEC "Sandbox profile"): the main state payloads carry "mode": "normal" | "sandbox".
-MODE_PATHS = frozenset({"/v2/portfolio/state", "/v2/oms/runtime", "/v2/incubation", "/v2/monitoring/overview",
+MODE_PATHS = frozenset({"/v2/portfolio/state", "/v2/portfolio/summary", "/v2/oms/runtime", "/v2/incubation", "/v2/monitoring/overview",
                         "/v2/brokers", "/v2/council/state"})
 
 

@@ -99,9 +99,20 @@ namespace UFOS.ai.HedgeFund.MarketResearch
         private const double SymbolChartRowMin = 430;   // = RowDefinition MinHeight in ResearchView.xaml (card 420 + margin)
         private const double SymbolNewsRowMin = 120;    // = RowDefinition MinHeight in ResearchView.xaml
 
+        /// <summary>"AAPL  ·  231.40  +1.20  +0.52 %" for the full-screen bar (empty when no symbol is open).</summary>
+        private string? ChartFullScreenHeader()
+        {
+            if (PriceRow.Visibility != Visibility.Visible) return HeaderTitleText.Text;
+            return HeaderTitleText.Text + "   " + LastPriceText.Text + "  " + ChangeText.Text + "  " + ChangePctText.Text;
+        }
+
         public ResearchView()
         {
             InitializeComponent();
+            // MR-FS: the chart card fills the whole monitor (chart, drawing tools, timeframe / type row, indicators / objects / markers);
+            // symbol, last price and change stay visible in the full-screen bar (refreshed every second). Esc or F11 exits.
+            UFOS.ai.Shared.FullScreenHost.Wire(ChartFullScreenButton, () => ChartCard, "Research chart", ChartFullScreenHeader);
+            UFOS.ai.Shared.FullScreenHost.RegisterF11(ChartCard, () => ChartCard, "Research chart", ChartFullScreenHeader);
             _pollTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = PollInterval };
             _pollTimer.Tick += async (_, _) => await PollAsync();
             _marketTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = MarketRefreshInterval };

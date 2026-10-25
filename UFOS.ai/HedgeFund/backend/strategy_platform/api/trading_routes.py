@@ -181,6 +181,14 @@ class TradingRoutesMixin:
         err, payload = await self._trading(views.state)
         return err or (200, payload)
 
+    async def portfolio_summary(self, query: Mapping, body, match: Mapping):
+        """Stored values only for the MainWindow tile (SPEC §17.15) — no heartbeat touch, no broker / market data."""
+        from ..portfolio import summary
+        if set(query):
+            return _bad({k: "unknown parameter" for k in query})
+        err, payload = await self._trading(summary.summary)
+        return err or (200, payload)
+
     async def portfolio_account_open(self, query: Mapping, body, match: Mapping):
         from ..execution import accounts
         from ..portfolio import views
@@ -745,6 +753,7 @@ def decisions_of(run_id: str, limit: int = 100) -> list:
 
 TRADING_ROUTES = (
     ("GET", "/v2/portfolio/state", "portfolio_state", False),
+    ("GET", "/v2/portfolio/summary", "portfolio_summary", False),      # SPEC §17.15 (tile; no heartbeat touch)
     ("POST", "/v2/portfolio/accounts", "portfolio_account_open", True),
     ("GET", "/v2/portfolio/accounts/{id}", "portfolio_account_get", False),
     ("GET", "/v2/portfolio/accounts/{id}/equity", "portfolio_account_equity", False),
