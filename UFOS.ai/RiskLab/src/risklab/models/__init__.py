@@ -2,6 +2,6 @@
 
 from risklab.models.base import Forecast, RiskModel
 from risklab.models.historical import HistoricalSimulation
-from risklab.models.parametric import NormalModel, StudentTModel
+from risklab.models.parametric import FitError, NormalModel, StudentTModel
 
-__all__ = ["Forecast", "RiskModel", "HistoricalSimulation", "NormalModel", "StudentTModel"]
+__all__ = ["Forecast", "RiskModel", "HistoricalSimulation", "NormalModel", "StudentTModel", "FitError"]
