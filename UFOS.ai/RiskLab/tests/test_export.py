@@ -18,7 +18,8 @@ from risklab.backtest import TestResult
 from risklab.data import iid_normal
 from risklab.engine import walk_forward
 from risklab.models.base import Forecast
-from risklab.report.export import default_out_dir
+from risklab.backtest import christoffersen_cc, traffic_light
+from risklab.report.export import default_out_dir, results_to_csv, table_to_csv, table_to_json
 from risklab.report import (export_run, frame_to_csv, frame_to_json, read_frame_csv,
                             read_frame_json, read_results_json, results_to_json)
 
@@ -132,6 +133,24 @@ class ExportTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         self.assertEqual(default_out_dir(), root / "out")
         self.assertTrue((root / "pyproject.toml").is_file())
+
+    def test_results_with_details(self):
+        exc = np.zeros(250, dtype=bool)
+        exc[[3, 4, 90]] = True
+        results = [christoffersen_cc(exc, 0.99), traffic_light(exc)]
+        back = read_results_json(results_to_json(results, self.dir / "d.json"))
+        self.assertEqual(back, results)
+        text = results_to_csv(results, self.dir / "d.csv").read_text(encoding="utf-8")
+        self.assertIn("details", text.splitlines()[1])
+        self.assertIn('""plus_factor"": 0.0', text)
+
+    def test_tables(self):
+        rows = [{"name": "a", "x": 0.1 + 0.2, "flag": True, "n": 3}, {"name": "b", "x": None, "flag": False, "n": 4}]
+        j = json.loads(table_to_json(rows, self.dir / "t.json", seed=9, meta={"study": "s"}).read_text("utf-8"))
+        self.assertEqual(j["rows"][0]["x"], 0.30000000000000004)
+        self.assertEqual(j["meta"]["study"], "s")
+        lines = table_to_csv(rows, ["name", "x", "flag", "n"], self.dir / "t.csv").read_text("utf-8").splitlines()
+        self.assertEqual(lines[1:], ["name,x,flag,n", "a,0.30000000000000004,1,3", "b,,0,4"])
 
     def test_nan_refused(self):
         bad = [TestResult("x", float("nan"), 1, 0.5, 0.05, "accept", 1, 0)]

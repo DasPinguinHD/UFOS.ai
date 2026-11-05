@@ -20,7 +20,7 @@ import io
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Iterable, List, Optional, Union
+from typing import Iterable, List, Optional, Sequence, Union
 
 import numpy as np
 
@@ -168,7 +168,7 @@ def read_frame_csv(path: PathLike) -> BacktestFrame:
 # ---- TestResult ----------------------------------------------------------
 
 _RESULT_FIELDS = ["name", "statistic", "df", "p_value", "reject_at", "decision", "n_obs",
-                  "n_exceed", "notes"]
+                  "n_exceed", "notes", "details"]
 
 
 def _result_dict(r: TestResult) -> dict:
@@ -196,9 +196,55 @@ def results_to_csv(results: Iterable[TestResult], path: PathLike, seed: Optional
     w.writerow(_RESULT_FIELDS)
     for r in results:
         d = _result_dict(r)
-        w.writerow(["" if d[k] is None else (_fs(d[k]) if isinstance(d[k], float) else str(d[k]))
-                    for k in _RESULT_FIELDS])
+        row = []
+        for k in _RESULT_FIELDS:
+            v = d[k]
+            if v is None:
+                row.append("")
+            elif k == "details":
+                row.append(json.dumps(v, sort_keys=True, ensure_ascii=False, allow_nan=False))
+            elif isinstance(v, float):
+                row.append(_fs(v))
+            else:
+                row.append(str(v))
+        w.writerow(row)
     return _write(path, buf.getvalue())
+
+
+# ---- generic tables (study results) --------------------------------------
+
+def _cell(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if isinstance(v, (float, np.floating)):
+        return _fs(v)
+    return str(v)
+
+
+def table_to_json(rows: Sequence[dict], path: PathLike, seed: Optional[int] = None,
+                  meta: Optional[dict] = None) -> Path:
+    """``{"meta": ..., "rows": [...]}`` with sorted keys and full-precision floats."""
+    clean = [{k: (_f(v) if isinstance(v, (float, np.floating)) else v) for k, v in r.items()} for r in rows]
+    return _write(path, _dumps({"meta": _meta(seed, meta), "rows": clean}))
+
+
+def table_to_csv(rows: Sequence[dict], columns: Sequence[str], path: PathLike, seed: Optional[int] = None,
+                 meta: Optional[dict] = None) -> Path:
+    """CSV with a ``# meta: {...}`` first line and the given column order."""
+    buf = io.StringIO()
+    buf.write("# meta: " + json.dumps(_meta(seed, meta), sort_keys=True, ensure_ascii=False) + "\n")
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(list(columns))
+    for r in rows:
+        w.writerow([_cell(r.get(c)) for c in columns])
+    return _write(path, buf.getvalue())
+
+
+def text_to_file(text: str, path: PathLike) -> Path:
+    """Write text (e.g. a Markdown summary) as UTF-8 with "\\n" line endings."""
+    return _write(path, text if text.endswith("\n") else text + "\n")
 
 
 def export_run(frame: BacktestFrame, results: Iterable[TestResult] = (), out_dir: Optional[PathLike] = None,

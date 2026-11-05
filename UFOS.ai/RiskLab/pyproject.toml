@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "risklab"
-version = "0.1.0"
+version = "0.2.0"
 description = "Bank-style market-risk lab: VaR / ES estimation and backtesting (UFOS.ai)"
 readme = "README.md"
 requires-python = ">=3.10"

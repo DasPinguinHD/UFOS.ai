@@ -1,0 +1,21 @@
+{
+  "label": "risklab3",
+  "approved": "lead, 2026-11-05 (v0.2 review: M1 exact size + binomial_exact, M2 Monte-Carlo error + full run, minor 1-7) (Agent H)",
+  "files": [
+    "UFOS.ai/RiskLab/README.md",
+    "UFOS.ai/RiskLab/studies/var_backtest_power.py",
+    "UFOS.ai/RiskLab/studies/results/var_backtest_power_full_summary.md",
+    "UFOS.ai/RiskLab/src/risklab/backtest/coverage.py",
+    "UFOS.ai/RiskLab/src/risklab/backtest/__init__.py",
+    "UFOS.ai/RiskLab/src/risklab/models/historical.py",
+    "UFOS.ai/RiskLab/src/risklab/models/parametric.py",
+    "UFOS.ai/RiskLab/src/risklab/models/__init__.py",
+    "UFOS.ai/RiskLab/tests/test_backtests.py",
+    "UFOS.ai/RiskLab/tests/test_truth.py",
+    "UFOS.ai/RiskLab/tests/test_models.py",
+    "UFOS.ai/RiskLab/tests/test_study.py",
+    "UFOS.ai/RiskLab/tests/test_stubs.py",
+    "UFOS.ai/docs/tasks/README.md"
+  ],
+  "note": "Exact paths. Backups: HedgeFund/backend/data/risklab3-backup/. The full-run summary is synthetic study output (no third-party data)."
+}
