@@ -1,6 +1,6 @@
 {
   "meta": {
-    "code_sha256": "1e819c72856a82e7d509d767e797c8d3f2267ad70e8575fbc5d69b9015502497",
+    "code_sha256": "d8428e5bdb75578331447ae3f1afdc760ee76e3fec674e0281a18b76d1349e0a",
     "config": {
       "alpha": 0.99,
       "h": 10,
@@ -11,7 +11,7 @@
       "window": 500
     },
     "numpy_version": "2.5.3",
-    "risklab_version": "0.4.0",
+    "risklab_version": "0.5.0",
     "scipy_version": "1.18.1",
     "seed": 20261106,
     "study": "horizon_10d"

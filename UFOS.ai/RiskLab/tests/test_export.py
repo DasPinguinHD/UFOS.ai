@@ -185,6 +185,55 @@ class FingerprintTests(unittest.TestCase):
             Path(t2, "s.py").write_bytes(b"x = 1\r\ny = 2\r\n")
             self.assertEqual(code_fingerprint(Path(t1, "s.py")), code_fingerprint(Path(t2, "s.py")))
 
+    def test_fingerprint_covers_the_runtime_imports(self):
+        """Every risklab module (outside risklab.report) a study loads at import time is in the
+        static import closure that the fingerprint hashes."""
+        import subprocess
+        import sys
+
+        from risklab.report import export
+
+        root = Path(__file__).resolve().parents[1]
+        for study in sorted((root / "studies").glob("*.py")):
+            code = ("import sys, runpy; sys.path.insert(0, %r); sys.argv=['x']; "
+                    "runpy.run_path(%r, run_name='not_main'); print('\\n'.join(sorted(k for k in sys.modules if k.startswith('risklab'))))"
+                    % (str(root / "src"), str(study)))
+            res = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=str(root))
+            self.assertEqual(res.returncode, 0, res.stderr)
+            loaded = {n for n in res.stdout.split() if not (n == "risklab.report" or n.startswith("risklab.report."))}
+            def closure(start):
+                seen, todo = set(), list(start)
+                while todo:
+                    n = todo.pop()
+                    if n in seen or n == "risklab.report" or n.startswith("risklab.report."):
+                        continue
+                    seen.add(n)
+                    todo.extend(export.risklab_imports(export._module_file(n)))
+                return seen
+
+            seen = closure(export.risklab_imports(study))
+            # modules loaded only because report code imports them (export.py imports the engine and
+            # the backtest base) do not compute results
+            via_report = closure(export.risklab_imports(Path(export.__file__)))
+            self.assertTrue(loaded <= seen | via_report, (study.name, loaded - seen - via_report))
+
+    def test_unrelated_module_does_not_change_fingerprint(self):
+        from risklab.report import export
+
+        root = Path(__file__).resolve().parents[1]
+        fp = export.code_fingerprint(root / "studies" / "survivorship.py")
+        files = set()
+        todo = list(export.risklab_imports(root / "studies" / "survivorship.py"))
+        while todo:
+            n = todo.pop()
+            if n.startswith("risklab.report") or export._module_file(n) in files:
+                continue
+            files.add(export._module_file(n))
+            todo.extend(export.risklab_imports(export._module_file(n)))
+        self.assertNotIn(root / "src" / "risklab" / "validation" / "stats.py", files)
+        self.assertIn(root / "src" / "risklab" / "__init__.py", files)
+        self.assertEqual(fp, export.code_fingerprint(root / "studies" / "survivorship.py"))
+
     def test_save_full_results(self):
         from risklab.report.export import save_full_results
 

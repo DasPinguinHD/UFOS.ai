@@ -40,9 +40,72 @@ def default_out_dir() -> Path:
     return _RISKLAB_ROOT / "out"
 
 
+def _module_file(name: str) -> Optional[Path]:
+    """Source file of a ``risklab`` module name (package -> its ``__init__.py``), None if not in the tree."""
+    parts = name.split(".")
+    if parts[0] != "risklab":
+        return None
+    base = _RISKLAB_ROOT / "src" / Path(*parts)
+    if (base / "__init__.py").is_file():
+        return base / "__init__.py"
+    if base.with_suffix(".py").is_file():
+        return base.with_suffix(".py")
+    return None
+
+
+def _module_name(path: Path) -> Optional[str]:
+    try:
+        rel = path.resolve().relative_to(_RISKLAB_ROOT / "src")
+    except ValueError:
+        return None
+    parts = list(rel.with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def risklab_imports(path: Path) -> List[str]:
+    """``risklab`` modules a source file imports (static, by AST; relative imports resolved): for
+    ``from risklab.x import y`` both ``risklab.x`` and, if it exists, the submodule ``risklab.x.y``;
+    every parent package of a module is included (Python imports it first)."""
+    import ast
+
+    path = Path(path)
+    tree = ast.parse(path.read_bytes())
+    own = _module_name(path)
+    is_pkg = path.name == "__init__.py"
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                if own is None:
+                    continue
+                pkg = own.split(".") if is_pkg else own.split(".")[:-1]
+                pkg = pkg[: len(pkg) - (node.level - 1)]
+                mod = ".".join(pkg + ([node.module] if node.module else []))
+            else:
+                mod = node.module or ""
+            names.add(mod)
+            names.update(f"{mod}.{a.name}" for a in node.names)
+    out = set()
+    for n in names:
+        parts = n.split(".")
+        for k in range(1, len(parts) + 1):
+            sub = ".".join(parts[:k])
+            if _module_file(sub) is not None:
+                out.add(sub)
+    return sorted(out)
+
+
 def code_fingerprint(study_file) -> str:
     """sha256 of the code that produced a study result: the study script plus every
-    ``src/risklab/**/*.py`` outside ``risklab/report/`` (report code does not change results).
+    ``risklab`` module it imports, directly or transitively (static import graph, see
+    :func:`risklab_imports`), except ``risklab.report.*`` (report code does not change
+    results; its own imports are not followed). Modules the study does not use (e.g. the
+    gate validation code for the VaR studies) do not enter the fingerprint, so adding them
+    does not make other studies' results stale; ``risklab/__init__.py`` (the version) always does.
 
     Paths are taken relative to the RiskLab root and sorted; line endings are
     normalised to LF, so a CRLF checkout gives the same fingerprint.
@@ -50,8 +113,14 @@ def code_fingerprint(study_file) -> str:
     import hashlib
 
     study = Path(study_file).resolve()
-    src = _RISKLAB_ROOT / "src" / "risklab"
-    files = [study] + sorted(p for p in src.rglob("*.py") if "report" not in p.relative_to(src).parts[:1])
+    seen, todo = set(), list(risklab_imports(study))
+    while todo:
+        name = todo.pop()
+        if name in seen or name == "risklab.report" or name.startswith("risklab.report."):
+            continue
+        seen.add(name)
+        todo.extend(risklab_imports(_module_file(name)))
+    files = [study] + sorted({_module_file(n) for n in seen})
     h = hashlib.sha256()
     for p in files:
         try:

@@ -1,6 +1,6 @@
 # Estimation window: over-rejection of a correct GARCH-t / FHS against the window length (synthetic)
 
-GARCH(1,1)-t6 data, T = 1000 forecast days (the same days for every window), VaR at 0.99, ES (Z2) at 0.975, tests at 5 %, refit every 50 days, M = 1000 replications, seed = 20261107. risklab 0.4.0, numpy 2.5.3, scipy 1.18.1.
+GARCH(1,1)-t6 data, T = 1000 forecast days (the same days for every window), VaR at 0.99, ES (Z2) at 0.975, tests at 5 %, refit every 50 days, M = 1000 replications, seed = 20261107. risklab 0.5.0, numpy 2.5.3, scipy 1.18.1.
 
 Rejection rates in % ± se (se = sqrt(r (1 - r) / M)); the exceedance rate ± its se over replications. Reference sizes: Kupiec 5.51 % and binomial 3.65 % (exact), cc 2.0 ± 0.4 and Z2 5.0 ± 0.7 (oracle row).
 

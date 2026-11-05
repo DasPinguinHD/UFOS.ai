@@ -131,6 +131,72 @@ class BuildReportTests(unittest.TestCase):
         stale = self.b.stale_inputs(self.b.ROOT / "studies" / "results")
         self.assertEqual(stale, [], "re-run the listed studies with --mode full --save-results")
 
+    def test_saved_overfitting_results_are_current(self):
+        stale = self.b.stale_inputs(self.b.ROOT / "studies" / "results", doc="overfitting")
+        self.assertEqual(stale, [], "re-run gate_overfitting with --mode full --save-results")
+
+    def test_documents(self):
+        self.assertEqual(set(self.b.DOCS), {"validation", "overfitting"})
+        for d in self.b.DOCS.values():
+            self.assertTrue((self.b.REPORT_DIR / d["tex"]).is_file(), d["tex"])
+        with self.assertRaises(self.b.ReportBuildError):
+            self.b.check_toolchain(which=lambda tool: None, doc="nope")
+
+    def test_overfitting_results_are_named(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(self.b.ReportBuildError) as ctx:
+                self.b.check_toolchain(which=lambda tool: None, results_dir=Path(tmp), doc="overfitting")
+        self.assertIn("gate_overfitting_full_results.json", str(ctx.exception))
+        self.assertNotIn("survivorship", str(ctx.exception))
+
+    def test_pdflatex_uses_the_document(self):
+        seen = []
+
+        def run(cmd, **kw):
+            seen.append(cmd[-1])
+            return subprocess.CompletedProcess(cmd, 0, stdout="Output written", stderr="")
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf = self.b.run_pdflatex(Path(tmp), run=run, tex="overfitting_study.tex")
+        self.assertEqual(pdf.name, "overfitting_study.pdf")
+        self.assertEqual(seen, ["overfitting_study.tex"] * 2)
+
+    def test_publish_needs_a_directory_outside_the_repo(self):
+        import tempfile
+        with self.assertRaises(self.b.ReportBuildError) as ctx:
+            self.b.check_publish_dir(None)
+        self.assertIn("--publish-to", str(ctx.exception))
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp, "repo")
+            (repo / ".git").mkdir(parents=True)
+            inside = repo / "UFOS.ai" / "RiskLab" / "report"
+            inside.mkdir(parents=True)
+            self.assertEqual(self.b.repo_root(inside), repo)
+            for t in (repo, inside):
+                with self.assertRaises(self.b.ReportBuildError) as ctx:
+                    self.b.check_publish_dir(t, root=repo)
+                self.assertIn("refusing to publish into the repository", str(ctx.exception))
+            outside = Path(tmp, "deliver")
+            with self.assertRaises(self.b.ReportBuildError):
+                self.b.check_publish_dir(outside, root=repo)        # does not exist
+            outside.mkdir()
+            self.assertEqual(self.b.check_publish_dir(outside, root=repo), outside.resolve())
+        # the real repository: report/ is inside it
+        with self.assertRaises(self.b.ReportBuildError):
+            self.b.check_publish_dir(self.b.REPORT_DIR)
+
+    def test_main_publish_without_target(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.b.main(["--publish"]), 2)
+        self.assertIn("--publish needs --publish-to", err.getvalue())
+
+    def test_no_draft_pdf_in_the_repo(self):
+        for d in self.b.DOCS.values():
+            self.assertFalse((self.b.REPORT_DIR / d["draft"]).exists(), d["draft"])
+
     def test_missing_results_are_named(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:

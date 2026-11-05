@@ -1,0 +1,22 @@
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{The UFOS validation gates (SPEC \S 9.4), what this study covers, and the preset thresholds. Out of scope: G1's cross-sectional rank-IC form, G3, the cost and stress parts of G6, and G8.}
+\label{tab:O1_gates_scope}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.75cm}>{\raggedright\arraybackslash}p{1.7cm}>{\raggedright\arraybackslash}p{5.1cm}>{\raggedright\arraybackslash}p{2.3cm}lll}
+\toprule
+Gate & Name & UFOS rule & This study & Lenient & Standard & Strict \\
+\midrule
+G1 & Consistency & time-series: fold Sharpe $> 0$ in $\ge n$ of 5 walk-forward folds; cross-sectional: rank-IC NW $t$ and fold mean IC & time-series form & 3 of 5 & 4 of 5 & 5 of 5 \\
+G2 & Alpha & OLS alpha vs the benchmark $> 0$ and its Newey-West $t \ge$ threshold & vs buy and hold of the asset & $t \ge$ 1.5 & $t \ge$ 2 & $t \ge$ 3 \\
+G3 & Signal decay & IC half-life $\ge$ average holding period (single-asset: not applicable) & out of scope & -- & -- & -- \\
+G4 & Deflated Sharpe & DSR with $N$ = trials + 1, trial-Sharpe variance floored at 1/years & $N = K + 1$ & $\ge$ 0.90 & $\ge$ 0.95 & $\ge$ 0.99 \\
+G5 & Overfitting (PBO) & CSCV, $S = 10$ blocks, over the parameter grid ($\le 64$); $< 4$ configurations fail & 64-configuration UFOS grid & $\le$ 0.50 & $\le$ 0.30 & $\le$ 0.20 \\
+G6 & Robustness & (a) grid neighbours ($\pm$20\,\%) keep $\ge r\times$ the base Sharpe; (b) costs $\times m$ stay profitable; (c) stress-episode drawdowns & (a) only & $r$ = 0.40 & $r$ = 0.50 & $r$ = 0.60 \\
+G7 & Sample size & closed trades $\ge n$ & position changes & $\ge$ 50 & $\ge$ 100 & $\ge$ 200 \\
+G8 & Capacity & capacity estimate $\ge$ 10 $\times$ the tested capital & out of scope & -- & -- & -- \\
+H & Holdout & holdout Sharpe $> 0$ and $\ge$ 50\,\% of the training Sharpe (fixed) & last 24 months, once & fixed & fixed & fixed \\
+\bottomrule
+\end{tabular}
+\end{table}

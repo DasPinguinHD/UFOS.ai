@@ -1,6 +1,6 @@
 # 10-day 99 % VaR: sqrt(10) scaling against GARCH Monte Carlo and the block bootstrap (synthetic data)
 
-h = 10 days, alpha = 0.99, estimation window = 500 days, M = 1000 replications per data set, 20000 simulated paths per estimate, 50000 paths for the Monte-Carlo truth, seed = 20261106. risklab 0.4.0, numpy 2.5.3, scipy 1.18.1.
+h = 10 days, alpha = 0.99, estimation window = 500 days, M = 1000 replications per data set, 20000 simulated paths per estimate, 50000 paths for the Monte-Carlo truth, seed = 20261106. risklab 0.5.0, numpy 2.5.3, scipy 1.18.1.
 
 Bias and RMSE are relative to the true 10-day VaR of each replication (mean of (estimate - truth) / truth). `± se` is the Monte-Carlo standard error of the bias over the M replications. "est MC se" is the mean internal simulation error of the estimate (binomial order-statistic interval), "truth MC se" the same for the simulated truth (0 for the closed-form iid-normal truth).
 

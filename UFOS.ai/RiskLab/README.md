@@ -6,7 +6,7 @@ It is a showcase for risk management and is part of UFOS.ai. It is independent o
 the HedgeFund backend: there are no imports between them, and it has its own
 tests and dependencies.
 
-**Status: v0.4.** Implemented:
+**Status: v0.5.** Implemented:
 
 - one-day models:
   - static: historical simulation (HS), normal and Student-t;
@@ -21,7 +21,13 @@ tests and dependencies.
   estimation window, and survivorship bias;
 - the **validation report pipeline**: seven figures, seven LaTeX tables
   (including a findings register) and a report skeleton with marked text slots.
-  A draft PDF is built from synthetic data only (see "The validation report" below).
+  The draft PDF is built from synthetic data only (see "The validation report" below);
+- `risklab.validation`: an independent re-implementation of the UFOS
+  strategy-platform validation gates (deflated Sharpe ratio, PBO by CSCV,
+  Newey-West t, walk-forward folds, the parameter grid and its neighbours, the
+  gate presets), checked against the platform by a parity test on the HedgeFund
+  side, and the **overfitting study** of those gates with its own draft report
+  (see "The overfitting study" below).
 
 The derivation sheets are worked through separately, outside this code (user
 decision 2026-11-05).
@@ -202,21 +208,24 @@ RiskLab/
     horizon.py          sqrt-of-time, GARCH Monte Carlo, bootstrap h-day forecasters
     bootstrap.py        stationary block bootstrap, Politis-White block length
     backtest/           TestResult; Kupiec, binomial, Christoffersen, traffic light, Z2
+    validation/         UFOS gate statistics (stats), grid, folds, gate rules + presets (gates),
+                        simulator of the overfitting study (sim); no HedgeFund imports
     report/export.py    deterministic JSON / CSV / table export (default folder RiskLab/out/)
-    report/figures.py   the seven report figures (needs the "report" extra)
-    report/tables.py    the seven LaTeX tables incl. the findings register
+    report/figures.py   the report figures 1-7 and 8-11 (needs the "report" extra)
+    report/tables.py    the LaTeX tables T1-T7 and O1-O6 incl. the findings registers
   studies/
     var_backtest_power.py   size / power of the VaR and ES backtests on synthetic data
     horizon_10d.py          10-day VaR: sqrt(10) vs GARCH Monte Carlo vs block bootstrap
     estimation_window.py    over-rejection of GARCH-t / FHS against the window length
     survivorship.py         survivorship bias of growth base rates (synthetic universe)
+    gate_overfitting.py     false positives / power / holdout of the UFOS validation gates
     results/                full-run summaries (.md) and results (.json), synthetic
   report/
     validation_report.tex   the report skeleton (\usertext slots)
-    build_figures.py        figures -> report/figures/
-    build_report.py         figures + tables + pdflatex -> out/report/
+    overfitting_study.tex   the overfitting study of the UFOS gates (\usertext slots)
+    build_figures.py        figures -> report/figures/ (--doc validation | overfitting)
+    build_report.py         figures + tables + pdflatex -> out/report/ (--doc ...)
     figures/, tables/       generated figures (PNG, PDF, LaTeX snippets) and tables
-    validation_report_draft.pdf   the current draft (synthetic data only)
   tests/                unittest, no network
 ```
 
@@ -495,8 +504,8 @@ answering a different question:
 
 ## The validation report
 
-**Draft:** [`report/validation_report_draft.pdf`](report/validation_report_draft.pdf)
-(synthetic data only). The prose is written by the author. Every open text slot
+**Report PDFs are not kept in the repository** (user decision 2026-11-05):
+build the draft yourself (command below; synthetic data only). The prose is written by the author. Every open text slot
 is an orange `\usertext{...}` box with guidance, so a build with open slots is
 visibly a draft; the title page counts the open slots.
 
@@ -505,9 +514,15 @@ installation):
 
 ```
 pip install -r requirements-report.in
-python report/build_report.py              # -> out/report/validation_report.pdf
-python report/build_report.py --publish    # also copies it to report/validation_report_draft.pdf
+python report/build_report.py              # -> out/report/validation_report.pdf (git-ignored)
+python report/build_report.py --publish --publish-to <dir>   # also copies it to <dir>/validation_report_draft.pdf
 ```
+
+`--publish` needs `--publish-to` with an existing directory **outside** the
+repository; there is no default. A target inside the repository is refused,
+so no PDF can be published into the repo. The repository is the nearest
+ancestor of `RiskLab/` with a `.git` entry. In a copy without `.git`, the
+folder that contains `RiskLab/` counts as the repository.
 
 **What the build does:**
 
@@ -534,8 +549,13 @@ writes `out/<study>/` and copies `results.json` and `summary.md` to
 **No stale inputs:**
 
 - Every results file records a code fingerprint (`meta.code_sha256`). It is a
-  sha256 over the study script plus every `src/risklab/**/*.py` outside
-  `risklab/report/`, with LF-normalised line endings.
+  sha256 over the study script plus every `risklab` module the script imports,
+  directly or transitively (static import graph; `risklab/__init__.py`, which
+  holds the version, always counts), except `risklab/report/`, with
+  LF-normalised line endings. Code a study does not import (e.g. the gate
+  validation code for the VaR studies) does not make its results stale. A test
+  checks that every module a study loads at run time is in that set (v0.5;
+  before, the fingerprint covered every module outside `risklab/report/`).
 - `build_report.py` recomputes the fingerprint and refuses an input whose
   fingerprint is missing or differs. `--allow-stale` builds anyway and prints a
   warning for each stale file.
@@ -581,6 +601,104 @@ Survivorship bias: three base rates, selection and attrition (report Figure 1):
 
 ![Survivorship bias](report/figures/fig7_survivorship.png)
 
+## The overfitting study
+
+**Report:** `report/overfitting_study.tex`, about 11 pages with `\usertext`
+slots for the author. Build it with `python report/build_report.py --doc overfitting`
+into `out/report/overfitting_study.pdf` (synthetic data only, not kept in the repo).
+
+**Question:** a user searches K parameter configurations of a rule and validates
+the best one with the UFOS validation gates (SPEC §9). How often does a rule
+**without** an edge pass (false-positive rate), how often does a rule **with**
+an edge pass (power), and what does the 24-month holdout add?
+
+**Design** (`studies/gate_overfitting.py`, `risklab.validation.sim`):
+
+- Rule family: a moving-average crossover, long / short, `fast` 4..19, `slow`
+  24..69 step 3 (256 configurations). The UFOS grid of the selected spec is
+  subsampled to 64, with the base forced in (G5, G6).
+- Data: Student-t (nu = 5) innovations, iid or GARCH(1,1), 20 % volatility,
+  with a planted true configuration (fast 8, slow 42). Its gross Sharpe is
+  0, 0.25, 0.5, 0.75 or 1.0 a year.
+- Samples: 5, 10 or 20 training years, then a 24-month holdout. The best of
+  K = 1, 8, 64 or 256 tried configurations is validated. Costs are 2 bps per
+  unit of turnover.
+- Gates in scope: G1 (time-series form), G2, G4 (N = K + 1), G5, G6 (grid
+  neighbours only), G7 and H, with the lenient / standard / strict presets.
+- Out of scope: G1 rank-IC, G3, the G6 cost and stress parts, and G8.
+- "Statistical gates" means the in-scope gates without G7. G7 depends on the
+  rule's trading frequency, not on the search.
+- Run sizes: M = 2000 paths per cell. All rates carry Monte-Carlo se.
+- Modes:
+  - `--mode smoke`: used by the tests.
+  - default, M = 75: measured 178 s on the reference VM and 64 s in the
+    container.
+  - `--mode full --save-results`: 31 min in the container, about 80 min on
+    the VM (extrapolated).
+
+**Key numbers** (full run, M = 2000; `studies/results/gate_overfitting_full_summary.md`):
+
+| | 5 years | 10 years | 20 years |
+|---|---|---|---|
+| False-positive rate, statistical gates, standard, worst K | ≤ 0.4 % | ≤ 0.3 % | ≤ 0.5 % |
+| Power, true Sharpe 1.0, K = 64, statistical gates, lenient | 12.3 % | 34.0 % | 64.5 % |
+| Power, true Sharpe 1.0, K = 64, statistical gates, standard | 3.6 % | 13.1 % | 35.8 % |
+| Power, true Sharpe 1.0, K = 64, statistical gates, strict | 0.6 % | 3.3 % | 15.6 % |
+| Power, true Sharpe 1.0, K = 64, all in-scope gates, standard | 0.0 % | 0.1 % | 30.6 % |
+
+(iid t data; the GARCH data give the same picture.)
+
+**What the numbers show:**
+
+- **Single gates leak.** With 10 years, the best of 256 noise configurations
+  passes G1 in 58 % of the paths, H in 37 % and G2 in 16 %. G4 passes none
+  for K ≥ 64 (0 of 2000 per cell; 95 % upper bound 0.15 %, rule of three).
+- **Calibration (SPEC §9.6).**
+  - The first claim holds: at least 99.6 % of the noise selections fail at
+    least one in-scope gate in every cell (all of the best-of-64 ones).
+  - The second claim ("every best-of-64 noise selection fails G4 or G5")
+    fails narrowly: 1 of 12 000 passed both (iid, 5 years). It failed
+    another gate.
+- **Low power.** The price is power: only a Sharpe of about 1 with 20 years
+  of data passes the standard preset in a third of the paths.
+- **G5 barely separates edge from noise.** It passes 27–45 % of the real-edge
+  selections against 24–29 % of noise: PBO measures the stability of the
+  ranking within a correlated grid.
+- **G4 costs more power as K grows.** N = K + 1 counts every trial as
+  independent. The selections are consistent with strongly correlated trials:
+  under noise, the best of 64 has a mean training Sharpe of 0.34, against 0.75
+  expected for 64 independent trials. No effective trial count was estimated.
+- **G7 depends on the sample length.** It rejects nearly all 5- and 10-year
+  selections of this rule.
+- **The holdout costs power.** H is a separate sample, but its
+  50 %-of-training clause makes it harder to pass for selections with high
+  training Sharpes. Example (20 years, K = 64, true Sharpe 0.75):
+  P(H | statistical gates) = 54.9 % against P(H) = 61.4 %. With 20 years it
+  removes about a third of the true positives (35.8 % → 24.2 %), while there
+  are almost no false positives left for it to remove.
+
+The findings register is table O6 of the report (severities PROPOSED).
+
+**Parity with the platform:** `risklab.validation` re-implements the
+statistics and rules and never imports the HedgeFund backend. The
+HedgeFund-side test `HedgeFund/backend/tests/test_risklab_gate_parity.py` adds
+`RiskLab/src` to `sys.path` and compares on fixed synthetic inputs:
+
+- DSR, PSR, the expected maximum Sharpe and the Newey-West regressions, to
+  1e-9;
+- PBO, exactly;
+- the fold bounds, the grid subsample and neighbours, and 900 gate decisions,
+  exactly.
+
+It skips with a reason when Risk Lab, numpy or scipy is missing.
+
+Reproduce the results and build the report:
+
+```
+python studies/gate_overfitting.py --mode full --save-results
+python report/build_report.py --doc overfitting    # -> out/report/overfitting_study.pdf
+```
+
 ## Open points
 
 - **Pinned lock:** the repo rule asks for pinned, hash-checked dependencies.
@@ -598,8 +716,11 @@ Survivorship bias: three base rates, selection and attrition (report Figure 1):
 - **v0.3:** EWMA, GARCH(1,1)-t and filtered HS with daily
   state updates; h-day VaR / ES (sqrt-of-time, GARCH Monte Carlo, stationary
   bootstrap); the Acerbi-Szekely ES test; the 10-day horizon study.
-- **v0.4 (this version):** the validation report pipeline (figures, tables,
+- **v0.4:** the validation report pipeline (figures, tables,
   LaTeX skeleton, draft PDF), the estimation-window and survivorship studies.
+- **v0.5 (this version):** `risklab.validation` (the UFOS validation gates,
+  re-implemented, with a HedgeFund-side parity test) and the overfitting study
+  of the gates with its own draft report.
 - **Next:** the author writes the report prose (the text slots); then the
   user's own data in `local_data/` for an out-of-sample section (never in
   the repo).

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "code_sha256": "6e4134cabf4460cccf4c615c23ab5536a3eb3b86c0ce0f15341e55a75f5ff2a5",
+    "code_sha256": "204fdcf50d0ed71fcd6d889f9c7530c678a1627c28d9f748144c203e9031293c",
     "config": {
       "drift_mean": 0.05,
       "drift_sd": 0.05,
@@ -27,7 +27,7 @@
       "years": 10
     },
     "numpy_version": "2.5.3",
-    "risklab_version": "0.4.0",
+    "risklab_version": "0.5.0",
     "seed": 20261108,
     "study": "survivorship"
   },

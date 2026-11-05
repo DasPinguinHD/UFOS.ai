@@ -1,6 +1,6 @@
 # VaR / ES backtest size and power (synthetic data)
 
-VaR tests at alpha = 0.99, ES test (Acerbi-Szekely Z2, one-sided, 500 Monte-Carlo draws) at alpha = 0.975; estimation window = 250 days, tests at 5 %, M = 1000 replications per row, seed = 20261105. Refits: Student-t every 50 days, conditional models (GARCH-t, FHS, EWMA-t) every 50 days with a daily variance update in between, static models daily. risklab 0.4.0, numpy 2.5.3, scipy 1.18.1.
+VaR tests at alpha = 0.99, ES test (Acerbi-Szekely Z2, one-sided, 500 Monte-Carlo draws) at alpha = 0.975; estimation window = 250 days, tests at 5 %, M = 1000 replications per row, seed = 20261105. Refits: Student-t every 50 days, conditional models (GARCH-t, FHS, EWMA-t) every 50 days with a daily variance update in between, static models daily. risklab 0.5.0, numpy 2.5.3, scipy 1.18.1.
 
 **Monte-Carlo error.** Every rate is shown as `rate ± se` with se = sqrt(r (1 - r) / M); at M = 1000 a rate near 5 % has se ≈ ±0.7 percentage points.
 

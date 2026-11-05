@@ -1,12 +1,14 @@
-"""Build the seven report figures (PNG + PDF) and their LaTeX snippets into ``report/figures/``.
+"""Build the report figures (PNG + PDF) and their LaTeX snippets into ``report/figures/``.
 
-Inputs: the saved synthetic study results in ``studies/results/*_full_results.json`` and two
-fixed-seed synthetic simulations (figures 1 and 6). Needs the optional extra ``report``
+``--doc validation`` (default): figures 1-7 of the validation report, from the saved synthetic
+study results in ``studies/results/*_full_results.json`` and two fixed-seed synthetic
+simulations (figures 1 and 6). ``--doc overfitting``: figures 8-11 of the gate overfitting
+study, from ``gate_overfitting_full_results.json``. Needs the optional extra ``report``
 (matplotlib); without it the script stops with a clear message.
 
 Run from ``UFOS.ai/RiskLab/``::
 
-    python report/build_figures.py [--out-dir report/figures]
+    python report/build_figures.py [--doc validation|overfitting] [--out-dir report/figures]
 """
 from __future__ import annotations
 
@@ -37,11 +39,21 @@ def require_matplotlib():
                                 "(pip install -e .[report] or pip install -r requirements-report.in)") from None
 
 
-def build_figures(results_dir: Path = RESULTS, out_dir: Path = FIGURES) -> List[Path]:
-    """All figures + snippets; returns the written paths."""
+def build_figures(results_dir: Path = RESULTS, out_dir: Path = FIGURES, doc: str = "validation") -> List[Path]:
+    """All figures + snippets of ``doc``; returns the written paths."""
     require_matplotlib()
     from risklab.report import figures as F
 
+    if doc == "overfitting":
+        go = F.load_results(results_dir / "gate_overfitting_full_results.json")
+        specs = [F.fig_fpr_vs_k(go, out_dir), F.fig_power(go, out_dir), F.fig_gate_heat(go, out_dir),
+                 F.fig_holdout(go, out_dir)]
+        written: List[Path] = []
+        for s in specs:
+            written += list(s.paths) + [F.write_snippet(s, out_dir)]
+        return written
+    if doc != "validation":
+        raise ValueError(f"unknown document {doc!r}")
     power = F.load_results(results_dir / "var_backtest_power_full_results.json")
     horizon = F.load_results(results_dir / "horizon_10d_full_results.json")
     ew = F.load_results(results_dir / "estimation_window_full_results.json")
@@ -64,11 +76,12 @@ def build_figures(results_dir: Path = RESULTS, out_dir: Path = FIGURES) -> List[
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--doc", choices=("validation", "overfitting"), default="validation")
     ap.add_argument("--results-dir", default=str(RESULTS))
     ap.add_argument("--out-dir", default=str(FIGURES))
     args = ap.parse_args(argv)
     try:
-        paths = build_figures(Path(args.results_dir), Path(args.out_dir))
+        paths = build_figures(Path(args.results_dir), Path(args.out_dir), args.doc)
     except MissingDependency as exc:
         print(f"build_figures: {exc}", file=sys.stderr)
         return 2

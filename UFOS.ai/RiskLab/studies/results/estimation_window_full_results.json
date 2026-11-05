@@ -1,6 +1,6 @@
 {
   "meta": {
-    "code_sha256": "c863f497b97b0e46ed04270dae4422d54fbd7100aabf6cedc5af530da79c85d8",
+    "code_sha256": "da06adfd3e949877431329e1db83c884ca321b4501ca7e76a8879e5344b1c6bf",
     "config": {
       "T": 1000,
       "alpha": 0.99,
@@ -22,7 +22,7 @@
       "z2_sims": 500
     },
     "numpy_version": "2.5.3",
-    "risklab_version": "0.4.0",
+    "risklab_version": "0.5.0",
     "scipy_version": "1.18.1",
     "seed": 20261107,
     "study": "estimation_window"

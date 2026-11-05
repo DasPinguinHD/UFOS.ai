@@ -121,6 +121,72 @@ class FormatTests(unittest.TestCase):
             self.assertTrue(x["evidence"] and x["remediation"])
 
 
+GO_CAL = {"meta": {"config": {"data": ["iid_t"], "years": [10], "ks": [1, 64, 256], "m": 100},
+                   "calibration": [{"data": "iid_t", "years": 10, "k": k, "m": 100, "fail_any": f, "fail_any_se": se,
+                                    "fail_g4_or_g5": g, "fail_g4_or_g5_se": gse}
+                                   for k, f, se, g, gse in ((1, 0.99, 0.01, 0.98, 0.014), (64, 1.0, 0.0, 0.97, 0.017),
+                                                            (256, 1.0, 0.0, 1.0, 0.0))]},
+          "rows": []}
+
+EXPECTED_O5 = r"""\begin{table}[H]
+\centering
+\scriptsize
+\caption{Calibration claims of SPEC \S 9.6 on noise (standard preset): share of noise paths that fail at least one in-scope gate (claim: $\ge$ 95\,\%) and share of best-of-64 noise selections that fail G4 or G5 (claim: all). M = 100 paths per cell, \%, $\pm$ Monte-Carlo se; a rate of 0 or 100 shows the 95\,\% bound of the rule of three in brackets (3 / n).}
+\label{tab:O5_calibration}
+\begin{tabular}{lrrrrr}
+\toprule
+Data & Years & Fail $\ge$1, $K$=64 & Fail G4/G5, $K$=64 & Fail $\ge$1, $K$=256 & Fail G4/G5, $K$=256 \\
+\midrule
+iid $t_5$ & 10 & 100 ($\ge$ 97) & 97.0 $\pm$ 1.7 & 100 ($\ge$ 97) & 100 ($\ge$ 97) \\
+\bottomrule
+\end{tabular}
+\end{table}
+"""
+
+
+class OverfitTableTests(unittest.TestCase):
+    def test_golden_calibration(self):
+        self.assertEqual(T.table_go_calibration(GO_CAL), EXPECTED_O5)
+
+    def test_zero_and_full_rates_show_the_rule_of_three(self):
+        self.assertEqual(T.pmr(0.0, 0.0, 2000), "0 ($\\le$ 0.15)")
+        self.assertEqual(T.pmr(1.0, 0.0, 2000), "100 ($\\ge$ 99.85)")
+        self.assertEqual(T.pmr(0.5, 0.0112, 2000), "50.0 $\\pm$ 1.1")
+        self.assertEqual(T.pmr(None, None, 0), "--")
+
+    def test_gates_scope_lists_out_of_scope(self):
+        go = {"meta": {"presets": {"lenient": {"g1_folds_min": 3, "g2_alpha_t": 1.5, "g4_dsr_min": 0.9,
+                                               "g5_pbo_max": 0.5, "g6_neighbour_ratio": 0.4, "g7_min_trades": 50},
+                                   "standard": {"g1_folds_min": 4, "g2_alpha_t": 2.0, "g4_dsr_min": 0.95,
+                                                "g5_pbo_max": 0.3, "g6_neighbour_ratio": 0.5, "g7_min_trades": 100},
+                                   "strict": {"g1_folds_min": 5, "g2_alpha_t": 3.0, "g4_dsr_min": 0.99,
+                                              "g5_pbo_max": 0.2, "g6_neighbour_ratio": 0.6, "g7_min_trades": 200}}}}
+        text = T.table_go_gates_scope(go)
+        self.assertEqual(text.count("out of scope"), 2)            # G3, G8
+        self.assertIn("4 of 5", text)
+        self.assertIn("$\\le$ 0.30", text)
+        self.assertIn("$\\ge$ 200", text)
+
+    def test_unknown_document(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                T.write_all(RESULTS, tmp, doc="nope")
+
+    def test_write_all_overfitting_from_saved_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = T.write_all(RESULTS, tmp, doc="overfitting")
+            self.assertEqual([p.stem for p in paths], list(T.OVERFIT_TABLE_NAMES))
+            for p in paths:
+                text = p.read_text(encoding="utf-8")
+                self.assertIn(f"\\label{{tab:{p.stem}}}", text)
+                self.assertEqual(text.count("\\begin{tabular}"), text.count("\\end{tabular}"))
+                self.assertNotIn("nan", text.lower().replace("\\nano", ""))
+            findings = (Path(tmp) / "O6_findings.tex").read_text(encoding="utf-8")
+            self.assertGreaterEqual(findings.count("PROPOSED:"), 7)
+            for ref in ("tab:O2_fpr", "fig:fig9_power", "tab:O5_calibration"):
+                self.assertIn(ref, findings)
+
+
 class WriteAllTests(unittest.TestCase):
     def test_write_all_from_saved_results(self):
         with tempfile.TemporaryDirectory() as tmp:

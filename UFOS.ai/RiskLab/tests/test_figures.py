@@ -55,6 +55,47 @@ def tiny_surv():
     return {"meta": {"config": {"n_firms": 100, "m": 5, "h0": 0.04}}, "rows": rows}
 
 
+def tiny_go():
+    """Rows of the gate overfitting study for a 2 x 2 x 2 x 2 x 3 grid (data, years, signal, K, preset)."""
+    rows = []
+    gates = ("G1", "G2", "G4", "G5", "G6", "G7", "H", "all", "all_h", "stat", "stat_h")
+    for d in ("iid_t", "garch_t"):
+        for y in (5, 10):
+            for sr in (0.0, 1.0):
+                for k in (1, 8):
+                    for j, preset in enumerate(("lenient", "standard", "strict")):
+                        p = min(0.95, 0.05 + 0.4 * sr + 0.02 * y - 0.1 * j + 0.01 * k)
+                        r = {"data": d, "years": y, "signal": sr, "k": k, "preset": preset, "m": 10}
+                        for g in gates:
+                            r[f"pass_{g}"], r[f"pass_{g}_se"] = p, 0.05
+                        r["h_given_g4"], r["h_given_g4_se"] = (0.6, 0.1) if sr else (None, None)
+                        r["h_given_stat"], r["h_given_stat_se"] = 0.7, 0.1
+                        rows.append(r)
+    return {"meta": {"config": {"data": ["iid_t", "garch_t"], "years": [5, 10], "signals": [0.0, 1.0], "ks": [1, 8],
+                                "m": 10}}, "rows": rows}
+
+
+@unittest.skipUnless(HAVE_MPL, SKIP_MSG)
+class OverfitFigureTests(unittest.TestCase):
+    def _all(self, out):
+        from risklab.report import figures as F
+
+        go = tiny_go()
+        return [F.fig_fpr_vs_k(go, out, years=10), F.fig_power(go, out, k=8), F.fig_gate_heat(go, out),
+                F.fig_holdout(go, out, k=8)]
+
+    def test_four_figures_reproducible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = self._all(Path(tmp, "a")), self._all(Path(tmp, "b"))
+            self.assertEqual([s.stem for s in a], ["fig8_fpr_vs_k", "fig9_power", "fig10_gate_heat", "fig11_holdout"])
+            for x, y in zip(a, b):
+                self.assertTrue(x.caption)
+                for p, q in zip(x.paths, y.paths):
+                    self.assertGreater(p.stat().st_size, 1000)
+                    self.assertEqual(p.read_bytes(), q.read_bytes(), p.name)
+                self.assertNotIn(b"/CreationDate", x.paths[1].read_bytes())
+
+
 @unittest.skipUnless(HAVE_MPL, SKIP_MSG)
 class FigureTests(unittest.TestCase):
     def _all(self, out):

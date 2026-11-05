@@ -356,6 +356,161 @@ def fig_survivorship(surv: dict, out_dir, stem: str = "fig7_survivorship", kappa
     return FigureSpec(stem, caption, paths)
 
 
+# ---- 8-11. overfitting study of the UFOS validation gates ---------------------------------
+
+PRESET_STYLE = {"lenient": (PALETTE["green"], "o"), "standard": (PALETTE["blue"], "s"),
+                "strict": (PALETTE["vermillion"], "^")}
+GATE_LIST = ("G1", "G2", "G4", "G5", "G6", "G7", "H")
+GATE_COLOURS = dict(zip(GATE_LIST, (PALETTE["blue"], PALETTE["orange"], PALETTE["green"], PALETTE["vermillion"],
+                                    PALETTE["purple"], PALETTE["sky"], PALETTE["black"])))
+
+
+def _go_idx(go: dict) -> dict:
+    return {(r["data"], r["years"], r["signal"], r["k"], r["preset"]): r for r in go["rows"]}
+
+
+def fig_fpr_vs_k(go: dict, out_dir, stem: str = "fig8_fpr_vs_k", data: str = "iid_t", years: int = 10) -> FigureSpec:
+    idx = _go_idx(go)
+    c = go["meta"]["config"]
+    ks = c["ks"]
+    with _style():
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=WIDE_LEGEND)
+        for g in GATE_LIST:
+            rr = [idx[(data, years, 0.0, k, "standard")] for k in ks]
+            a1.plot(ks, [100 * r[f"pass_{g}"] for r in rr], marker="o", ms=3, color=GATE_COLOURS[g], label=g)
+        a1.set_xscale("log", base=2)
+        a1.set_xticks(ks)
+        a1.set_xticklabels([str(k) for k in ks])
+        a1.set_xlabel("configurations tried K")
+        a1.set_ylabel("pass rate under noise (%)")
+        a1.set_title(f"single gates, standard, {years} years")
+        a1.set_ylim(bottom=0)
+        a1.legend(frameon=False, fontsize=7, ncol=2)
+        top = 0.0
+        for preset, (col, mk) in PRESET_STYLE.items():
+            for d, ls in (("iid_t", "-"), ("garch_t", "--")):
+                rr = [idx[(d, years, 0.0, k, preset)] for k in ks]
+                top = max([top] + [100 * (r["pass_stat"] + 1.96 * r["pass_stat_se"]) for r in rr])
+                a2.errorbar(ks, [100 * r["pass_stat"] for r in rr], yerr=[100 * 1.96 * r["pass_stat_se"] for r in rr],
+                            marker=mk, ms=3, capsize=2, color=col, ls=ls,
+                            label=f"{preset}, {'iid' if d == 'iid_t' else 'GARCH'}")
+        a2.set_xscale("log", base=2)
+        a2.set_xticks(ks)
+        a2.set_xticklabels([str(k) for k in ks])
+        a2.set_xlabel("configurations tried K")
+        a2.set_ylabel("false-positive rate (%)")
+        a2.set_title(f"statistical gates together, {years} years")
+        a2.set_ylim(0, max(5.0, 1.1 * top))
+        a2.legend(frameon=False, fontsize=7)
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = (f"Pass rates of the best of K configurations under noise (true Sharpe 0), {years} training years, "
+               f"M = {c['m']} paths per cell. Left: each gate alone (standard preset, iid $t_5$ data; Monte-Carlo se at "
+               f"most {100 * 0.5 / np.sqrt(c['m']):.1f} percentage points). Right: the statistical gates together (G1, G2, G4, G5, G6 neighbours) per preset; solid iid, dashed "
+               f"GARCH, error bars $\\pm 1.96$ se.")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_power(go: dict, out_dir, stem: str = "fig9_power", data: str = "iid_t", k: int = 64) -> FigureSpec:
+    idx = _go_idx(go)
+    c = go["meta"]["config"]
+    sig = c["signals"]
+    ys = c["years"]
+    with _style():
+        fig, axes = plt.subplots(1, len(ys), figsize=WIDE_LEGEND, sharey=True)
+        for ax, y in zip(np.atleast_1d(axes), ys):
+            for preset, (col, mk) in PRESET_STYLE.items():
+                rr = [idx[(data, y, s, k, preset)] for s in sig]
+                ax.errorbar(sig, [100 * r["pass_stat"] for r in rr], yerr=[100 * 1.96 * r["pass_stat_se"] for r in rr],
+                            marker=mk, ms=3, capsize=2, color=col, label=f"stat., {preset}")
+            rr = [idx[(data, y, s, k, "standard")] for s in sig]
+            ax.errorbar(sig, [100 * r["pass_all"] for r in rr], yerr=[100 * 1.96 * r["pass_all_se"] for r in rr],
+                        marker="x", ms=3, capsize=2, color=PALETTE["black"], ls=":", label="all in scope, standard")
+            ax.set_title(f"{y} training years")
+            ax.set_xlabel("true Sharpe a year")
+            ax.set_ylim(-3, 103)
+        np.atleast_1d(axes)[0].set_ylabel("pass rate (%)")
+        np.atleast_1d(axes)[0].legend(frameon=False, fontsize=6.5, loc="upper left")
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = (f"Power curves: pass rate of the best of K = {k} configurations against the true (gross) Sharpe ratio "
+               f"of the planted configuration, iid $t_5$ data, per training length. Coloured: the statistical gates "
+               f"per preset; dotted black: all in-scope gates including G7 (standard). The value at Sharpe 0 is the "
+               f"false-positive rate. M = {c['m']} paths per point, error bars $\\pm 1.96$ se.")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_gate_heat(go: dict, out_dir, stem: str = "fig10_gate_heat", data: str = "iid_t",
+                  signals: Sequence[float] = (0.0, 1.0), preset: str = "standard") -> FigureSpec:
+    idx = _go_idx(go)
+    c = go["meta"]["config"]
+    cols = [(y, k) for y in c["years"] for k in c["ks"]]
+    with _style():
+        fig, axes = plt.subplots(len(signals), 1, figsize=(6.5, 2.6 * len(signals) + 0.4), layout="constrained")
+        for ax, sr in zip(np.atleast_1d(axes), signals):
+            Z = np.array([[100 * (1 - idx[(data, y, sr, k, preset)][f"pass_{g}"]) for (y, k) in cols] for g in GATE_LIST])
+            im = ax.imshow(Z, cmap="Greys", vmin=0, vmax=100, aspect="auto")
+            for i in range(Z.shape[0]):
+                for j in range(Z.shape[1]):
+                    ax.text(j, i, f"{Z[i, j]:.0f}", ha="center", va="center", fontsize=6.5,
+                            color="white" if Z[i, j] > 55 else "black")
+            ax.set_yticks(range(len(GATE_LIST)))
+            ax.set_yticklabels(GATE_LIST)
+            ax.set_xticks(range(len(cols)))
+            ax.set_xticklabels([f"{y}y\nK={k}" for (y, k) in cols], fontsize=6.5)
+            for b in range(1, len(c["years"])):
+                ax.axvline(b * len(c["ks"]) - 0.5, color="white", lw=2)
+            ax.grid(False)
+            ax.set_title(f"rejection rate (%), true Sharpe {sr:g}, {preset} preset")
+        fig.colorbar(im, ax=list(np.atleast_1d(axes)), fraction=0.025, pad=0.01)
+        paths = _save(fig, out_dir, stem)
+    caption = (f"Per-gate rejection rates (\\%) of the selected configuration, iid $t_5$ data, {preset} preset, by "
+               f"training length (years) and search size K. Top: noise (a rejection is correct); bottom: a planted "
+               f"Sharpe of {signals[-1]:g} (a rejection is a miss). M = {c['m']} paths per cell; the Monte-Carlo se is at "
+               f"most {100 * 0.5 / np.sqrt(c['m']):.1f} percentage points.")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_holdout(go: dict, out_dir, stem: str = "fig11_holdout", data: str = "iid_t", k: int = 64,
+                preset: str = "standard") -> FigureSpec:
+    idx = _go_idx(go)
+    c = go["meta"]["config"]
+    sig = c["signals"]
+    ys = c["years"]
+    with _style():
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=WIDE_LEGEND)
+        y_mid = ys[-1]
+        rr = [idx[(data, y_mid, s, k, preset)] for s in sig]
+        for key, lab, col, mk in (("pass_H", "P(H)", PALETTE["black"], "o"),
+                                  ("h_given_g4", "P(H | G4)", PALETTE["green"], "s"),
+                                  ("h_given_stat", "P(H | stat. gates)", PALETTE["blue"], "^")):
+            xs = [s for s, r in zip(sig, rr) if r[key] is not None]
+            a1.errorbar(xs, [100 * r[key] for r in rr if r[key] is not None],
+                        yerr=[100 * 1.96 * r[key + "_se"] for r in rr if r[key] is not None],
+                        marker=mk, ms=3, capsize=2, color=col, label=lab)
+        a1.set_xlabel("true Sharpe a year")
+        a1.set_ylabel("holdout pass rate (%)")
+        a1.set_title(f"{y_mid} years, K = {k}, {preset}")
+        a1.set_ylim(-3, 103)
+        a1.legend(frameon=False, fontsize=7)
+        for y, ls in zip(ys, ("-", "--", ":")):
+            r2 = [idx[(data, y, s, k, preset)] for s in sig]
+            a2.plot(sig, [100 * (r["pass_stat"] - r["pass_stat_h"]) for r in r2], color=PALETTE["vermillion"], ls=ls,
+                    marker="o", ms=3, label=f"{y} years")
+        a2.set_xlabel("true Sharpe a year")
+        a2.set_ylabel("removed by H (pp of all paths)")
+        a2.set_title("stat. gates minus stat. gates + H")
+        a2.legend(frameon=False, fontsize=7)
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = (f"Value of the holdout gate H (24 months, evaluated once), iid $t_5$ data, best of K = {k}, {preset} "
+               f"preset. Left: H pass rate unconditionally and among the paths that passed G4 or all statistical gates "
+               f"(points with no passing path are omitted). Right: the share of all paths that pass the statistical "
+               f"gates but fail H: under noise this is the holdout's gain, under a real edge its cost. M = {c['m']} paths "
+               f"per point, error bars $\\pm 1.96$ se (conditional rates: on the passing paths only).")
+    return FigureSpec(stem, caption, paths)
+
+
 # ---- LaTeX snippets --------------------------------------------------------------------
 
 def latex_snippet(spec: FigureSpec, width: str = "\\linewidth") -> str:

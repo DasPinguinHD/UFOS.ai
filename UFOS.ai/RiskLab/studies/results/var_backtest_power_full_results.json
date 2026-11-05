@@ -125,7 +125,7 @@
         ]
       ]
     ],
-    "code_sha256": "012a93943bc6b2ed53aa8f48df6f1ca6c1e741efef2b3d3a467de989ea0ddd3e",
+    "code_sha256": "f89a2598709977afc25ccc0f387c3c53affc0e49b48ffba6b26bc09d935f54d4",
     "config": {
       "alpha": 0.99,
       "alpha_es": 0.975,
@@ -142,7 +142,7 @@
       "z2_sims": 500
     },
     "numpy_version": "2.5.3",
-    "risklab_version": "0.4.0",
+    "risklab_version": "0.5.0",
     "scipy_version": "1.18.1",
     "seed": 20261105,
     "study": "var_backtest_power"
