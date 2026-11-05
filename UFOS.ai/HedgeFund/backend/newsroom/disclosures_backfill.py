@@ -40,6 +40,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from strategy_platform.core import calendars
 
+from . import congress as congress_src
 from . import disclosure_db as ddb
 from . import disclosure_returns as eng
 from . import disclosure_trades as dtr
@@ -50,7 +51,8 @@ from .sec_limiter import BACKFILL_INTERVAL_SECONDS, LIMITER
 logger = logging.getLogger(__name__)
 
 STATE_KEY = "backfill:state"
-STEPS = ("datasets", "pilot", "acceptance", "gap", "prices")
+STEPS = ("datasets", "pilot", "acceptance", "gap", "congress", "prices")
+CONGRESS_REQUEST_PAUSE = 1.0                     # GitHub raw: polite, one request per second
 DATASETS_PAGE = "https://www.sec.gov/dera/data/form-345"
 DATASET_LINK_RE = re.compile(r'href="([^"]*?/(\d{4})q([1-4])_form345\.zip)"', re.IGNORECASE)
 DAILY_INDEX_URL = "https://www.sec.gov/Archives/edgar/daily-index/{y}/QTR{q}/form.{ymd}.idx"
@@ -247,8 +249,10 @@ class Backfill:
     """One backfill per process; the work runs in a daemon thread, pause is checked between items."""
 
     def __init__(self, fetch: Callable[[str], bytes] = svc.sec_get, prices_factory=eng.AlpacaPrices,
-                 clock: Callable[[], datetime] = svc._utc_now, sleep: Callable[[float], None] = _time.sleep):
+                 clock: Callable[[], datetime] = svc._utc_now, sleep: Callable[[float], None] = _time.sleep,
+                 http: Callable = congress_src.http_get):
         self._fetch, self._prices_factory, self._clock, self._sleep = fetch, prices_factory, clock, sleep
+        self._http = http                                # the congress source (GitHub raw), fetched at runtime only
         self._lock = threading.Lock()
         self._pause = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -487,7 +491,42 @@ class Backfill:
             self._check_pause()
             self._sleep(5)
 
+    def _step_congress(self) -> None:
+        """2-year congress history: filers.json -> each House/Senate filer's file (CONGRESS_API.md §4)."""
+        start, _end = self._window()
+        status, _etag, body = self._http(congress_src.BASE_URL + "filers.json")
+        filers = congress_src.parse_json(body, "filers.json")
+        if not isinstance(filers, list):
+            raise congress_src.SourceError("filers.json: expected a list of filers")
+        wanted = sorted(f["id"] for f in filers if isinstance(f, dict) and f.get("id")
+                        and f.get("chamber") in ("house", "senate"))
+        done = set(((ddb.job_get("backfill:congress") or {}).get("progress") or {}).get("done") or [])
+        self._progress("congress", total=len(wanted), done=sorted(done))
+        for fid in wanted:
+            if fid in done:
+                continue
+            self._check_pause()
+            self._sleep(CONGRESS_REQUEST_PAUSE)
+            try:
+                _s, _e, raw = self._http(congress_src.BASE_URL + f"filer/{fid}.json")
+                doc = congress_src.parse_json(raw, f"filer/{fid}.json")
+                if not isinstance(doc, dict) or not isinstance(doc.get("trades"), list):
+                    raise congress_src.SourceError(f"filer/{fid}.json: unexpected shape")
+            except congress_src.SourceError as ex:
+                self._gap("congress", fid, str(ex))
+                continue
+            rows, _skipped = congress_src.map_rows(doc["trades"], doc.get("filer") or {}, origin="backfill")
+            rows = [r for r in rows if r["filing_date"] >= start.isoformat()]
+            ddb.upsert_trades(rows, keep_existing=True)       # known rows (live pulls) stay as they are; no alerts
+            done.add(fid)
+            progress = (ddb.job_get("backfill:congress") or {}).get("progress") or {}
+            self._progress("congress", done=sorted(done), rows=progress.get("rows", 0) + len(rows))
+
     def _step_prices(self) -> None:
+        for source in ("insider", "congress"):
+            self._prices_for(source)
+
+    def _prices_for(self, source: str) -> None:
         from strategy_platform.data import http_gate
         start, _end = self._window()
         failed_tickers: set = set()                           # price source failed this run -> retried next start
@@ -496,12 +535,14 @@ class Backfill:
             if self._market_blocked():
                 self._wait_for_market_close()
                 continue
-            batch = [t for t in ddb.trades_to_compute("insider", start.isoformat(), new_backfill=True,
+            batch = [t for t in ddb.trades_to_compute(source, start.isoformat(), new_backfill=True,
                                                       limit=PRICE_BATCH + len(failed_tickers) * 50,
                                                       order="t.ticker, t.filing_date, t.id")
                      if (t["ticker"] or "") not in failed_tickers][:PRICE_BATCH]
             if not batch:
                 break
+            if source == "congress":                       # ticker -> CIK (SEC company_tickers.json, once a day)
+                svc.resolve_ciks(batch, svc.company_tickers(self._clock(), self._edgar))
             # issuers without a SIC yet (e.g. gap-day filings never went through the acceptance step)
             for cik in sorted({t["issuer_cik"] for t in batch if t["measurable"] and t.get("issuer_cik")
                                and ddb.sic_get(t["issuer_cik"]) is None}):
@@ -524,7 +565,9 @@ class Backfill:
                     etf = reason = None
                     if t["measurable"]:
                         row = ddb.sic_get(t["issuer_cik"]) if t.get("issuer_cik") else None
-                        etf, reason = sector_map.etf_for(row["sic"]) if row else (None, "SIC code unknown")
+                        etf, reason = sector_map.etf_for(row["sic"]) if row else (None, (
+                            "SIC code unknown" if source == "insider" or t.get("issuer_cik") else
+                            f"no SEC company for ticker {t.get('ticker')} (ETF or fund?) — no sector ETF"))
                     try:
                         ddb.replace_returns(t["id"], eng.compute(t, etf, reason, prices, self._clock()))
                         ok += 1
@@ -555,5 +598,6 @@ def status() -> dict:
     return {"state": job.get("state"), "last_error": job.get("last_error"), "progress": job.get("progress") or {},
             "steps": steps, "running": BACKFILL.running(),
             "estimate": {"requests_sec": 6000 + 14500 + 8, "requests_alpaca": 5000 + 90000,
+                         "requests_congress": 370,
                          "hours": "EDGAR ~1.2 h at 0.2 s; Alpaca daily ~1–1.5 h, minute entries ~10–25 h outside "
                                   "US market hours"}}

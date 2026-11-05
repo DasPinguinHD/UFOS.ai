@@ -97,6 +97,7 @@ from newsroom import store as newsroom_store
 from newsroom import ai as newsroom_ai
 from newsroom import insider_summary
 from newsroom import disclosures_api, disclosures_backfill, disclosures_service   # Disclosures (INSIDER-RET)
+from newsroom import congress, congress_api   # Disclosures: congress trades (CONGRESS)
 from newsroom import fred_collector, sec_edgar_collector, macro_derived
 from newsroom import calendar_collector
 from newsroom import keys as newsroom_keys
@@ -568,6 +569,7 @@ async def main() -> None:
     app.router.add_post("/newsroom/analysis", _newsroom_analysis)
     app.router.add_get("/newsroom/ai-history", _newsroom_ai_history)
     disclosures_api.register(app)   # /newsroom/disclosures/* (INSIDER-RET), same api_auth middleware
+    congress_api.register(app)      # /newsroom/disclosures/congress* (CONGRESS)
 
     # HedgeFund autonomous loop (paper trading only). Market data from Alpaca via the
     # Strategy Platform data layer (bars cached in hedgefund.db); the engine never raises into the app.
@@ -722,6 +724,7 @@ async def main() -> None:
              for name, module in NEWSROOM_SOURCES.items()]
     tasks.append(asyncio.create_task(_prune_forever()))
     tasks.append(asyncio.create_task(disclosures_service.run_forever(), name="disclosures-daily"))
+    tasks.append(asyncio.create_task(congress.run_forever(), name="congress-pull"))   # conditional pull every 6 h
     try:   # a backfill that was running when the backend stopped is shown as paused (the user resumes it)
         await asyncio.to_thread(disclosures_backfill.BACKFILL.recover_after_restart)
     except Exception as ex:  # noqa: BLE001 — the status endpoint shows the store problem

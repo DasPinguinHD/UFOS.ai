@@ -27,7 +27,7 @@ TRADE_COLUMNS = (
     "not_measurable_reason", "official_url", "origin", "first_seen", "updated_at",
     # congress (CONGRESS_API.md §2), null for insider rows
     "chamber", "party", "state", "office", "owner_type", "amount_low", "amount_high", "amount_label", "days_to_file",
-    "is_late", "asset_type", "filing_type", "source_ingested_at",
+    "is_late", "asset_type", "filing_type", "source_ingested_at", "comment",
 )
 RETURN_COLUMNS = (
     "trade_id", "start", "horizon", "state", "sessions_done", "entry_ts", "entry_basis", "entry_price", "etf",
@@ -292,6 +292,66 @@ def sic_counts(source: str) -> Dict[Optional[int], int]:
     with _conn() as conn:
         rows = conn.execute("SELECT s.sic, COUNT(*) FROM disclosure_trades t JOIN issuer_sic s ON s.cik = t.issuer_cik "
                             "WHERE t.source = ? AND t.measurable = 1 GROUP BY s.sic", (source,)).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+def existing_ids(ids: Iterable[str]) -> set:
+    ids = list(ids)
+    out = set()
+    with _conn() as conn:
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            out.update(r[0] for r in conn.execute(f"SELECT id FROM disclosure_trades WHERE id IN "
+                                                  f"({', '.join('?' for _ in chunk)})", chunk))
+    return out
+
+
+def set_issuer_ciks(by_id: Dict[str, str]) -> int:
+    """issuer CIK per trade id ('' = looked up, no SEC company for the ticker)."""
+    with _conn() as conn:
+        for tid, cik in by_id.items():
+            conn.execute("UPDATE disclosure_trades SET issuer_cik = ? WHERE id = ?", (cik, tid))
+    return len(by_id)
+
+
+def watch_get(kind: str) -> List[str]:
+    with _conn() as conn:
+        return [r[0] for r in conn.execute("SELECT key FROM disclosure_watch WHERE kind = ? ORDER BY key", (kind,))]
+
+
+def watch_replace(kind: str, keys: Sequence[str]) -> List[str]:
+    now = utc_now()
+    with _conn() as conn:
+        conn.execute("DELETE FROM disclosure_watch WHERE kind = ?", (kind,))
+        conn.executemany("INSERT INTO disclosure_watch(kind, key, added_at) VALUES (?, ?, ?)",
+                         [(kind, k, now) for k in sorted(set(keys))])
+    return watch_get(kind)
+
+
+def members(q: str = "", limit: int = 1000) -> List[dict]:
+    """Congress filers seen in the stored rows: id, name, chamber, party, state, trade count."""
+    sql = ("SELECT owner_cik AS id, MAX(owner_name) AS name, MAX(chamber) AS chamber, MAX(party) AS party, "
+           "MAX(state) AS state, COUNT(*) AS trade_count FROM disclosure_trades WHERE source = 'congress' "
+           "AND owner_cik IS NOT NULL")
+    args: list = []
+    if q:
+        sql += " AND (LOWER(owner_name) LIKE ? OR owner_cik LIKE ?)"
+        args += [f"%{q.lower()}%", f"%{q.lower()}%"]
+    sql += " GROUP BY owner_cik ORDER BY name LIMIT ?"
+    with _conn() as conn:
+        return [dict(r) for r in conn.execute(sql, args + [int(limit)]).fetchall()]
+
+
+COUNTABLE = ("asset_type", "code", "chamber", "party", "role_class", "owner_type")
+
+
+def column_counts(source: str, column: str) -> Dict[str, int]:
+    """{value: rows} of one categorical column (status: e.g. the asset types seen)."""
+    if column not in COUNTABLE:
+        raise ValueError(f"column {column!r} cannot be counted")
+    with _conn() as conn:
+        rows = conn.execute(f"SELECT COALESCE({column}, ''), COUNT(*) FROM disclosure_trades WHERE source = ? "
+                            f"GROUP BY 1 ORDER BY 2 DESC", (source,)).fetchall()
     return {r[0]: r[1] for r in rows}
 
 

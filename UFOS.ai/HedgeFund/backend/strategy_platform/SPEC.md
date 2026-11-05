@@ -1192,7 +1192,7 @@ files `ENV_API.md` (+ `ENV_API_DEFAULTS.json`) and `LOCK_API.md` in UFOS.ai/docs
 ## 24. Financial Newsroom — Disclosures (insider returns; INSIDER-RET, 2026-10-24)
 
 Contract: `UFOS.ai/docs/tasks/INSIDER_RET_API.md` (decisions §11). Backend built (slices a–c, Agent H); the WPF
-Disclosures section (Insider tab, Track record, status line) is open. As-delivered notes:
+Disclosures section built 2026-10-25 (Agent W, §24.2; user build + click-test pending). As-delivered notes:
 → spec-archive/pending-docs-2026-10-24-25.md
 
 - **Retention:** disclosures (insider trades; later congress) are kept **2 years** by filing date — `disclosure_trades`,
@@ -1220,6 +1220,51 @@ Disclosures section (Insider tab, Track record, status line) is open. As-deliver
   user-started: SEC quarterly data sets (links read from the SEC page) → issuer submissions for acceptance times + SIC (a
   pilot stops and asks if missing) → gap days via the daily index → prices outside US market hours.
 - Tests: `test_disclosures_engine.py`, `test_disclosures_live.py`, `test_disclosures_backfill.py`.
+
+### 24.1 Congress trades (CONGRESS, 2026-10-25)
+
+Contract: `UFOS.ai/docs/tasks/CONGRESS_API.md` (decisions §10). Backend built (slices a–c, Agent H; applied on the PC
+2026-10-28); the WPF Congress tab built 2026-10-28 (Agent W, §24.2).
+- **Source:** kadoa-org/congress-trading-monitor static JSON, fetched at RUNTIME only — never committed (tests are
+  synthetic; `check_repo_data.py` stays clean). House + Senate only (executive / OGE rows dropped); kadoa's own returns
+  are ignored. Terms: public records under the Ethics in Government Act — personal research only, no redistribution.
+- **Pull:** conditional GET (ETag) of `trades.json` every 6 h + at start (`newsroom/congress.py`); "source not updated
+  since <date>" after 3 calendar days without newer data; errors keep the rows and are shown in the status.
+- **Storage:** the same `disclosure_trades` (source "congress", congress columns) and `disclosure_returns`; newsroom.db
+  **v5** adds `disclosure_trades.comment` and `disclosure_watch` (watched members). Measurable: ticker + asset type in
+  `MEASURABLE_ASSET_TYPES` (House ST / EF; Senate codes after the pilot — the status lists every type seen).
+- **Returns:** the §24 engine; from filing = the open of the first session after the filing DATE (no time published);
+  ticker → CIK via SEC `company_tickers.json` (once a day) → SIC → sector ETF; ETF / fund tickers get no benchmark.
+  The daily job runs insider, then congress (`returns:daily:congress`).
+- **Routes:** `GET /newsroom/disclosures/congress` (filters `days`, `code`, `chamber`, `party`, `late`, `ticker`,
+  `member`, `measurable`, `limit`, `offset`), `GET /newsroom/disclosures/congress/{id}`, `GET
+  /newsroom/disclosures/members?q=`, `PUT /newsroom/disclosures/watch {"members": [...]}` (Origin → 403, unknown id →
+  400); track record `source=congress&group=direction|chamber|party|late|amount`; markers `kinds=insider,congress`.
+- **Alerts** (Monitoring → Alerts only, no toast; `newsroom/disclosure_alerts.py`): `disclosure_watched_member`,
+  `disclosure_held_ticker` (insider AND congress trades whose ticker is held in an active platform account or a Shadow
+  Account). Only rows first seen by a live path alert — never the first pull, never the backfill.
+- **Initial load:** backfill step "congress" (filers.json → each House / Senate filer's file, 2-year window, one request
+  per second, resumable, gaps recorded); the backfill's price step also computes these rows.
+- Tests: `test_congress.py`, `test_congress_returns.py`, `test_congress_backfill.py`.
+
+### 24.2 WPF — the "Disclosures" section (Financial Newsroom; W, 2026-10-25 / 10-28)
+
+- Section "Disclosures" (id `disclosures`) REPLACES "Insider Trades" in `NewsroomSections`. Status line from `GET …/status`
+  (history-load state + step progress, counts incl. congress rows + freshness, daily job, DB sizes; a "details" toggle
+  with steps, gaps, estimate, SEC interval, unmapped SIC, congress pull state). Start / Pause / Resume / Run again via
+  `POST …/backfill` — Start asks for confirmation first.
+- Tabs: **Insider** (compact rows: side, ticker, who / role / issuer, amount, "filed +N d", 10b5-1 / cluster / amendment
+  badges, ONE return chip; on expand both start points, all horizons, entry basis, 10b5-1 source, SIC → ETF, notes, SEC
+  link; filter bar defaults P/S and 30 d, "N of M shown · change filters", Reset, "Load more" 100 per page; the
+  labelled AI summary and the clusters banner of the live 5-day list stay); **Congress** (info line with the source terms
+  and freshness — "source not updated since <date>" when stale; filters period, side P,S / P / S / P,S,X, chamber, party,
+  late filing, ticker, measurable, member (set from a row's details); compact teal rows with a LATE badge, details on
+  expand; the watch list UI is "coming next"); **Track record** (`TrackRecordPanel`).
+- **Clarity rules:** one return chip per row, no statistics on cards, no toasts (alerts only in Monitoring → Alerts,
+  §24.1). Colours: insider = gold, congress = teal; violet stays reserved for AI.
+- **Market Research:** toggles INSIDER and CONGRESS next to MARKERS, off by default; markers from `GET
+  /newsroom/disclosures/markers` (filing day, merged per day and side with a count); MARKERS itself requests
+  `kinds=calendar` only.
 
 ## 25. Cross-module UI rules (full screen, module tiles)
 
@@ -1251,4 +1296,8 @@ As-delivered notes (W, 2026-10-24): → spec-archive/pending-docs-2026-10-24-25.
   else auto ON|OFF, + Council ON|OFF after the switch-over), sparkline from paper-main's stored snapshots; a value the
   route lacks reads "not available" with the route's reason). A static test keeps the C# parser's field names in step with
   the route payload (`tests/test_tiles_static.py`). Status: wired 2026-10-25 (static checks + offline parser check);
-  user build + click-test pending.
+  user build + click-test pending. The "⋯" menu uses dark templates from the design-system brushes (W, 2026-10-28).
+- **§25.3 WPF static checks** (agents cannot build): before every report run `HedgeFund/tools/check_shared_cs_members.py`,
+  `check_no_env_cs.py` and `check_cs_ambiguity.py` (CS0104-style type names provided by two imported namespaces — our
+  types plus a curated WPF / IO / Drawing table; generic vs non-generic names told apart; test
+  `tests/test_s10_cs_ambiguity.py`).

@@ -238,6 +238,7 @@ namespace UFOS.ai
         // A failure here is logged (System Logs) and leaves the tiles as they were — they still open their modules.
         private void StartTilePreviews()
         {
+            if (_tileHost != null) return;   // once per window (Loaded can repeat)
             try
             {
                 _tileHost = new UFOS.ai.Tiles.ModuleTileHost(this, new (Button, UFOS.ai.ModuleTiles.IModuleTilePreview)[]

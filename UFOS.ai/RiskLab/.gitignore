@@ -1,0 +1,14 @@
+# Own (non-synthetic) data never enters the repo
+local_data/
+# Results export
+out/
+# Virtual environments
+.venv/
+venv/
+env/
+# Python build / cache output
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/

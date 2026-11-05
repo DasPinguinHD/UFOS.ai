@@ -27,7 +27,7 @@ namespace UFOS.ai.HedgeFund.MarketResearch
         private const int MaxMarkerLabelChars = 200;
 
         private static readonly HashSet<string> MarkerKinds = new(StringComparer.Ordinal)
-            { "insider", "fomc", "release", "fill", "period_best", "period_worst", "drawdown" };
+            { "insider", "congress", "fomc", "release", "fill", "period_best", "period_worst", "drawdown" };
         private static readonly HashSet<string> MarkerSides = new(StringComparer.Ordinal) { "buy", "sell", "short", "cover" };
 
         private List<object> _markers = new();

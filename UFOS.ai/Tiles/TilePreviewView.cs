@@ -12,6 +12,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using UFOS.ai.ModuleTiles;
+using TileMode = UFOS.ai.ModuleTiles.TileMode;
 
 namespace UFOS.ai.Tiles
 {
@@ -196,14 +197,22 @@ namespace UFOS.ai.Tiles
         /// <summary>Opens the options menu: Live · Last view · Illustration (+ Delete last view when a picture exists).</summary>
         public void OpenMenu(TileMode current, string? liveReason, string? lastViewReason, bool hasPicture, Action<TileMode> choose, Action deletePicture)
         {
-            var menu = new ContextMenu { PlacementTarget = MenuButton, Placement = PlacementMode.Bottom };
+            // dark menu per Styles/DesignSystem.xaml (click-test 2026-10-25: the default light Windows menu)
+            var menu = new ContextMenu
+            {
+                PlacementTarget = MenuButton,
+                Placement = PlacementMode.Bottom,
+                Template = MenuTemplate(),
+                Foreground = TileBrushes.Get("PrimaryForegroundBrush"),
+                FontSize = 12,
+            };
             menu.Items.Add(ModeItem("Live", TileMode.Live, current, liveReason, choose));
             menu.Items.Add(ModeItem("Last view", TileMode.LastView, current, lastViewReason, choose));
             menu.Items.Add(ModeItem("Illustration", TileMode.Illustration, current, null, choose));
             if (hasPicture)
             {
-                menu.Items.Add(new Separator());
-                var del = new MenuItem { Header = "Delete last view" };
+                menu.Items.Add(new Separator { Template = SeparatorTemplate() });
+                var del = new MenuItem { Header = "Delete last view", Template = ItemTemplate() };
                 AutomationProperties.SetHelpText(del, "Deletes the stored blurred picture of " + DisplayName);
                 del.Click += (_, _) => deletePicture();
                 menu.Items.Add(del);
@@ -213,7 +222,7 @@ namespace UFOS.ai.Tiles
 
         private static MenuItem ModeItem(string header, TileMode mode, TileMode current, string? disabledReason, Action<TileMode> choose)
         {
-            var item = new MenuItem { Header = header, IsCheckable = false, IsChecked = mode == current && disabledReason == null };
+            var item = new MenuItem { Header = header, IsCheckable = false, IsChecked = mode == current && disabledReason == null, Template = ItemTemplate() };
             if (disabledReason != null)
             {
                 item.IsEnabled = false;
@@ -227,6 +236,61 @@ namespace UFOS.ai.Tiles
                 item.Click += (_, _) => choose(mode);
             }
             return item;
+        }
+
+        // ------------------------------------------------------------------ dark menu templates (design-system brushes)
+
+        private static ControlTemplate MenuTemplate()
+        {
+            var bd = new FrameworkElementFactory(typeof(Border));
+            bd.SetValue(Border.BackgroundProperty, TileBrushes.Get("ElevatedSurfaceBackgroundBrush"));
+            bd.SetValue(Border.BorderBrushProperty, TileBrushes.Get("ControlBorderBrush"));
+            bd.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+            bd.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+            bd.SetValue(Border.PaddingProperty, new Thickness(4));
+            bd.AppendChild(new FrameworkElementFactory(typeof(ItemsPresenter)));
+            return new ControlTemplate(typeof(ContextMenu)) { VisualTree = bd };
+        }
+
+        private static ControlTemplate ItemTemplate()
+        {
+            var bd = new FrameworkElementFactory(typeof(Border), "bd");
+            bd.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+            bd.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+            bd.SetValue(Border.PaddingProperty, new Thickness(8, 5, 14, 5));
+            var dock = new FrameworkElementFactory(typeof(DockPanel));
+            var check = new FrameworkElementFactory(typeof(TextBlock), "check");
+            check.SetValue(TextBlock.TextProperty, "✓");
+            check.SetValue(FrameworkElement.WidthProperty, 18.0);
+            check.SetValue(UIElement.VisibilityProperty, Visibility.Hidden);
+            check.SetValue(TextBlock.ForegroundProperty, TileBrushes.Get("AccentBlueBrush"));
+            dock.AppendChild(check);
+            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
+            cp.SetValue(ContentPresenter.ContentSourceProperty, "Header");
+            cp.SetValue(ContentPresenter.RecognizesAccessKeyProperty, true);
+            cp.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            dock.AppendChild(cp);
+            bd.AppendChild(dock);
+            var t = new ControlTemplate(typeof(MenuItem)) { VisualTree = bd };
+            var hl = new Trigger { Property = MenuItem.IsHighlightedProperty, Value = true };
+            hl.Setters.Add(new Setter(Border.BackgroundProperty, TileBrushes.Get("ControlBackgroundBrush"), "bd"));
+            t.Triggers.Add(hl);
+            var chk = new Trigger { Property = MenuItem.IsCheckedProperty, Value = true };
+            chk.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "check"));
+            t.Triggers.Add(chk);
+            var off = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
+            off.Setters.Add(new Setter(UIElement.OpacityProperty, 0.5, "bd"));
+            t.Triggers.Add(off);
+            return t;
+        }
+
+        private static ControlTemplate SeparatorTemplate()
+        {
+            var line = new FrameworkElementFactory(typeof(Border));
+            line.SetValue(FrameworkElement.HeightProperty, 1.0);
+            line.SetValue(FrameworkElement.MarginProperty, new Thickness(6, 4, 6, 4));
+            line.SetValue(Border.BackgroundProperty, TileBrushes.Get("ControlBorderBrush"));
+            return new ControlTemplate(typeof(Separator)) { VisualTree = line };
         }
 
         // ------------------------------------------------------------------ helpers

@@ -1,0 +1,4 @@
+# Direct dependencies of the Risk Lab (unpinned).
+# The hash-pinned lock (requirements.txt) is generated later on the user's PC.
+numpy
+scipy

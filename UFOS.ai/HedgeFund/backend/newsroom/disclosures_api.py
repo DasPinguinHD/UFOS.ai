@@ -22,6 +22,8 @@ from typing import Dict, List, Optional
 
 from strategy_platform.core import calendars
 
+from . import congress
+from . import disclosure_alerts
 from . import db as newsroom_db
 from . import disclosure_db as ddb
 from . import disclosure_returns as eng
@@ -31,6 +33,8 @@ from . import sector_map
 
 ROLE_PARAM = {"CEO": "CEO", "CFO": "CFO", "Director": "Director", "10pct": "10% owner", "Other": "Other"}
 GROUPS = ("direction", "plan", "role", "cluster")
+GROUPS_CONGRESS = ("direction", "chamber", "party", "late", "amount")
+AMOUNT_BUCKETS = ((15000, "≤ $15k"), (50000, "$15k–50k"), (250000, "$50k–250k"))
 TICKER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9.\-]{0,9}$")
 TRADE_ID_RE = re.compile(r"^insider:\d{10}-\d{2}-\d{6}:[PS]$")
 NOTES = ["Prices adjusted for splits and dividends (Alpaca IEX feed).",
@@ -176,7 +180,28 @@ def list_payload(q, today: date) -> dict:
             "rows": [compact(r, rets.get(r["id"], [])) for r in rows], "source": source_state()}
 
 
-def _group_key(group: str, r: dict) -> Optional[str]:
+def _amount_bucket(low) -> Optional[str]:
+    if low is None:
+        return None
+    for top, label in AMOUNT_BUCKETS:
+        if low <= top:
+            return label
+    return "> $250k"
+
+
+def _group_key(group: str, r: dict, source: str = "insider") -> Optional[str]:
+    if source == "congress":
+        if group == "direction":
+            return {"P": "Purchases", "S": "Sales"}.get(r["code"])
+        if group == "chamber":
+            return r.get("chamber")
+        if group == "party":
+            return r.get("party")
+        if group == "late":
+            return None if r.get("is_late") is None else ("late (> 45 days)" if r["is_late"] else "on time")
+        if group == "amount":
+            return _amount_bucket(r.get("amount_low"))
+        return None
     if r.get("form") != "4":
         return None
     if group == "direction":
@@ -191,13 +216,13 @@ def _group_key(group: str, r: dict) -> Optional[str]:
 
 
 def track_record_payload(q, today: date) -> dict:
-    source = _choice(q, "source", "insider", ("insider",))
+    source = _choice(q, "source", "insider", ("insider", "congress"))
     horizon = int(_choice(q, "horizon", "20", tuple(str(h) for h in eng.HORIZONS)))
     start = _choice(q, "start", "filing", eng.STARTS)
-    group = _choice(q, "group", "direction", GROUPS)
+    group = _choice(q, "group", "direction", GROUPS if source == "insider" else GROUPS_CONGRESS)
     days = _int(q, "days", 730, 1, 730)
     rows = ddb.returns_rows(source, start, horizon, (today - timedelta(days=days)).isoformat())
-    groups = {r["trade_id"]: k for r in rows if (k := _group_key(group, r))}
+    groups = {r["trade_id"]: k for r in rows if (k := _group_key(group, r, source))}
     return {"caveat": eng.TRACK_RECORD_CAVEAT, "source": source, "horizon": horizon, "start": start, "group": group,
             "days": days, "groups": eng.group_stats(rows, groups, horizon, start)}
 
@@ -209,23 +234,26 @@ def markers_payload(q) -> dict:
     first, last = _day(q, "from"), _day(q, "to")
     if first is None or last is None or first > last:
         raise BadRequest("from and to are required dates YYYY-MM-DD with from <= to")
-    kinds = _list(q, "kinds", ["insider"], ["insider"])
-    found, _total, _all = ddb.query_trades("insider", [("ticker = ?", ticker.upper()), ("form = ?", "4"),
-                                                      ("filing_date >= ?", (first - timedelta(days=1)).isoformat()),
-                                                      ("filing_date <= ?", (last + timedelta(days=1)).isoformat())],
-                                           limit=100_000)
+    kinds = _list(q, "kinds", ["insider"], ["insider", "congress"])
     merged: Dict[tuple, dict] = {}
-    for t in found:
-        accepted = svc._parse(t.get("accepted_at"))
-        day = calendars.ny_date(accepted) if accepted else date.fromisoformat(t["filing_date"])
-        if not first <= day <= last:
-            continue
-        side = "buy" if t["code"] == "P" else "sell"
-        m = merged.setdefault((day, side), {"date": day.isoformat(), "kind": "insider", "side": side, "count": 0,
-                                            "ids": [], "value_usd": 0.0})
-        m["count"] += 1
-        m["ids"].append(t["id"])
-        m["value_usd"] += t["value_usd"] or 0.0
+    for kind in kinds:
+        where = [("ticker = ?", ticker.upper()), ("code IN (?, ?)", ["P", "S"]),
+                 ("filing_date >= ?", (first - timedelta(days=1)).isoformat()),
+                 ("filing_date <= ?", (last + timedelta(days=1)).isoformat())]
+        if kind == "insider":
+            where.append(("form = ?", "4"))
+        found, _total, _all = ddb.query_trades(kind, where, limit=100_000)
+        for t in found:
+            accepted = svc._parse(t.get("accepted_at"))
+            day = calendars.ny_date(accepted) if accepted else date.fromisoformat(t["filing_date"])
+            if not first <= day <= last:
+                continue
+            side = "buy" if t["code"] == "P" else "sell"
+            m = merged.setdefault((day, kind, side), {"date": day.isoformat(), "kind": kind, "side": side,
+                                                      "count": 0, "ids": [], "value_usd": 0.0})
+            m["count"] += 1
+            m["ids"].append(t["id"])
+            m["value_usd"] += t["value_usd"] or 0.0
     return {"ticker": ticker.upper(), "kinds": kinds, "dated_by": "filing day",
             "markers": [merged[k] for k in sorted(merged)]}
 
@@ -261,6 +289,8 @@ def status_payload() -> dict:
         "storage": {"newsroom_db_bytes": _size(newsroom_db.db_path()),
                     "hedgefund_db_bytes": _size(platform_db.db_path())},
         "sec_interval_seconds": svc.LIMITER.interval(),
+        "congress": congress.status(),
+        "alerts": dict(disclosure_alerts.STATE),
     }
 
 

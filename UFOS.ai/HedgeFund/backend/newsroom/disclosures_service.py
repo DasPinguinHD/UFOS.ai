@@ -36,6 +36,9 @@ from .sec_limiter import LIMITER
 logger = logging.getLogger(__name__)
 
 JOB_DAILY = "returns:daily"
+JOB_DAILY_CONGRESS = "returns:daily:congress"
+JOB_TICKERS = "sec:company_tickers"
+COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 RUN_AT = time(17, 0)                    # New York, trading days
 RETENTION_DAYS = 730
 SEC_SECRET = "sec-edgar-user-agent"
@@ -83,8 +86,11 @@ def on_insider_event(event: dict) -> int:
         rows = dtr.insider_trades(eid[len("insider-"):], details, form=event.get("form") or "4",
                                   accepted_at=accepted, filing_date=filing_date, origin="live", url=event.get("url"))
         if rows:
+            known = ddb.existing_ids(r["id"] for r in rows)
             ddb.upsert_trades(rows)
             LIVE_STATE["rows_written"] += len(rows)
+            from . import disclosure_alerts                  # Monitoring alerts for NEW trades (never raises)
+            disclosure_alerts.on_new_trades([r for r in rows if r["id"] not in known])
             LIVE_STATE["last_at"] = _iso(_utc_now())
         return len(rows)
     except Exception as ex:  # noqa: BLE001 — recorded for the status endpoint
@@ -137,15 +143,59 @@ def refresh_sic(cik, fetch: Callable[[object], dict] = fetch_submissions) -> dic
 
 # --- daily job ----------------------------------------------------------------------------------------------------
 
+def company_tickers(now: Optional[datetime] = None, get: Callable[[str], bytes] = None) -> dict:
+    """{TICKER: cik} from SEC company_tickers.json, fetched at most once a day (cached in disclosure_jobs)."""
+    now = now or _utc_now()
+    job = ddb.job_get(JOB_TICKERS) or {}
+    p = job.get("progress") or {}
+    if p.get("fetched_on") == now.date().isoformat() and p.get("map"):
+        return p["map"]
+    body = (get or sec_get)(COMPANY_TICKERS_URL)
+    try:
+        doc = json.loads(body)
+    except ValueError as ex:
+        raise SecUnavailable(f"{COMPANY_TICKERS_URL}: invalid JSON") from ex
+    rows = doc.values() if isinstance(doc, dict) else doc
+    mapping = {str(r.get("ticker") or "").upper(): str(r.get("cik_str")) for r in rows
+               if isinstance(r, dict) and r.get("ticker") and r.get("cik_str")}
+    ddb.job_put(JOB_TICKERS, "done", {"fetched_on": now.date().isoformat(), "map": mapping})
+    return mapping
+
+
+def resolve_ciks(todo: list, mapping: dict) -> int:
+    """issuer_cik for congress trades from their ticker ('' = no SEC company, e.g. an ETF or fund)."""
+    found = {}
+    for t in todo:
+        if t["measurable"] and t.get("issuer_cik") is None and t.get("ticker"):
+            tk = t["ticker"].upper()
+            cik = mapping.get(tk) or mapping.get(tk.replace(".", "-")) or ""
+            t["issuer_cik"] = cik
+            found[t["id"]] = cik
+    return ddb.set_issuer_ciks(found) if found else 0
+
+
+def run_all(now: Optional[datetime] = None) -> dict:
+    """The daily job: insider returns, then congress returns (own job rows)."""
+    out = {"insider": run_daily(now)}
+    out["congress"] = run_daily(now, source="congress", job_key=JOB_DAILY_CONGRESS)
+    return out
+
+
 def run_daily(now: Optional[datetime] = None, prices=None, fetch: Callable[[object], dict] = fetch_submissions,
-              source: str = "insider") -> dict:
+              source: str = "insider", job_key: str = JOB_DAILY, tickers: Optional[Callable[[], dict]] = None) -> dict:
     from strategy_platform.core.errors import UserFacingError
     from strategy_platform.data import http_gate
     now = now or _utc_now()
     since = (now - timedelta(days=RETENTION_DAYS)).date().isoformat()
     started = _iso(_utc_now())
-    ddb.job_put(JOB_DAILY, "running", {"started": started})
+    ddb.job_put(job_key, "running", {"started": started})
     todo = ddb.trades_to_compute(source, since)
+    ticker_problem = None
+    if source == "congress":
+        try:
+            resolve_ciks(todo, (tickers or company_tickers)())
+        except (SecUnavailable, UserFacingError) as ex:
+            ticker_problem = getattr(ex, "user_message", None) or str(ex)
     ciks = sorted({t["issuer_cik"] for t in todo if t["measurable"] and t.get("issuer_cik")
                    and ddb.sic_stale(t["issuer_cik"], now)})
     sic_failed = {}
@@ -160,8 +210,12 @@ def run_daily(now: Optional[datetime] = None, prices=None, fetch: Callable[[obje
         for t in todo:
             etf = reason = None
             if t["measurable"]:
+                if source == "congress" and t.get("issuer_cik") is None:
+                    waiting += 1                             # ticker -> CIK not resolved yet -> next run
+                    continue
                 if not t.get("issuer_cik"):
-                    reason = "issuer CIK unknown"
+                    reason = ("issuer CIK unknown" if source == "insider"
+                              else f"no SEC company for ticker {t.get('ticker')} (ETF or fund?) — no sector ETF")
                 else:
                     row = ddb.sic_get(t["issuer_cik"])
                     if row is None:
@@ -176,13 +230,14 @@ def run_daily(now: Optional[datetime] = None, prices=None, fetch: Callable[[obje
     ids = dtr.cluster_ids(ddb.trades(source, since_date=since))
     clusters = ddb.set_clusters(source, ids)
     problems = [f"price: {e}" for e in errors[:ERROR_SAMPLES]] + \
-               [f"SIC {c}: {m}" for c, m in list(sic_failed.items())[:ERROR_SAMPLES]]
+               [f"SIC {c}: {m}" for c, m in list(sic_failed.items())[:ERROR_SAMPLES]] + \
+               ([f"tickers: {ticker_problem}"] if ticker_problem else [])
     progress = {"started": started, "finished": _iso(_utc_now()), "trades_checked": len(todo),
                 "computed": computed, "waiting_for_sic": waiting, "price_errors": len(errors),
                 "sic_fetched": len(ciks) - len(sic_failed), "sic_failed": len(sic_failed), "clusters": clusters,
                 "for_close": _iso(calendars.last_close_before(now))}
-    state = "done" if not errors and not sic_failed else "partial"
-    ddb.job_put(JOB_DAILY, state, progress, "; ".join(problems) or None)
+    state = "done" if not errors and not sic_failed and not ticker_problem else "partial"
+    ddb.job_put(job_key, state, progress, "; ".join(problems) or None)
     if problems:
         logger.warning("Disclosures daily job %s: %s", state, "; ".join(problems))
     return dict(progress, state=state)
@@ -226,7 +281,7 @@ async def run_forever(clock: Callable[[], datetime] = _utc_now) -> None:
         try:
             job = await asyncio.to_thread(ddb.job_get, JOB_DAILY)
             if due(now, job):
-                await asyncio.to_thread(run_daily)
+                await asyncio.to_thread(run_all)
                 continue
             wait = (next_slot(now) - now).total_seconds()
         except ddb.StoreUnavailable as ex:

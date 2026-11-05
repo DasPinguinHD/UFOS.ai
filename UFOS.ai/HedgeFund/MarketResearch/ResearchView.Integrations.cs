@@ -72,6 +72,10 @@ namespace UFOS.ai.HedgeFund.MarketResearch
         private sealed class TabMarkers
         {
             public bool On;
+            /// <summary>INSIDER toggle (INSIDER-RET): disclosure markers from GET /newsroom/disclosures/markers — off by default.</summary>
+            public bool Insider;
+            /// <summary>CONGRESS toggle (CONGRESS slice b): congress markers from the same route (kinds=…,congress) — off by default.</summary>
+            public bool Congress;
             public string? RunId;
         }
 
@@ -378,10 +382,15 @@ namespace UFOS.ai.HedgeFund.MarketResearch
             _chart.SetMarkers(null);
             var state = MarkersOf(tab);
             _syncingUi = true;
-            try { MarkersToggle.IsChecked = state.On; }
+            try
+            {
+                MarkersToggle.IsChecked = state.On;
+                InsiderMarkersToggle.IsChecked = state.Insider;
+                CongressMarkersToggle.IsChecked = state.Congress;
+            }
             finally { _syncingUi = false; }
             MarkersToggle.Content = state.RunId != null ? "MARKERS + BACKTEST" : "MARKERS";
-            if (!state.On)
+            if (!state.On && !state.Insider && !state.Congress)
             {
                 SetMarkersNote(null, null);
                 return;
@@ -394,7 +403,29 @@ namespace UFOS.ai.HedgeFund.MarketResearch
             if (_syncingUi || _active == null) return;
             var state = MarkersOf(_active);
             state.On = MarkersToggle.IsChecked == true;
-            if (!state.On)
+            RefreshMarkers(state);
+        }
+
+        private void InsiderMarkersToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_syncingUi || _active == null) return;
+            var state = MarkersOf(_active);
+            state.Insider = InsiderMarkersToggle.IsChecked == true;
+            RefreshMarkers(state);
+        }
+
+        private void CongressMarkersToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_syncingUi || _active == null) return;
+            var state = MarkersOf(_active);
+            state.Congress = CongressMarkersToggle.IsChecked == true;
+            RefreshMarkers(state);
+        }
+
+        private void RefreshMarkers(TabMarkers state)
+        {
+            if (_active == null) return;
+            if (!state.On && !state.Insider && !state.Congress)
             {
                 _markersGeneration++;
                 _chart.SetMarkers(null);
@@ -414,14 +445,21 @@ namespace UFOS.ai.HedgeFund.MarketResearch
             var labels = new List<string>();
             try
             {
-                var symbolTask = ResearchClient.GetMarkersAsync(tab.Symbol, from, to, "insider,calendar");
-                var runId = MarkersOf(tab).RunId;
-                var runTask = runId != null ? ResearchClient.GetBacktestMarkersAsync(runId, tab.Symbol) : null;
-                var symbolResult = await symbolTask;
+                var state = MarkersOf(tab);
+                // MARKERS: calendar (+ backtest); insider trades now come from the Disclosures store via the INSIDER toggle
+                var symbolTask = state.On ? ResearchClient.GetMarkersAsync(tab.Symbol, from, to, "calendar") : null;
+                var runId = state.RunId;
+                var runTask = state.On && runId != null ? ResearchClient.GetBacktestMarkersAsync(runId, tab.Symbol) : null;
+                var insiderFrom = _chart.OldestBarMs is long ob ? DateTimeOffset.FromUnixTimeMilliseconds(ob).UtcDateTime.Date : DateTime.UtcNow.Date.AddDays(-730);
+                var disclosureKinds = string.Join(",", new[] { state.Insider ? "insider" : null, state.Congress ? "congress" : null }.Where(k => k != null));
+                var insiderTask = disclosureKinds.Length > 0 ? DisclosuresClient.MarkersAsync(tab.Symbol, insiderFrom, DateTime.UtcNow.Date, disclosureKinds) : null;
+                var symbolResult = symbolTask != null ? await symbolTask : null;
                 var runResult = runTask != null ? await runTask : null;
+                var insiderResult = insiderTask != null ? await insiderTask : null;
                 if (_shutDown || generation != _markersGeneration || !ReferenceEquals(tab, _active)) return;
-                CollectMarkers(symbolResult, "Market markers", "m", inputs, labels, notes);
+                if (symbolResult != null) CollectMarkers(symbolResult, "Market markers", "m", inputs, labels, notes);
                 if (runResult != null) CollectMarkers(runResult, "Backtest " + runId, "b", inputs, labels, notes);
+                if (insiderResult != null) CollectDisclosureMarkers(insiderResult, inputs, labels, notes);
             }
             catch (Exception ex)
             {
@@ -460,6 +498,42 @@ namespace UFOS.ai.HedgeFund.MarketResearch
             if (v.Truncated == true) notes.Add(what + ": more markers exist than are shown.");
             foreach (var kv in v.Unavailable ?? new Dictionary<string, string>())
                 if (!string.IsNullOrWhiteSpace(kv.Value)) notes.Add(kv.Key + " unavailable: " + kv.Value);
+        }
+
+        /// <summary>
+        /// Disclosure markers (GET /newsroom/disclosures/markers, INSIDER_RET_API §7.4, CONGRESS_API §6): one marker per filing
+        /// day, kind and side with the count (kind "insider" or "congress" — the page draws congress in teal); placed at 00:00 New
+        /// York of the filing day like the other day markers. Congress amounts are ranges, so no $ total is shown for them.
+        /// </summary>
+        private static void CollectDisclosureMarkers(DisclosuresResult<DisclosureMarkersResponse> result, List<ChartMarkerInput> inputs,
+                                                     List<string> labels, List<string> notes)
+        {
+            if (!result.Ok)
+            {
+                notes.Add("Insider / congress markers unavailable: " + result.Problem + ".");
+                return;
+            }
+            TimeZoneInfo ny;
+            try { ny = TimeZoneInfo.FindSystemTimeZoneById("America/New_York"); }
+            catch (Exception ex) when (ex is TimeZoneNotFoundException || ex is InvalidTimeZoneException)
+            {
+                notes.Add("Insider / congress markers unavailable: the New York time zone is not known on this PC (" + ex.GetType().Name + ").");
+                return;
+            }
+            var i = 0;
+            foreach (var m in result.Value!.Markers ?? new List<DisclosureMarker>())
+            {
+                if (!DateTime.TryParseExact(m.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)) continue;
+                var utc = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(day, DateTimeKind.Unspecified), ny);
+                var t = ChartHost.ToIso(new DateTimeOffset(utc, TimeSpan.Zero).ToUnixTimeMilliseconds());
+                var side = m.Side == "sell" ? "sell" : "buy";
+                var congress = m.Kind == "congress";
+                var label = (congress ? "Congress " : "Insider ") + side + (m.Count > 1 ? " ×" + m.Count.ToString(CultureInfo.InvariantCulture) : "")
+                            + (congress ? "" : " · " + DisclosureUi.Money(m.ValueUsd)) + " (filed " + m.Date + ")";
+                inputs.Add(new ChartMarkerInput { Id = "d" + (i++).ToString(CultureInfo.InvariantCulture), T = t, Kind = congress ? "congress" : "insider", Side = side, Label = label });
+                if (labels.Count < 25) labels.Add(m.Date + " — " + label);
+            }
+            notes.Add("Insider / congress markers dated by the filing day (congress in teal).");
         }
 
         private void SetMarkersNote(string? text, List<string>? labels)

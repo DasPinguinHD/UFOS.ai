@@ -170,7 +170,8 @@ class Case(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def backfill(self, sec=None, prices=FakePrices, now=NOW):
-        bf = bfm.Backfill(fetch=sec or FakeSec(), prices_factory=prices, clock=lambda: now, sleep=lambda s: None)
+        bf = bfm.Backfill(fetch=sec or FakeSec(), prices_factory=prices, clock=lambda: now, sleep=lambda s: None,
+                          http=lambda url, etag=None: (200, None, b"[]"))     # no congress filers (CONGRESS c)
         return bf
 
     def run_to_end(self, bf, action="start"):

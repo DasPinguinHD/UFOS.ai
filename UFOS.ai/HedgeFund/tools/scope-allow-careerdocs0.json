@@ -1,0 +1,12 @@
+{
+  "label": "careerdocs0",
+  "approved": "lead, 2026-10-28 (user-approved overnight docs task after the career pivot to bank risk management): todo career-focus section, archive of done items, tasks README lines",
+  "files": [
+    "UFOS.ai/docs/todo.md",
+    "UFOS.ai/docs/todo-archive/2026-*.md",
+    "UFOS.ai/docs/tasks/README.md",
+    "UFOS.ai/HedgeFund/backend/strategy_platform/SPEC.md",
+    "UFOS.ai/HedgeFund/docs/CODEMAP.md"
+  ],
+  "note": "Docs only (Agent P). SPEC + CODEMAP are inside the module; listed for completeness. Exact-match edits, files re-read before writing."
+}

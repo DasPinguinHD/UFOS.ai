@@ -8,16 +8,45 @@ in `todo-archive/2026-10.md` section B. Open task / contract files for agents: `
 `HedgeFund/backend/strategy_platform/SPEC.md` (SP), `HedgeFund/backend/market_research/SPEC.md` (MR),
 `HedgeFund/backend/fund/SPEC.md` (old engine); file map `HedgeFund/docs/CODEMAP.md`; rules `CLAUDE.md`.
 
-Last updated: 2026-10-25 (TILES wired)
+Last updated: 2026-10-28 (career pivot — Risk Lab first)
+
+## 0. Career focus (2026-10-28) — the priority
+
+User decision 2026-10-28: the project now prepares a career in **bank risk management** (plan: Claude Project
+`claude/career-plan-bank-risk.md`). The **Risk Lab** — standalone Python package `UFOS.ai/RiskLab/`, independent of the
+HedgeFund backend — comes first; UFOS gets finishing work only. Rule: the user derives the formulas first, then they
+are coded together (no VaR / ES / test formulas implemented ahead of the derivation sheets).
+
+Risk Lab sprints, in order:
+1. [ ] **v0.1 skeleton** — package layout, conventions (L = loss, positive = loss; `alpha`; daily; seeded RNG), synthetic
+   generators with true parameters only, stubs for every sheet-1 formula (`UFOS.ai/docs/tasks/RISKLAB_V01_TASK.md`, H).
+2. [ ] **Sheet 1 with the user** — VaR / ES definitions, normal / t VaR and ES, square-root-of-time, Kupiec, Basel
+   traffic light, Christoffersen; then the code.
+3. [ ] **Estimators + backtests** — historical / parametric VaR and ES, coverage and independence tests.
+4. [ ] **GARCH / FHS / Monte Carlo + an ES backtest.**
+5. [ ] **Validation report** (model-validation style write-up).
+6. [ ] **Overfitting study of the gates** (the Strategy Platform's G1–G8 / holdout as a case study).
+7. [ ] **README / application package.**
+8. [ ] **IRRBB.**
+
+Open user items:
+- [ ] Decide the grey tile strip (MainWindow tiles).
+- [ ] Build + click-test the Disclosures section incl. the new Congress tab (Newsroom → Disclosures).
+- [ ] Commit — only when the user asks (agents never run git).
+- [ ] **Status unknown — ask the user:** did the Monday 2026-10-26 options RTH check run, and were the §17.9 migration and
+  the Council switch-over done? (items in §1 below).
+
+**Parked 2026-10-28** (kept, not deleted): LSA-SRC, Depth & Range, Options Structure OS2–OS5, stage 11 visual overhaul
+(the talk no longer waits for it). R4 / R5 stay scheduled after the Council switch-over.
 
 ## 1. Now — in this order
 
-- [ ] **Monday 2026-10-26 — Options Structure RTH run (user).** During US hours (14:30–21:00 Berlin):
+- [ ] **Monday 2026-10-26 — Options Structure RTH run (user; status unknown — ask).** During US hours (14:30–21:00 Berlin):
   `.\.venv\Scripts\python.exe tools\verify_alpaca_options.py` in `HedgeFund\backend`. Until then quote staleness
   (5 min) and coverage (80 %) stay PROVISIONAL (SP §21.10). Same day: the options archive's first slot (OI 08:30 New
   York = 13:30 Berlin) — check ⚙ Keys & data → Data sources or `tools\options_archive.py status` / `gaps`. The running
   archive picks up code changes only after a restart (next logon or Unregister… + Register…).
-- [ ] **Council switch-over sequence — waits until after Monday 2026-10-26's open** (user decision 2026-10-24). The old
+- [ ] **Council switch-over sequence (status unknown — ask) — waits until after Monday 2026-10-26's open** (user decision 2026-10-24). The old
   engine's 2 queued orders (SELL 5 QQQ, COVER 50 TLT) fill at the open → the old account is flat → the user runs the
   §17.9 migration to `paper-council` (Portfolio & Trading → Migration: dry run, then migrate) → then the switch-over
   (Council view → "Switch over…", SP §22.8). **Nothing is cancelled by hand.** Click-test 2026-10-24 21:00: the
@@ -42,16 +71,17 @@ Last updated: 2026-10-25 (TILES wired)
   parser check only. **Open (user): build + click-test** — each tile's ⋯ menu (Live / Last view / Illustration, Delete
   last view), Live figures with each backend on and off ("backend off — as of HH:MM" after it was on once), the two
   not-built tiles show the Illustration with "module not built yet", a Last view picture appears after a module window was
-  open and active ≥ 60 s (blurred, numbers unreadable), sandbox → SANDBOX chip and no picture.
-- [ ] **Newsroom Disclosures (INSIDER-RET)** — backend slices a–c DONE 2026-10-24 (H; SP §24,
-  `UFOS.ai/docs/tasks/INSIDER_RET_API.md`). Next: W's Disclosures UI (Insider tab, Track record, status line with
-  "Start backfill"; "⛶" via `FundUi.FullScreenButton`), then CONGRESS (`CONGRESS_TASK.md` / `CONGRESS_API.md`).
-- [ ] **LSA-SRC — LiveStream Agent: official sources instead of YouTube** (user decision 2026-10-25; H backend + W
+  open and active ≥ 60 s (blurred, numbers unreadable), sandbox → SANDBOX chip and no picture. The "⋯" menu now has
+  dark templates (W, 2026-10-28). Open decision: the grey tile strip (§0).
+- [ ] **Newsroom Disclosures** — INSIDER-RET + CONGRESS backends and the WPF section (Insider / Congress / Track record)
+  are built (SP §24, §24.2; done items in the archive). Open: user build + click-test (§0); the Congress watch-list UI
+  ("coming next"); "⛶" for Disclosures / Track record via `FundUi.FullScreenButton`.
+- [ ] **PARKED 2026-10-28 — LSA-SRC — LiveStream Agent: official sources instead of YouTube** (user decision 2026-10-25; H backend + W
   window; `UFOS.ai/docs/tasks/LSA_SOURCES_TASK.md`): allow-listed official streams with their terms (Fed / ECB /
   Treasury / BLS / BEA candidates — interview first), source picker instead of a free YouTube URL, remove yt-dlp;
   transcript gaps — measure (Deepgram start + duration), show (explicit gap markers + count), fix by cause; tests with
   fakes. Contract `LSA_SOURCES_API.md` first.
-- [ ] **R4 / R5 — remove the rest of `fund/`** (after the switch-over + click-test; not started): history export (SP
+- [ ] **R4 / R5 — remove the rest of `fund/`** (stays scheduled after the switch-over + click-test; not started): history export (SP
   §22.12) + golden parity fixture first, then rename to `*.stale` (engine files, shims, `/fund/kill` + `/fund/resume`
   aliases, the §17.9 migration — D12), then R5 delete with the user's permission. Also delete the S10-K `*.stale`
   files and, after the click-test, the 202 copies in `KEEP_UNTIL_CLICKTEST.txt`.
@@ -136,15 +166,15 @@ One `dotnet build`, then per item. Full step lists: `todo-archive/2026-10.md` se
 
 ## 4. Next stages (planned)
 
-- [ ] **Stage 11 — visual overhaul of all modules** (plan §11 in `claude/strategy-platform-plan.md`): shared styles →
+- [ ] **PARKED 2026-10-28 — Stage 11 — visual overhaul of all modules** (the talk no longer waits for it) (plan §11 in `claude/strategy-platform-plan.md`): shared styles →
   Hedge Fund Overview re-invented (attention / strategies / market / system; the Council is one strategy row) → other
   Hedge Fund views → Newsroom → Global Monitoring → LiveStream Agent → System Logs / Transaction Log. MainWindow stays.
   No animations unless needed, dark only, fixed colour meanings (red/green P&L, blue/orange regime, violet AI, amber
   warning); mockups approved per module; one scope label per module outside HedgeFund.
-- [ ] **Depth & Range revision** (`claude/depth-range-plan.md`): factor attribution, purged / embargoed CV +
+- [ ] **PARKED 2026-10-28 — Depth & Range revision** (`claude/depth-range-plan.md`): factor attribution, purged / embargoed CV +
   data-snooping test, realistic costs, engine calibration suite, second-source robustness gate, point-in-time XBRL;
   pre-registration, Brier calibration, red-team checks, decision journal, ruin probability.
-- [ ] **Options Structure OS2–OS5** (after stage 10 and Depth & Range; SP §21): OS2 computations (IV, greeks, GEX under
+- [ ] **PARKED 2026-10-28 — Options Structure OS2–OS5** (after stage 10 and Depth & Range; SP §21): OS2 computations (IV, greeks, GEX under
   2–3 dealer assumptions, flip, walls, skew, expected move, VIX term structure, VRP, expiration calendar), OS3 UI
   (Structure tab, overlays, market-state strip, rail regrouped Overview / Strategies / Trading / Research), OS4 daily
   features + regime service, OS5 intraday "light". First H1 / H2 evaluation after ≥ 120 archived sessions; stop

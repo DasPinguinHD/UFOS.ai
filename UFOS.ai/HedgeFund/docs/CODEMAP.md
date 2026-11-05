@@ -32,7 +32,7 @@ Status: 2026-10-24 (current state only; history lives in the SPEC archives). Rep
 | `UFOS.ai/Services/` | `IPortfolioInsightProvider.cs` (card provider → `/v2/insights/summary`), `PythonEnvManager.cs` (venv + health checks), OpenRouter (key from the Credential Manager) / news / quotes services | outside: scope label |
 | `UFOS.ai/AiBudgetsWindow.xaml(.cs)` | Central AI budget window (reads `/ai/budgets` of every backend) | outside |
 | `UFOS.ai/UFOS.ai.ModuleTiles/` | Public WPF project (net10.0-windows, WebView2 1.0.4191.47, refs UFOS.ai.Logging) referenced by the main app and the modules: `TileContracts.cs` (`IModuleTilePreview`: `ModuleId`, `DisplayName`, `Live` / `LastViewUnavailableReason`, `ReadLiveAsync`, `CreateIllustration`, `OwnsWindow`, `IsSandbox`; `TileMode`, `TileTone`, `TileFigure`, `TileDot`, `TileLiveData`, `TileLiveResult`), `TileStorage.cs` (`TileBrushes`, `TilePaths` `%LOCALAPPDATA%\UFOS.ai\tile-previews\{live,last-view}`, `TileLiveStore` schema 1, `TileLastViewStore` blurred PNG + metadata), `TileBlur.cs` (only place that creates `BlurredPng`), `TileCapture.cs` (`TileCaptureService`: every 60 s of each visible + active module window, one more at Closing if ready in 300 ms, WebView2 via `CapturePreviewAsync`, never sandbox data), `LoopbackReader.cs` (GET only to 127.0.0.1; `/health` 800 ms decides running; token, ≤ 3 s, ≤ 256 KB), `TileArt.cs` (160 × 90 motifs) | outside: scope label tiles0 |
-| `UFOS.ai/Tiles/` | Main app tile wiring (compiled in since 2026-10-25; started by `MainWindow.StartTilePreviews` in `Window_Loaded`): `ModuleTileHost.cs` (one preview per tile, "⋯" menu, Live refresh 30 s paused while minimised / hidden, starts the capture service), `TilePreviewView.cs`, `TileModeSettings.cs` (`tile_modes` in app-settings.json), `MainAppTilePreviews.cs` (Transaction Log, System Logs, not-built modules); module providers `HedgeFund/Tiles/HedgeFundTilePreview.cs` (`GET /v2/portfolio/summary`) + `HedgeFund/Tiles/HedgeFundTileSummary.cs` (WPF-free payload → figures mapping), `Global Monitoring/Tiles/GlobalMonitoringTilePreview.cs` (`GET /events/summary?hours=24`), `LiveStreamAgent/Tiles/LiveStreamAgentTilePreview.cs` (`GET /verdicts?limit=1`); `Shared/MainAppSettings.cs` accepts the `tile_modes` key | outside: scope label tiles0 |
+| `UFOS.ai/Tiles/` | Main app tile wiring (compiled in since 2026-10-25; started by `MainWindow.StartTilePreviews` in `Window_Loaded`): `ModuleTileHost.cs` (one preview per tile, "⋯" menu, Live refresh 30 s paused while minimised / hidden, starts the capture service), `TilePreviewView.cs` (renders + the "⋯" menu with dark design-system templates), `TileModeSettings.cs` (`tile_modes` in app-settings.json), `MainAppTilePreviews.cs` (Transaction Log, System Logs, not-built modules); module providers `HedgeFund/Tiles/HedgeFundTilePreview.cs` (`GET /v2/portfolio/summary`) + `HedgeFund/Tiles/HedgeFundTileSummary.cs` (WPF-free payload → figures mapping), `Global Monitoring/Tiles/GlobalMonitoringTilePreview.cs` (`GET /events/summary?hours=24`), `LiveStreamAgent/Tiles/LiveStreamAgentTilePreview.cs` (`GET /verdicts?limit=1`); `Shared/MainAppSettings.cs` accepts the `tile_modes` key | outside: scope label tiles0 |
 | `UFOS.ai/Global Monitoring/`, `UFOS.ai/LiveStreamAgent/` | Other modules (own WPF + `backend/`, own `ai_caps.py` copy). GM backend `events_summary.py` (`parse_hours` / `summarize` for the read-only tile route `GET /events/summary?hours=1..168`, no I/O; test `tests/test_events_summary.py`) | outside |
 | `UFOS.ai/docs/` | `todo.md` (the ONE todo; open items only), `todo-archive/<yyyy-mm>.md` (done items), `tasks/` (open task / contract files for agents), `ai-budgets-spec.md` | |
 | `docs/` (repo root, git-ignored) | `market-research-plan.md`, `global-monitoring-system-plan.md` (the old root `todo.md` copy is retired — moved to `HedgeFund/backend/data/docsslim0-backup/root-docs-todo.md.stale`; the pre-slim `UFOS.ai/docs/todo.md` is `docsslim0-backup/UFOS.ai-docs-todo.md.pre-docs-slim.stale`) | |
@@ -152,7 +152,7 @@ Views and dialogs:
 | `ResearchView.Indicators.cs` | 620 | MR5 | Indicators + chart settings |
 | `ResearchView.News.cs` | 1110 | MR6 | News card, thumbnails, logos |
 | `ResearchView.Alerts.cs` | 730 | MR7 | Alert editor + list |
-| `ResearchView.Integrations.cs` | 565 | MR8 | Buy / Sell hand-over to the Trading order dialog (`/v2/oms/orders`), Portfolio / Macro views |
+| `ResearchView.Integrations.cs` | 565 | MR8 | Buy / Sell hand-over to the Trading order dialog (`/v2/oms/orders`), Portfolio / Macro views; toggles INSIDER / CONGRESS (disclosure markers, off by default; MARKERS = calendar only) |
 | `ResearchPopoutWindow.xaml(.cs)` | 155 | MR1 | Pop-out window hosting the single ResearchView |
 | `ResearchAlertNotifier.cs` | 94 | MR7 | App-wide alert toasts |
 | `RangeBar.cs` | 61 | MR4 | Low–high range bar |
@@ -164,7 +164,10 @@ Views and dialogs:
 |---|---|
 | `NewsroomBackend.cs` | Starts / checks / stops the Python backend (`run_hedgefund_backend.ps1`, port 8867), `/health` status-code check, stale-backend replace |
 | `FinancialNewsroomWindow.xaml(.cs)`, `NewsroomSections.cs` | Window + section registry |
-| `InsiderTradesView`, `MacroIndicatorsView`, `EconomicCalendarView`, `AnalysisReasoningView` (`.xaml(.cs)`) | `/newsroom/insider`, `/macro`, `/calendar`, `/overview` + `/analysis` |
+| `InsiderTradesView`, `MacroIndicatorsView`, `EconomicCalendarView`, `AnalysisReasoningView` (`.xaml(.cs)`) | Insider tab of Disclosures (`/newsroom/disclosures/insider` + the live 5-day `/newsroom/insider` for the AI summary / clusters banner), `/macro`, `/calendar`, `/overview` + `/analysis` |
+| `DisclosuresView.cs` | Section "Disclosures" (replaces "Insider Trades"): status line + details, backfill Start / Pause / Resume, tabs Insider / Congress / Track record (`TrackRecordPanel`) — SP §24.2 |
+| `CongressTradesView.cs` | Congress tab: source terms + freshness line, filters (period, side, chamber, party, late, ticker, measurable, member), compact teal rows + LATE badge |
+| `DisclosuresClient.cs`, `DisclosureUi.cs` | HTTP client + DTOs for `/newsroom/disclosures/*` (incl. congress list / detail / status block); shared chip (`ChipText`), formatting, segmented filter, badges, links, row toggle (insider gold, congress teal) |
 
 ## 3. Backend (Python, `backend/`, aiohttp, Python 3.10 VM / 3.14 Windows venv)
 
@@ -318,6 +321,8 @@ Subpackages:
 | `sector_map.py`, `sector_etf_map.json` | SIC → sector ETF (one editable file with source / date) |
 | `sec_limiter.py` | One fair-access limiter for every sec.gov request (collector, daily job, backfill) |
 | `disclosures_service.py`, `disclosures_api.py`, `disclosures_backfill.py` | Live hook + SEC fetch + daily job; `/newsroom/disclosures/*` routes; the user-started 2-year backfill (steps, pause / resume, status) — SP §24 |
+| `congress.py`, `congress_api.py` | Congress trades (kadoa JSON at runtime only): 6-hourly conditional pull, mapping, staleness; `/newsroom/disclosures/congress*`, members, watch list — SP §24.1 |
+| `disclosure_alerts.py` | Disclosures watchlist alerts (watched member, held ticker) → Monitoring only, no toast — SP §24.1 |
 
 ### 3.6 `tools/` (backend) and `HedgeFund/tools/`
 
@@ -330,6 +335,7 @@ Subpackages:
 | `HedgeFund/tools/scope_guard.py` | Scope guard (`snapshot` / `check` / `amend` / `close`) |
 | `HedgeFund/tools/check_repo_data.py`, `repo-data-allow.json` | Licence / privacy check of everything that would be committed (SP §0; run before every commit; test `tests/test_licence_data.py`) |
 | `HedgeFund/tools/export_council_parity_bars.py` | Re-exports the git-ignored real-data parity file from a COPY of hedgefund.db (SP §22.10) |
+| `HedgeFund/tools/check_cs_ambiguity.py` | Static check: CS0104-style ambiguous type names across imported namespaces (test `tests/test_s10_cs_ambiguity.py`; run with the other static checks before every report, SP §25.3) |
 | `HedgeFund/tools/check_shared_cs_members.py` | Static check: duplicate member / type names in `UFOS.ai/Shared/*.cs` (linked into 4 assemblies; test `tests/test_s10_shared_cs.py`) |
 | `HedgeFund/tools/check_no_env_cs.py` | Guard: no C#/XAML code reads `.env` or a secret env var (test `tests/test_s10_env_cs_guard.py`) |
 | `backend/tools/make_lockfile.py` | Writes `requirements.lock` / `requirements-broker.lock` (`==` pins + sha256); `--update` refreshes (the user runs it — no PyPI from the agent machines) |
@@ -340,7 +346,7 @@ Subpackages:
 |---|---|---|
 | `hedgefund.db` | `strategy_platform/storage/db.py` | `meta`, `audit`, `data_sources`, `bars`, `ext_observations`, `corporate_actions`, `seam_checks`, `volumes`; `strategies`, `strategy_versions`, `strategy_transitions`, `strategy_families`, `strategy_logic`; `backtest_runs`, `run_checkpoints`, `run_explanations`, `holdout_events`, `validation_exceptions`; `studio_*`, `memory_facts`, `papers`, `paper_*`, `committee_*`, `loop_*`; `pf_accounts`, `pf_settings`, `pf_allocations`, `pf_migrations`, `pa_*` (paper books), `oms_orders`, `oms_order_events`, `sl_entries`, `sl_snapshots`, `rt_decisions`, `rt_executions`, `incubation_runs`, `incubation_events`; `cl_*` (Council); `br_*` (brokers, routes, reconciliations, live guard); `mon_*` (decay checks / events, alerts, acks, reports, commentaries); `sh_*` (Shadow Account) |
 | `market_research.db` | `market_research/store.py` | `assets`, `bars_1m`, `bars_1m_days`, `watchlists`, `watchlist_items`, `session`, `recent_symbols`, `drawings`, `drawing_rescales`, `chart_settings`, `news`, `news_symbols`, `news_images`, `logos`, `alerts`, `alert_log` |
-| `newsroom.db` | `newsroom/db.py` (+ `fund/store.py`) | `insider_filings`, `macro_observations`, `calendar_snapshot`, `ai_results`, `disclosure_trades`, `disclosure_returns`, `issuer_sic`, `disclosure_jobs` (v4, 2-year retention); old engine: `prices`, `signals`, `orders`, `positions`, `equity_curve`, `fund_*` |
+| `newsroom.db` | `newsroom/db.py` (+ `fund/store.py`) | `insider_filings`, `macro_observations`, `calendar_snapshot`, `ai_results`, `disclosure_trades`, `disclosure_returns`, `issuer_sic`, `disclosure_jobs` (v4, 2-year retention), `disclosure_watch` (v5); old engine: `prices`, `signals`, `orders`, `positions`, `equity_curve`, `fund_*` |
 | `options_archive.db` | `strategy_platform/options_archive/db.py` (archive process only; backend opens it read-only) | `os_schema`, `os_configs`, `os_runs`, `os_contracts`, `os_contract_sightings`, `os_open_interest`, `os_chain_snapshots`, `os_bars`, `os_fred`, `os_gaps` |
 | `os_archive_status.json`, `options_archive.lock`, `options_archive.stop`, `options_archive_config.json`, `logs/options_archive.log` | `options_archive/service.py`, `config.py` | archive status / heartbeat, single-instance lock, stop request, config override, archive log |
 | `api-token` | `api_auth.py` | session token (rewritten every start) |
@@ -558,10 +564,12 @@ Location: `backend/tests/` (unittest, no network, fakes; testkits `*_testkit.py`
 | `test_s10_council_parity` (+ `council_parity_testkit.py`) | SP §22.10 parity gate: old engine vs Council in lockstep from the real §17.9 migration (`UFOS_PARITY_SESSIONS`, default 2; 60 = the full window, run separately), D7, schedule equivalence |
 | `test_s10_council_parity_scenarios` (+ `council_parity_synth_bars.py`; optional local `data/local_fixtures/council_parity_real_bars.json`) | SP §22.10 scenarios (judge unavailable, model modes, short / sizing rules, reversals, gates, drawdown, data outages, budget day, restarts), the no-wall-clock check (`WallClockSpy`), the frozen real-data fixture |
 | `test_s10_council_switchover` | Switch-over: preconditions, the switch-over transaction, kill / resume / 410 after the switch-over, heartbeat setting, AI budget, pending recovery, revert; review fixes (two-thread double import, pending + retry / abort, recovery failure, minors) |
+| `test_s10_cs_ambiguity` | C# ambiguity check (SP §25.3) |
 | `test_s10_hardening`, `test_s10_security`, `test_sp_broker_retired`, `test_s10_env_cs_guard`, `test_s10_env`, `test_s10_lockfile` | venv guard, calendar 2028–2030, races, notices parity; security; Kraken retirement guard; C# `.env` guard, python env guard + settings, lock files |
 | `test_os_*` | OS0 (options check, preregistration), OS1 archive (`test_os_archive_*`, testkit `os_archive_testkit.py`) |
 | `test_ai_budgets`, `test_usage`, `test_cost_ledger` | AI budgets / ledger |
 | `test_disclosures_engine`, `test_disclosures_live`, `test_disclosures_backfill` | Newsroom Disclosures (SP §24) |
+| `test_congress`, `test_congress_returns`, `test_congress_backfill` | Congress trades (SP §24.1; synthetic rows only) |
 | `test_licence_data`, `test_tiles_static` | repo data check; tile static checks (blur privacy, GET-only providers, no guessed HF summary fields) |
 | `test_api_auth`, `test_scope_guard`, `test_storage`, `test_store`, `test_calendar`, `test_insider`, `test_macro`, `test_overview` | infra, newsroom |
 | `MarketResearch/Chart/tests/run_tests.js` | chart page (node) |
