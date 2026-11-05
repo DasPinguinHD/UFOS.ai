@@ -193,11 +193,11 @@ class ApiTest(DbCase):
         with self.assertRaises(api.BadRequest):
             api.markers_payload({"ticker": "ACME", "from": "2026-10-31", "to": "2026-10-01"})
         with self.assertRaises(api.BadRequest):
-            api.markers_payload({"ticker": "ACME", "from": "2026-10-01", "to": "2026-10-31", "kinds": "congress"})
+            api.markers_payload({"ticker": "ACME", "from": "2026-10-01", "to": "2026-10-31", "kinds": "moon"})       # congress is a valid kind since CONGRESS (b)
         st = api.status_payload()
         self.assertEqual(st["backfill"]["state"], "not_started")
         self.assertEqual([s["key"] for s in st["backfill"]["steps"]],
-                         ["datasets", "pilot", "acceptance", "gap", "prices"])
+                         ["datasets", "pilot", "acceptance", "gap", "congress", "prices"])
         self.assertEqual(st["counts"]["trades"], 2)
         self.assertGreater(st["storage"]["newsroom_db_bytes"], 0)
         self.assertIn("hedgefund_db_bytes", st["storage"])

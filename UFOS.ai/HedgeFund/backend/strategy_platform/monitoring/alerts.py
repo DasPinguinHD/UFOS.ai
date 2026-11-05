@@ -43,6 +43,9 @@ KINDS = {
                                   "label": "Council of AIs — switch-over did not finish"},
     "council_legacy_duplicates": {"severity": "critical", "toast": True,          # v26 index not possible
                                   "label": "Council of AIs — duplicate imported history"},
+    # Disclosures watchlist (CONGRESS, user 2026-10-24): Monitoring → Alerts only, NO toast
+    "disclosure_watched_member": {"severity": "info", "toast": False, "label": "Disclosures — watched member filed"},
+    "disclosure_held_ticker": {"severity": "info", "toast": False, "label": "Disclosures — held ticker in a new filing"},
 }
 CURSOR_KEY = "mon.alerts.audit_cursor"
 BROKER_DOWN_MINUTES = 10           # default — user confirm

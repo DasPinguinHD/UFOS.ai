@@ -1017,7 +1017,8 @@ async function runMarkers(browser, base) {
     mk({ id: 'best', t: daily[300].t, tEnd: daily[340].t, kind: 'period_best', side: null, label: 'Best period +18%' }),
     mk({ id: 'dd-open', t: daily[480].t, tEnd: null, kind: 'drawdown', side: null, label: 'Drawdown not recovered' }),
     mk({ id: 'clip', t: daily[0].t - 30 * D, tEnd: daily[5].t, kind: 'period_worst', side: null, label: 'Worst period' }),
-    mk({ id: 'short', t: daily[400].t, kind: 'fill', side: 'short', label: 'Backtest short entry' })
+    mk({ id: 'short', t: daily[400].t, kind: 'fill', side: 'short', label: 'Backtest short entry' }),
+    mk({ id: 'congress', t: daily[410].t, kind: 'congress', side: 'sell', label: 'Congress sell ×2 (filed 2026-10-01)' })
   ];
   await clear();
   await post({ type: 'setMarkers', v: 1, markers: ms });
@@ -1025,6 +1026,7 @@ async function runMarkers(browser, base) {
   const spans = Object.fromEntries((await dbg('markers')).map(m => [m.id, m.span]));
   check('MR8 markers accepted (no error)', !(await errs()).length, JSON.stringify(await errs()));
   check('MR8 point inside a bar snaps to that bar', JSON.stringify(spans['in-bar']) === '[400,400]', JSON.stringify(spans['in-bar']));
+  check('CONGRESS (slice b): kind "congress" is accepted and drawn as a point marker', JSON.stringify(spans.congress) === '[410,410]', JSON.stringify(spans.congress));
   check('MR8 point between bars (weekend) -> first bar after it', JSON.stringify(spans.weekend) === JSON.stringify([iSat, iSat]), JSON.stringify(spans.weekend) + ' vs ' + iSat);
   check('MR8 outside the loaded range -> not drawn', spans.before === null && spans.after === null, JSON.stringify([spans.before, spans.after]));
   check('MR8 range: bar of t .. bar of tEnd; open drawdown to the last bar; clipped at the first bar',

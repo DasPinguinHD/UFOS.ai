@@ -1,0 +1,32 @@
+{
+  "label": "risklab0",
+  "approved": "lead, 2026-10-28 (overnight task, user-approved): Risk Lab v0.1 skeleton per UFOS.ai/docs/tasks/RISKLAB_V01_TASK.md (Agent H)",
+  "files": [
+    "UFOS.ai/RiskLab/pyproject.toml",
+    "UFOS.ai/RiskLab/requirements.in",
+    "UFOS.ai/RiskLab/README.md",
+    "UFOS.ai/RiskLab/.gitignore",
+    "UFOS.ai/RiskLab/ci/risklab-tests.yml",
+    "UFOS.ai/RiskLab/src/risklab/__init__.py",
+    "UFOS.ai/RiskLab/src/risklab/conventions.py",
+    "UFOS.ai/RiskLab/src/risklab/engine.py",
+    "UFOS.ai/RiskLab/src/risklab/data/__init__.py",
+    "UFOS.ai/RiskLab/src/risklab/data/synthetic.py",
+    "UFOS.ai/RiskLab/src/risklab/models/__init__.py",
+    "UFOS.ai/RiskLab/src/risklab/models/base.py",
+    "UFOS.ai/RiskLab/src/risklab/models/historical.py",
+    "UFOS.ai/RiskLab/src/risklab/models/parametric.py",
+    "UFOS.ai/RiskLab/src/risklab/backtest/__init__.py",
+    "UFOS.ai/RiskLab/src/risklab/backtest/base.py",
+    "UFOS.ai/RiskLab/src/risklab/report/__init__.py",
+    "UFOS.ai/RiskLab/src/risklab/report/export.py",
+    "UFOS.ai/RiskLab/tests/__init__.py",
+    "UFOS.ai/RiskLab/tests/test_synthetic.py",
+    "UFOS.ai/RiskLab/tests/test_engine.py",
+    "UFOS.ai/RiskLab/tests/test_stubs.py",
+    "UFOS.ai/RiskLab/tests/test_export.py",
+    "UFOS.ai/docs/tasks/RISKLAB_V01_TASK.md",
+    "UFOS.ai/docs/tasks/README.md"
+  ],
+  "note": "Task allow-list = UFOS.ai/RiskLab/** + the task file + docs/tasks/README.md. The guard has no recursive wildcard, so every RiskLab file is listed exactly. No real data; derive-first: VaR/ES/backtest formulas are stubs."
+}

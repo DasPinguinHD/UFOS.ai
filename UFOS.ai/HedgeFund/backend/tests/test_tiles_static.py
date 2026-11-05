@@ -5,7 +5,7 @@
 - Live never starts a backend and never makes a paid / AI / mutating call: the tile providers and the loopback reader use
   GET only, no OpenRouter, no process start, no backend host.
 - Storage only under %LOCALAPPDATA%\\UFOS.ai\\tile-previews.
-Files are checked as *.cs or, before they are wired into the build, as *.cs.staged."""
+Files are checked as *.cs (wired 2026-10-25) or, in an older checkout, as *.cs.staged."""
 import os
 import re
 import unittest
@@ -35,6 +35,7 @@ PROVIDERS = [
     ("HedgeFund", "Tiles", "HedgeFundTilePreview.cs"),
     ("Global Monitoring", "Tiles", "GlobalMonitoringTilePreview.cs"),
     ("LiveStreamAgent", "Tiles", "LiveStreamAgentTilePreview.cs"),
+    ("HedgeFund", "Tiles", "HedgeFundTileSummary.cs"),
     ("Tiles", "MainAppTilePreviews.cs"),
 ]
 
@@ -80,12 +81,59 @@ class TileLiveReadOnlyTest(unittest.TestCase):
                 self.assertNotRegex(src, r"HttpClient|HttpMethod\.|PostAsync|PutAsync|SendAsync")
                 self.assertNotRegex(src, r"Process\.Start|BackendHost|EnsureBackend|StartBackend|OpenRouter|LlmClient")
 
-    def test_hedgefund_does_not_guess_summary_fields(self):
-        # lead 2026-10-24: GET /v2/portfolio/summary is not built yet — visible "not available", no guessed fields
+    def test_hedgefund_reads_only_the_summary_route(self):
+        # wired 2026-10-25: the tile reads GET /v2/portfolio/summary (SP §17.15, stored values only) and nothing else
         src = _strip_comments(_read("HedgeFund", "Tiles", "HedgeFundTilePreview.cs"))
-        self.assertNotIn("GetJsonAsync", src)
-        self.assertIn("TileLiveResult.Unavailable(SummaryNotBuilt", src)
+        self.assertEqual(re.findall(r'GetJsonAsync\("([^"]*)"', src), ["/v2/portfolio/summary"])
+        self.assertNotIn("SummaryNotBuilt", src)
 
+
+class MainAppSettingsTileModesTest(unittest.TestCase):
+    def test_tile_modes_key_accepted_by_the_strict_loader(self):
+        # the "⋯" menu writes tile_modes into app-settings.json; the strict OpenRouter loader must not reject it
+        src = _strip_comments(_read("Shared", "MainAppSettings.cs"))
+        self.assertIn('TileModesKey = "tile_modes"', src)
+        self.assertIn("if (name == TileModesKey) continue;", src)
+        tm = _strip_comments(_read("Tiles", "TileModeSettings.cs"))
+        self.assertIn('Key = "tile_modes"', tm)
+
+
+class HedgeFundSummaryContractTest(unittest.TestCase):
+    """Every field the C# tile parser reads exists in the real route payload (contract drift guard, temp DB)."""
+
+    def test_parser_fields_exist_in_payload(self):
+        try:
+            from tests.test_sp_portfolio_summary import SummaryTest, call
+        except ImportError:  # pragma: no cover
+            from test_sp_portfolio_summary import SummaryTest, call
+        src = _strip_comments(_read("HedgeFund", "Tiles", "HedgeFundTileSummary.cs"))
+        wanted = set(re.findall(r'(?:GetProperty|TryGetProperty)\("([a-z_]+)"', src))
+        self.assertTrue(wanted)
+        keys = set()
+
+        class Probe(SummaryTest):
+            def runTest(inner):
+                from datetime import timedelta
+                now = inner.clock()
+                inner._point(now - timedelta(days=1), 100000.0)
+                inner._point(now - timedelta(minutes=5), 100500.0)
+                _st, payload = call()
+
+                def walk(x):
+                    if isinstance(x, dict):
+                        keys.update(x)
+                        for v in x.values():
+                            walk(v)
+                    elif isinstance(x, list):
+                        for v in x:
+                            walk(v)
+                walk(payload)
+
+        result = unittest.TestResult()
+        Probe().run(result)
+        self.assertEqual(result.errors + result.failures, [])
+        keys.add("mode")                      # stamped by routes for MODE_PATHS (sandbox profile)
+        self.assertEqual(sorted(wanted - keys), [])
 
 if __name__ == "__main__":
     unittest.main()

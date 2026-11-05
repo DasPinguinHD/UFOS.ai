@@ -287,12 +287,20 @@ MIGRATIONS = [
                key TEXT PRIMARY KEY, state TEXT NOT NULL, progress_json TEXT, last_error TEXT,
                updated_at TEXT NOT NULL)""",
     ]),
+    # v5 (2026-10-25, CONGRESS): the congress row comment and the watch list (watched members) of the Disclosures alerts.
+    (5, [
+        _add_columns("disclosure_trades", [("comment", "TEXT")]),
+        """CREATE TABLE IF NOT EXISTS disclosure_watch (
+               kind TEXT NOT NULL,                  -- 'member' (congress filer id)
+               key TEXT NOT NULL, added_at TEXT NOT NULL,
+               PRIMARY KEY (kind, key))""",
+    ]),
 ]
 TABLES = ("insider_filings", "macro_observations", "calendar_snapshot", "ai_results", "meta",
           "prices", "signals", "orders", "positions", "equity_curve",
           "fund_params", "fund_runs", "fund_agent_scores", "fund_recommendations", "fund_events",
           "fund_audit", "fund_cash_ledger", "fund_backtests",
-          "disclosure_trades", "disclosure_returns", "issuer_sic", "disclosure_jobs")
+          "disclosure_trades", "disclosure_returns", "issuer_sic", "disclosure_jobs", "disclosure_watch")
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 _path = None

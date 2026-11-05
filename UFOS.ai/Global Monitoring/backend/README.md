@@ -77,6 +77,10 @@ python main.py
 8. `GET /events?category=<category>` — the general `/events` route with an
    optional filter. (Until 2026-09-24 it also fed the native Insider Trades
    popup, which moved to the Hedge Fund module.)
+9. `GET /events/summary?hours=24` — the main window's module tile: events of the last N hours
+   per category plus the feed status. A pure read (no collector wake-up, unlike `/events`),
+   token-protected; `hours` must be 1-168 (400 otherwise). Contract:
+   `UFOS.ai/docs/tasks/GM_SUMMARY_API.md`.
 
 To keep the map itself readable with many simultaneous markers,
 `events.py`'s `EventStore` caps how many markers per category it keeps at

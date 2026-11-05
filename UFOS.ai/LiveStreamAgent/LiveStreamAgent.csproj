@@ -10,6 +10,7 @@
 
   <ItemGroup>
 	<ProjectReference Include="..\UFOS.ai.Logging\UFOS.ai.Logging.csproj" />
+	<ProjectReference Include="..\UFOS.ai.ModuleTiles\UFOS.ai.ModuleTiles.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,0 +1,18 @@
+{
+  "label": "risklab1",
+  "approved": "lead, 2026-10-28 (review findings 1-7 on RiskLab v0.1, user-approved overnight work) (Agent H)",
+  "files": [
+    "UFOS.ai/RiskLab/README.md",
+    "UFOS.ai/RiskLab/tests/__init__.py",
+    "UFOS.ai/RiskLab/src/risklab/conventions.py",
+    "UFOS.ai/RiskLab/src/risklab/data/synthetic.py",
+    "UFOS.ai/RiskLab/src/risklab/report/export.py",
+    "UFOS.ai/RiskLab/src/risklab/engine.py",
+    "UFOS.ai/RiskLab/src/risklab/backtest/base.py",
+    "UFOS.ai/RiskLab/tests/test_synthetic.py",
+    "UFOS.ai/RiskLab/tests/test_export.py",
+    "UFOS.ai/RiskLab/tests/test_engine.py",
+    "UFOS.ai/RiskLab/tests/test_stubs.py"
+  ],
+  "note": "Minor review fixes: test path shim, numpy-version wording + meta, required seeds, anchored out dir, full-precision export + collision-free alpha keys, read-only frame arrays, GARCH-t variance test, backtest stub docstrings, README open points. No formulas (derive-first). Backups: HedgeFund/backend/data/risklab1-backup/. Amendment 1 (Agent H, same review item 1): tests/test_stubs.py also needs the path shim."
+}

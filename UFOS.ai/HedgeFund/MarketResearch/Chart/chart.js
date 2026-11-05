@@ -347,7 +347,7 @@
     id: [true, function (x) { return (typeof x === 'string' && x.length >= 1 && x.length <= 40 && !CTRL_NAME.test(x)) ? null : 'id must be 1-40 plain characters'; }],
     t: [true, cEpoch],
     tEnd: [true, cNullable(cEpoch)],
-    kind: [true, cEnum({ insider: 1, fomc: 1, release: 1, fill: 1, period_best: 1, period_worst: 1, drawdown: 1 })],
+    kind: [true, cEnum({ insider: 1, congress: 1, fomc: 1, release: 1, fill: 1, period_best: 1, period_worst: 1, drawdown: 1 })],
     side: [true, cNullable(cEnum({ buy: 1, sell: 1, 'short': 1, cover: 1 }))],
     label: [true, function (x) {
       if (typeof x !== 'string' || x.length > LIMITS.maxMarkerLabel) return 'label must be a string of <= 200 chars';
@@ -2021,7 +2021,7 @@
       if (b < a) b = a;
       return [a, b];
     },
-    isPoint: function (m) { return m.kind === 'insider' || m.kind === 'fill' || m.kind === 'fomc' || m.kind === 'release'; },
+    isPoint: function (m) { return m.kind === 'insider' || m.kind === 'congress' || m.kind === 'fill' || m.kind === 'fomc' || m.kind === 'release'; },
     isBand: function (m) { return !this.isPoint(m) || m.tEnd !== null; },
     glyph: function (m) {
       if (m.kind === 'fomc') return 'FOMC';
@@ -2058,6 +2058,7 @@
       }
     };
   }
+  var CONGRESS_MARKER_COLOR = '#6FB7C9';   // = DisclosureUi.CongressBrush (Financial Newsroom → Disclosures)
   function markerPointsIndicator() {
     return {
       name: 'UFOS_MARK_POINTS', shortName: '', series: 'price', zLevel: 2, figures: [], calc: emptyCalc,
@@ -2081,7 +2082,8 @@
           var up = m.side === 'buy' || m.side === 'cover', down = m.side === 'sell' || m.side === 'short';
           var key = i + (down ? 'd' : 'u'), k = stack[key] = (stack[key] || 0) + 1;
           var s = 5, off = 6 + (k - 1) * 12;
-          ctx.fillStyle = up ? t.up : (down ? t.down : t.muted);
+          // congress trades (STOCK Act) in their fixed teal (Disclosures colour); the triangle's direction says buy / sell
+          ctx.fillStyle = m.kind === 'congress' ? CONGRESS_MARKER_COLOR : (up ? t.up : (down ? t.down : t.muted));
           ctx.beginPath();
           if (down) { var yt = p.yAxis.convertToPixel(bar.high) - off; ctx.moveTo(x, yt); ctx.lineTo(x - s, yt - 1.6 * s); ctx.lineTo(x + s, yt - 1.6 * s); }
           else if (up) { var yb = p.yAxis.convertToPixel(bar.low) + off; ctx.moveTo(x, yb); ctx.lineTo(x - s, yb + 1.6 * s); ctx.lineTo(x + s, yb + 1.6 * s); }

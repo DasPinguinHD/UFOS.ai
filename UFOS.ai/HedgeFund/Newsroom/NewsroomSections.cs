@@ -25,8 +25,9 @@ namespace UFOS.ai.HedgeFund.Newsroom
     {
         public static readonly IReadOnlyList<NewsroomSection> All = new[]
         {
-            new NewsroomSection("insider", "◆", "Insider Trades", "SEC Form 4 filings · AI summary",
-                () => new InsiderTradesView()),
+            // INSIDER-RET (2026-10-25): "Disclosures" replaces "Insider Trades" — tabs Insider · Congress · Track record
+            new NewsroomSection("disclosures", "◆", "Disclosures", "Insider (Form 4) · Congress · track record",
+                () => new DisclosuresView()),
             new NewsroomSection("macro", "◈", "Macro Indicators", "FRED rates, inflation, jobs",
                 () => new MacroIndicatorsView()),
             new NewsroomSection("calendar", "◇", "Economic Calendar", "Upcoming US releases & FOMC",

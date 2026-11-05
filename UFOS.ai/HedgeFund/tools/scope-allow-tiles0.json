@@ -33,7 +33,11 @@
     "UFOS.ai.slnx",
     "UFOS.ai/Shared/MainAppSettings.cs",
     "UFOS.ai/MainWindow.xaml",
-    "UFOS.ai/MainWindow.xaml.cs"
+    "UFOS.ai/MainWindow.xaml.cs",
+    "UFOS.ai/docs/tasks/HANDOFF.md",
+    "UFOS.ai/docs/tasks/README.md",
+    "UFOS.ai/docs/tasks/TILES_API.md",
+    "UFOS.ai/docs/todo-archive/2026-10.md"
   ],
-  "note": "Phase 1 (lead: new files only for ~45 min, tree stays buildable): every C# file is written as *.cs.staged (not compiled) — UFOS.ai.ModuleTiles/ (contract, storage, blur, capture, loopback reader, art; csproj not yet referenced), UFOS.ai/Tiles/ (host, preview view, mode settings, Transaction Log / System Logs / not-built providers), Global Monitoring/Tiles/, LiveStreamAgent/Tiles/ (providers); HedgeFund/Tiles/ is inside the module. Phase 2 (wiring): *.cs.staged renamed to *.cs; UFOS.ai.csproj (Compile Remove UFOS.ai.ModuleTiles + ProjectReference), GlobalMonitoring.csproj / LiveStreamAgent.csproj (+ HedgeFund csproj) ProjectReference, UFOS.ai.slnx project entry, Shared/MainAppSettings.cs accepts the key tile_modes (validated by Tiles/TileModeSettings.cs), MainWindow.xaml x:Name of the two not-built tiles, MainWindow.xaml.cs creates ModuleTileHost in Window_Loaded."
+  "note": "Phase 1 (lead: new files only for ~45 min, tree stays buildable): every C# file is written as *.cs.staged (not compiled) — UFOS.ai.ModuleTiles/ (contract, storage, blur, capture, loopback reader, art; csproj not yet referenced), UFOS.ai/Tiles/ (host, preview view, mode settings, Transaction Log / System Logs / not-built providers), Global Monitoring/Tiles/, LiveStreamAgent/Tiles/ (providers); HedgeFund/Tiles/ is inside the module. Phase 2 (wiring): *.cs.staged renamed to *.cs; UFOS.ai.csproj (Compile Remove UFOS.ai.ModuleTiles + ProjectReference), GlobalMonitoring.csproj / LiveStreamAgent.csproj (+ HedgeFund csproj) ProjectReference, UFOS.ai.slnx project entry, Shared/MainAppSettings.cs accepts the key tile_modes (validated by Tiles/TileModeSettings.cs), MainWindow.xaml x:Name of the two not-built tiles, MainWindow.xaml.cs creates ModuleTileHost in Window_Loaded. Amend 2026-10-25 (cloud lead session, user go 'Ja'): phase 2 done in one change incl. the Hedge Fund Live figures from GET /v2/portfolio/summary; doc upkeep of the task files (HANDOFF, README, TILES_API) and the todo archive."
 }
