@@ -62,6 +62,8 @@ other users (background: Claude Project `claude/project-direction.md`, `claude/c
 - **No deleting:** rename to `*.stale` instead; deletion only in a lead-approved step with the user's permission.
 - **Git:** commits / pushes only when the user asked for them; the lead session commits, sub-agents use read-only git
   only. Never rewrite published history without the user's explicit go.
+  Commit trailer: only `Co-Authored-By: Claude ...`; PR descriptions end with "Generated with Claude Code" only.
+  Never put a claude.ai session link (or any other private link) into commits, PRs or repo files (user, 2026-11-05).
 - **Public repo — no third-party data, no personal data** (2026-10-24, after a real-price test fixture had to be
   purged from the history): never commit market data (prices, bars, quotes, option chains, volumes), news or article
   text, provider responses, filings exports, databases, caches or exports — not even as small test fixtures. Test data

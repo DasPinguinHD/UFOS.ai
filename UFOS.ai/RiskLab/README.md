@@ -6,13 +6,18 @@ It is a showcase for risk management and is part of UFOS.ai. It is independent o
 the HedgeFund backend: there are no imports between them, and it has its own
 tests and dependencies.
 
-**Status: v0.2.** Implemented:
+**Status: v0.3.** Implemented:
 
-- the models: historical simulation (HS), normal and Student-t VaR / ES;
-- the true VaR / ES of the synthetic generators;
-- the backtests: Kupiec POF, the exact binomial test, Christoffersen
+- one-day models:
+  - static: historical simulation (HS), normal and Student-t;
+  - conditional: EWMA (RiskMetrics), GARCH(1,1)-t and filtered HS;
+- the h-day (e.g. Basel 10-day) VaR / ES: square-root-of-time, GARCH Monte
+  Carlo and the stationary block bootstrap;
+- the true one-day and h-day VaR / ES of the synthetic generators;
+- the VaR backtests: Kupiec POF, the exact binomial test, Christoffersen
   independence and conditional coverage, and the Basel traffic light;
-- a size / power study as the first showcase result.
+- the ES backtest: Acerbi-Szekely Z2;
+- two studies: size / power of the backtests, and the 10-day VaR methods.
 
 The derivation sheets are worked through separately, outside this code (user
 decision 2026-11-05).
@@ -53,8 +58,75 @@ decision 2026-11-05).
   - If the optimiser does not report convergence, the fit raises `FitError`;
     there is no silent fallback.
   - The scale is not the standard deviation: `sd = scale * sqrt(nu / (nu - 2))`.
+- **EWMA** (`EWMAModel(lam=0.94, dist="normal" | "t", nu, init=30)`), RiskMetrics:
+  - The recursion is `sigma2_{t+1} = lam sigma2_t + (1 - lam) L_t^2`, with zero mean.
+  - Start: the zero-mean (uncentred) variance `mean(L^2)` of the first `init`
+    window losses, consistent with the zero-mean recursion;
+    the recursion then runs over the rest of the window.
+  - `dist="t"` needs a fixed `nu`: a unit-variance t, with nu not estimated.
+- **GARCH(1,1)** (`GarchTModel(refit_every=20, dist="t")`):
+  - The model is `L_t = mu + sigma_t z_t`,
+    `sigma2_t = omega + alpha e_{t-1}^2 + beta sigma2_{t-1}`, with z
+    unit-variance t(nu), or normal for the QMLE.
+  - Fitted by maximum likelihood on the standardised window, with an analytic
+    gradient. The recursion starts at the sample variance.
+  - Reparametrised so that no constraint can be violated: `omega = exp(w)`,
+    `alpha = p g`, `beta = p (1 - g)`, with persistence `p in [0, 0.999]`,
+    share `g in [0, 1]` and `nu in [2.05, 200]`.
+  - Three deterministic starts. If the best run did not converge, the fit
+    raises `FitError`; there is no silent fallback.
+  - Between refits the parameters stay fixed, and the variance is rolled
+    forward daily with the realised loss.
+- **Filtered HS** (`FilteredHS(garch="normal" | "t", refit_every=20)`,
+  Barone-Adesi et al. 1999):
+  - Fit GARCH(1,1) (Gaussian QMLE by default) and standardise the residuals,
+    `z = (L - mu) / sigma`.
+  - `VaR = mu + sigma_{t+1} z_(ceil(n alpha))`, with the HS order-statistic
+    convention, and `ES = mu + sigma_{t+1} mean(z >= that quantile)`.
+- **Predictive distributions:** every model's `Forecast.dist` has a vectorised
+  `ppf(u)` (`risklab.dists`). For normal, t, EWMA and GARCH it is location-scale
+  normal or t. For HS it is the empirical distribution of the window, and for
+  FHS the empirical z, scaled. The ES backtest simulates from it.
 - The closed forms (`var_normal`, `es_normal`, `var_t`, `es_t`, and the
   unit-variance t `var_t_std` / `es_t_std`) live in `risklab.analytic`.
+
+### Engine conventions
+
+- At a refit day the model is created fresh and `fit()` gets a read-only copy
+  of the window `[t - window, t)`.
+- Between refits, a model with `update(loss)` (EWMA, GARCH, FHS) receives
+  exactly `L_{t-1}` before it forecasts day t. Models without `update` forecast
+  again from their last fit, as in v0.2. Spy tests check both.
+- `walk_forward(refit_every=None)` uses the `refit_every` attribute of the
+  first model the factory returns (20 for GARCH and FHS), otherwise 1. No
+  extra model is created to read it.
+- **h-day backtests** (`walk_forward_h`) use **non-overlapping** h-day blocks.
+  Overlapping blocks share days, so their exceedances are dependent and the
+  coverage tests would be invalid. The price is a small T: 1000 days after the
+  window give only 100 ten-day blocks.
+
+### Multi-day horizon (`risklab.horizon`, `risklab.bootstrap`)
+
+- **Square-root-of-time** (`sqrt_time`, `SqrtTimeForecaster`): `VaR_h ~ sqrt(h) VaR_1`.
+  It is an approximation, exact only for iid normal losses with zero mean.
+- **GARCH Monte Carlo** (`GarchMCForecaster`): simulate N h-day paths of the
+  fitted GARCH(1,1)-t from `sigma2_{t+1}`, sum them, and take the empirical
+  quantile and the tail mean. The Monte-Carlo error of the VaR comes from a
+  distribution-free 95 % interval of binomial order statistics.
+- **Stationary block bootstrap** (`BootstrapForecaster`, Politis and Romano 1994):
+  - Geometric block lengths with mean `block_len`, wrapping around circularly.
+  - `block_len="auto"` uses Politis and White (2004) with the Patton, Politis
+    and White (2009) correction (flat-top kernel, `b = (2 G^2 / D_SB)^(1/3) n^(1/3)`
+    with `D_SB = 2 g(0)^2`). If the kernel estimate `g(0)` is not positive (e.g. an
+    over-differenced series) the block length is undefined, and the code raises
+    `BlockLengthError` instead of picking a default.
+  - With `block_len = 1` the indices equal the iid bootstrap exactly (same seed).
+- **True h-day risk** (`true_var_es_h`):
+  - closed form for iid normal;
+  - Monte Carlo with a stated error for iid t;
+  - Monte Carlo from the true GARCH parameters, given the true variance at the
+    origin;
+  - not available for regime switching (ValueError).
 
 ### Backtest conventions
 
@@ -79,6 +151,14 @@ decision 2026-11-05).
   chi-square with 2 degrees of freedom. Following Christoffersen (1998), both
   parts are computed on the T-1 transitions, so `LR_uc` here uses days 2..T.
   `LR_cc` is then exactly the joint likelihood ratio.
+- **Acerbi-Szekely Z2** (ES, `acerbi_szekely_z2`):
+  - `Z2 = sum L_t I_t / (T (1 - alpha) ES_t) - 1`, with `I_t = 1{L_t > VaR_t}`.
+  - Loss sign: Z2 > 0 means the realised tail losses exceed the predicted ES,
+    i.e. risk is underestimated. The test is one-sided against that. This Z2
+    is minus the paper's P&L-sign Z2, which rejects for negative values.
+  - p-value by Monte Carlo under H0: simulate every day's loss from
+    `Forecast.dist` M times (fixed seed) and set
+    `p = (1 + #{Z2_sim >= Z2}) / (1 + M)`.
 - **Traffic light** (BCBS 1996):
   - Uses the last `window` days (250 by default). The zones follow from the
     binomial CDF under H0: green while `P(X <= x) < 95 %`, red once
@@ -110,13 +190,18 @@ RiskLab/
     analytic.py         closed-form normal / t VaR and ES
     data/synthetic.py   synthetic generators -> SyntheticSeries
     data/truth.py       true conditional VaR / ES of a SyntheticSeries
-    models/             RiskModel protocol, Forecast; HS, normal, Student-t
-    engine.py           walk_forward -> BacktestFrame (no look-ahead)
-    backtest/           TestResult; Kupiec, Christoffersen, traffic light
+    dists.py            predictive distributions (LocScale, Empirical)
+    models/             RiskModel protocol, Forecast, FitError; HS, normal, Student-t,
+                        EWMA, GARCH(1,1), filtered HS
+    engine.py           walk_forward (stateful models), walk_forward_h (h-day blocks)
+    horizon.py          sqrt-of-time, GARCH Monte Carlo, bootstrap h-day forecasters
+    bootstrap.py        stationary block bootstrap, Politis-White block length
+    backtest/           TestResult; Kupiec, binomial, Christoffersen, traffic light, Z2
     report/export.py    deterministic JSON / CSV / table export (default folder RiskLab/out/)
   studies/
-    var_backtest_power.py   size / power of the backtests on synthetic data
-    results/                saved full-run summary (synthetic)
+    var_backtest_power.py   size / power of the VaR and ES backtests on synthetic data
+    horizon_10d.py          10-day VaR: sqrt(10) vs GARCH Monte Carlo vs block bootstrap
+    results/                saved full-run summaries (synthetic)
   tests/                unittest, no network
 ```
 
@@ -130,40 +215,51 @@ python -m unittest discover -s tests
 ```
 
 A path shim in the tests puts `src/` on `sys.path`, so no install and no
-`PYTHONPATH` are needed. `-t .` (package mode, used by CI) works as well. The
-study runs in a small "smoke" mode inside the tests.
+`PYTHONPATH` are needed. `-t .` (package mode, used by CI) works as well. Both
+studies run in a small "smoke" mode inside the tests.
 
 ## The size / power study
 
 ```
-python studies/var_backtest_power.py                # M = 100: a demo, about 1-1.5 minutes
-python studies/var_backtest_power.py --mode full    # M = 1000: for conclusions, about 8-15 minutes
+python studies/var_backtest_power.py                # M = 30: a demo; measured 126 s (2.1 min) on the user's PC
+python studies/var_backtest_power.py --mode full    # M = 1000: measured 43 minutes in the cloud container
 python studies/var_backtest_power.py --m 300 --out-dir out/my_run
 ```
 
 What it does:
 
-- Each replication draws `250 + T` synthetic days (T = 250 and T = 1000).
-- The models are fitted walk-forward on a rolling 250-day window and forecast
-  the next day's 99 % VaR. The Student-t model is refitted every 50 days
-  (maximum likelihood is the expensive step), the other models daily.
-- Kupiec, the exact binomial test, ind and cc (all at 5 %) and the traffic
-  light run on the T forecast days.
+- Each replication draws `window + T` synthetic days (T = 250 and T = 1000;
+  window = 250 unless stated).
+- The models are fitted walk-forward on a rolling window and forecast the
+  next day's 99 % VaR and 97.5 % ES.
+- Refits: static models daily; the Student-t model every 50 days; GARCH-t, FHS
+  and EWMA-t every 50 days, with a daily variance update in between.
+- Kupiec, the exact binomial test, ind, cc (all on the 99 % VaR, at 5 %) and
+  the traffic light run on the T forecast days. The Acerbi-Szekely Z2 test
+  (97.5 % ES, one-sided, 500 Monte-Carlo draws) runs on the same days.
+- Its Monte-Carlo seed is a `SeedSequence` child of the data seed.
 - **Reference size:**
   - Kupiec and the binomial test: the exact size per T, from binomial sums.
-  - ind and cc: the empirical rate of the oracle row of the same data and T.
+  - ind, cc and Z2: the empirical rate of the oracle row of the same data and T.
 - **Size** rows:
   - the oracle (the true VaR) on all generators;
-  - correctly specified estimated models on iid data. Their rate can differ
-    from the reference: that is estimation risk.
+  - correctly specified estimated models: normal on normal, t on t, and
+    GARCH-t and FHS on GARCH-t data. Their rate can differ from the
+    reference: that is estimation risk.
+  - GARCH-t and FHS also run with a **1000-day estimation window** (T = 1000)
+    to isolate that estimation risk.
   - HS on normal data is marked "not a clean size row", because of the
     1.20 % HS exceedance probability.
 - **Power** rows: normal on t data; normal and HS on GARCH and regime data.
   These rates are **not size-adjusted**: compare each with the reference size
   of the same T and test.
+- **Conditional** rows: EWMA-t on GARCH-t data, and GARCH-t, FHS and EWMA-t on
+  regime data (adaptive, but misspecified).
+- The summary ends with a **static against conditional** table: Kupiec, the
+  binomial test, cc and Z2 side by side, each with its reference size.
 - Every rate carries its Monte-Carlo standard error, `se = sqrt(r (1 - r) / M)`.
-  Near 5 % that is ±2.2 points at M = 100 and ±0.7 points at M = 1000.
-  M = 100 is a demo; use `--mode full` for conclusions.
+  Near 5 % that is ±4.0 points at M = 30 and ±0.7 points at M = 1000.
+  M = 30 is a demo; use `--mode full` for conclusions.
 
 Output: `out/var_backtest_power/results.csv`, `results.json` and `summary.md`.
 The full run (M = 1000, seed 20261105) is kept in
@@ -172,23 +268,100 @@ Its main results, as rejection rates in % ± se:
 
 - **Kupiec's size is wrong at T = 250.**
   - Exact size: 9.48 % at T = 250, 5.51 % at T = 1000.
-  - Oracle rows: 8.7 ± 0.9 (iid normal) to 10.6 ± 1.0 (GARCH) at T = 250;
-    4.8 ± 0.7 to 7.4 ± 0.8 at T = 1000.
-  - The exact binomial test stays near or below 5 %: 4.0 ± 0.6 to 5.3 ± 0.7
+  - Oracle rows: 8.7 ± 0.9 to 10.6 ± 1.0 at T = 250; 4.6 ± 0.7 to 7.4 ± 0.8
+    at T = 1000.
+  - The exact binomial test stays near or below 5 %: 3.8 ± 0.6 to 5.3 ± 0.7
     at T = 250.
 - **The binomial test can find more than Kupiec.** Normal VaR on t5 data at
   T = 250: Kupiec 10.8 ± 1.0 against its size of 9.5, so practically no power.
-  The exact binomial test reaches 19.2 ± 1.2 against a size of 4.1. At T = 1000
-  both reach 40.6 ± 1.6.
-- **Clustering is hard to see.**
-  - The independence test is undersized: 0.9-2.6 % on the oracle rows.
-  - Against static models on GARCH data it is weak: 3.8 ± 0.6 at T = 250 and
-    16.1 ± 1.2 at T = 1000 for the normal model.
-  - Against the normal model on regime data the coverage tests do much better:
-    cc rejects 36.7 ± 1.5 at T = 250 and 90.5 ± 0.9 at T = 1000.
-- **The traffic light** puts about 10-12 % of correct models into yellow at T = 250
-  (oracle rows). The normal model on regime data is in red in 13.1 % of the
-  runs.
+  The exact binomial test reaches 19.2 ± 1.2 against a size of 4.1.
+- **The ES test holds its size and adds power.**
+  - Z2 on the oracle rows: ≈ 5 % (4.4 ± 0.6 to 6.5 ± 0.8).
+  - Normal on t5 data at T = 250: Z2 18.2 ± 1.2 against Kupiec 10.8 ± 1.0.
+  - HS on GARCH-t data at T = 1000: Z2 37.9 ± 1.5 against cc 19.8 ± 1.3.
+- **Conditional against static models** (T = 1000, GARCH-t data; the reference
+  sizes are 5.5 Kupiec, 3.6 binomial, 1.7 ± 0.4 cc and 4.6 ± 0.7 Z2):
+
+  | model | exceed rate | Kupiec | binomial | cc | Z2 |
+  |---|---|---|---|---|---|
+  | static normal | 1.87 % | 65.2 ± 1.5 | 65.2 ± 1.5 | 59.7 ± 1.6 | 64.7 ± 1.5 |
+  | static HS | 1.38 % | 20.1 ± 1.3 | 19.9 ± 1.3 | 19.8 ± 1.3 | 37.9 ± 1.5 |
+  | GARCH-t, window 250 | 1.25 % | 10.6 ± 1.0 | 10.5 ± 1.0 | 6.2 ± 0.8 | 17.7 ± 1.2 |
+  | FHS, window 250 | 1.35 % | 15.3 ± 1.1 | 15.2 ± 1.1 | 9.8 ± 0.9 | 33.6 ± 1.5 |
+  | EWMA-t | 1.24 % | 7.6 ± 0.8 | 7.5 ± 0.8 | 4.1 ± 0.6 | 20.9 ± 1.3 |
+  | GARCH-t, window 1000 | 1.03 % | 5.8 ± 0.7 | 4.3 ± 0.6 | 2.5 ± 0.5 | 4.9 ± 0.7 |
+  | FHS, window 1000 | 1.12 % | 5.5 ± 0.7 | 4.9 ± 0.7 | 2.4 ± 0.5 | 5.7 ± 0.7 |
+
+  - With a 250-day window, the conditional models are rejected far less often
+    than the static normal model: in all 48 comparisons (models x data x T x
+    tests).
+  - Against static HS the gap is smaller: lower in 44 of 48 comparisons. On
+    regime data at T = 1000, FHS and EWMA-t are rejected about as often as HS
+    by Kupiec and the binomial test.
+  - **But they are not "passing".** With a 250-day window and refits every 50
+    days, even the correctly specified GARCH-t over-rejects at about twice the
+    reference size: Kupiec 12.0 / 10.6 %, binomial 11.7 / 10.5 % and
+    Z2 12.2 / 17.7 % at T = 250 / 1000. Its exceedance rate is 1.25 %.
+  - FHS's Z2 rate reaches 33.6 %.
+- **This over-rejection is estimation risk.** With a 1000-day estimation
+  window, GARCH-t has 1.03 % exceedances and FHS 1.12 %, and every test is back
+  near its reference size (table above). Short-window GARCH estimates are too
+  noisy for a 99 % VaR.
+- **Clustering is hard to see** with the independence test alone. It is
+  undersized (0.9-2.6 % on the oracle rows) and weak: 15.7 ± 1.2 against the
+  static normal model on GARCH-t data at T = 1000.
+- Seeds: the oracle, iid and GARCH-normal rows use the same data as v0.2.
+  The regime rows use new data seeds since v0.3, because the GARCH-t generator
+  shifted the generator index. The Z2 rates changed slightly with the
+  independent Monte-Carlo seeds.
+
+## The 10-day horizon study
+
+```
+python studies/horizon_10d.py                # M = 200: a demo; measured 30 s on the user's PC
+python studies/horizon_10d.py --mode full    # M = 1000: measured 2.1 minutes in the cloud container
+```
+
+What it does:
+
+- Data: iid normal, iid t5, and GARCH(1,1)-t6.
+- Every replication uses a 500-day window and estimates the 10-day 99 % VaR
+  in four ways:
+  - `sqrt10_normal`: sqrt(10) x the normal one-day VaR;
+  - `sqrt10_garch`: sqrt(10) x the GARCH-t one-day VaR;
+  - `garch_mc`: GARCH-t Monte Carlo with 20 000 paths;
+  - `bootstrap`: the stationary bootstrap with an automatic block length,
+    20 000 paths.
+- Each estimate is compared with the true 10-day VaR: closed form for iid
+  normal, otherwise Monte Carlo with 50 000 paths.
+- Seeds: the GARCH Monte Carlo, the bootstrap and the Monte-Carlo truth use
+  independent `SeedSequence` children of the data seed.
+- Reported: the relative bias ± its se, the relative RMSE, and the simulation
+  errors of the estimate and of the truth.
+
+The full run (M = 1000) is in
+[`studies/results/horizon_10d_full_summary.md`](studies/results/horizon_10d_full_summary.md).
+Its main results, as relative bias ± se and RMSE:
+
+- **iid normal:** sqrt(10) x normal is unbiased (-0.0 ± 0.1 %, RMSE 3.6 %).
+  The simulation methods add error: GARCH MC 6.9 % and bootstrap 7.3 % RMSE.
+- **iid t5:**
+  - sqrt(10) x the fat-tailed GARCH-t one-day VaR overstates the 10-day VaR
+    (+8.6 ± 0.3 %), as the central limit theorem predicts.
+  - GARCH MC (+0.7 ± 0.3 %) and the bootstrap (+0.3 ± 0.5 %) are close to unbiased.
+- **GARCH-t6:**
+  - sqrt(10) x normal (-0.7 ± 0.9 %), sqrt(10) x GARCH (+0.6 ± 0.3 %) and
+    GARCH MC (-0.3 ± 0.4 %) are close to unbiased on average.
+  - The bootstrap is biased: +3.7 ± 1.2 %, about 3 se. Its automatic block
+    length is chosen on the loss levels (mean 1.96 days), which are nearly
+    uncorrelated under GARCH, because the dependence is in the squares. It
+    also resamples the whole window, so it does not condition on the current
+    volatility.
+  - The RMSE separates the methods: bootstrap 37.2 %, sqrt(10) x normal
+    29.3 % (it ignores the current volatility), GARCH MC 11.5 % and
+    sqrt(10) x GARCH 9.8 %.
+  - With persistence 0.98, volatility mean-reverts slowly over 10 days, so
+    scaling the conditional one-day VaR is as good as the full simulation here.
 
 ## Open points
 
@@ -202,7 +375,10 @@ Its main results, as rejection rates in % ± se:
 ## Roadmap
 
 - **v0.1:** the skeleton.
-- **v0.2 (this version):** HS, normal and t VaR / ES; true VaR / ES; Kupiec,
-  Christoffersen and the traffic light; the size / power study.
-- **v0.3:** GARCH, filtered historical simulation (FHS), Monte Carlo, square-root-of-time
-  scaling, and an ES backtest.
+- **v0.2:** HS, normal and t VaR / ES; true VaR / ES; Kupiec, the exact
+  binomial test, Christoffersen and the traffic light; the size / power study.
+- **v0.3 (this version):** EWMA, GARCH(1,1)-t and filtered HS with daily
+  state updates; h-day VaR / ES (sqrt-of-time, GARCH Monte Carlo, stationary
+  bootstrap); the Acerbi-Szekely ES test; the 10-day horizon study.
+- **Next (open):** further ES tests (Z1, Z3), multivariate portfolios, and real
+  data in `local_data/` (never in the repo).

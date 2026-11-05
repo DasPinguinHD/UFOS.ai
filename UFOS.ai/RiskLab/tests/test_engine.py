@@ -139,6 +139,65 @@ class EngineTests(unittest.TestCase):
             with self.subTest(cls.__name__), self.assertRaises(ValueError):
                 walk_forward(np.ones(5), lambda: cls(1.0), window=1, alphas=[0.99])
 
+    def test_stateful_update_sees_only_yesterday(self):
+        log = []
+
+        class StatefulSpy:
+            name = "stateful_spy"
+            refit_every = 7
+
+            def fit(self, losses_past):
+                log.append(("fit", np.array(losses_past)))
+                self.last = float(np.max(losses_past))
+
+            def update(self, loss):
+                log.append(("update", loss))
+                self.last = max(self.last, loss)
+
+            def forecast(self, alphas):
+                return Forecast(var={a: self.last for a in alphas})
+
+        n, window = 40, 10
+        losses = np.arange(n, dtype=np.float64)  # value == index
+        f = walk_forward(losses, StatefulSpy, window, [0.99])  # refit_every from the model: 7
+        self.assertEqual(f.meta["refit_every"], 7)
+        self.assertEqual(len(log), n - window)
+        for i, ((kind, payload), t) in enumerate(zip(log, range(window, n))):
+            if i % 7 == 0:  # refit day: a copy of the window strictly before t
+                self.assertEqual(kind, "fit")
+                np.testing.assert_array_equal(payload, np.arange(t - window, t, dtype=np.float64))
+            else:  # in between: exactly one value, L_{t-1}
+                self.assertEqual(kind, "update")
+                self.assertEqual(payload, float(t - 1))
+        fits = [i for i, (k, _) in enumerate(log) if k == "fit"]
+        self.assertEqual(len(fits), 5)  # days 10, 17, 24, 31, 38
+        self.assertEqual(sum(1 for k, _ in log if k == "update"), (n - window) - 5)
+        self.assertTrue(np.all(f.var[0.99] < f.t))  # the forecast for day t only knew indices < t
+
+    def test_no_extra_factory_call(self):
+        calls = []
+
+        class Counted(ConstantVaR):
+            refit_every = 4
+
+            def __init__(self):
+                calls.append(1)
+                super().__init__(1.0)
+
+        f = walk_forward(np.ones(20), Counted, 4, [0.99])  # 16 forecast days, refit every 4 -> 4 models
+        self.assertEqual(f.meta["refit_every"], 4)
+        self.assertEqual(len(calls), 4)
+
+    def test_explicit_refit_overrides_model_attribute(self):
+        class M(ConstantVaR):
+            refit_every = 5
+
+        f = walk_forward(np.ones(20), lambda: M(2.0), 3, [0.99], refit_every=2)
+        self.assertEqual(f.meta["refit_every"], 2)
+        g = walk_forward(np.ones(20), lambda: ConstantVaR(2.0), 3, [0.99])
+        self.assertEqual(g.meta["refit_every"], 1)
+        self.assertIsNone(g.dists)
+
     def test_protocol(self):
         self.assertIsInstance(ConstantVaR(1.0), RiskModel)
 

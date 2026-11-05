@@ -1,0 +1,23 @@
+{
+  "label": "risklab5",
+  "approved": "lead, 2026-11-05: v0.3 review fixes (M1 honest conditional-model comparison + 1000-day window rows + full re-run; minor 1-8) (Agent H)",
+  "files": [
+    "UFOS.ai/RiskLab/README.md",
+    "UFOS.ai/RiskLab/src/risklab/bootstrap.py",
+    "UFOS.ai/RiskLab/src/risklab/models/ewma.py",
+    "UFOS.ai/RiskLab/src/risklab/engine.py",
+    "UFOS.ai/RiskLab/src/risklab/horizon.py",
+    "UFOS.ai/RiskLab/studies/var_backtest_power.py",
+    "UFOS.ai/RiskLab/studies/horizon_10d.py",
+    "UFOS.ai/RiskLab/studies/results/var_backtest_power_full_summary.md",
+    "UFOS.ai/RiskLab/studies/results/horizon_10d_full_summary.md",
+    "UFOS.ai/RiskLab/tests/test_es_backtest.py",
+    "UFOS.ai/RiskLab/tests/test_garch.py",
+    "UFOS.ai/RiskLab/tests/test_bootstrap.py",
+    "UFOS.ai/RiskLab/tests/test_study.py",
+    "UFOS.ai/RiskLab/tests/test_horizon_study.py",
+    "UFOS.ai/RiskLab/tests/test_engine.py",
+    "UFOS.ai/docs/tasks/README.md"
+  ],
+  "note": "Exact paths. Backups: HedgeFund/backend/data/risklab5-backup/. Study summaries are synthetic output."
+}

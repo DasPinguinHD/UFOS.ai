@@ -8,7 +8,8 @@ from scipy import optimize, special
 
 from risklab import analytic
 from risklab.conventions import as_loss_array, check_alphas
-from risklab.models.base import Forecast
+from risklab.dists import LocScale
+from risklab.models.base import FitError, Forecast
 
 #: Bounds for the degrees of freedom of the t maximum-likelihood fit. Lower
 #: bound 2.05: the variance must exist (nu > 2) and nu near 2 makes the fit
@@ -22,8 +23,6 @@ LOC_BOUNDS = (-20.0, 20.0)
 LOG_SCALE_BOUNDS = (-10.0, 10.0)
 
 
-class FitError(RuntimeError):
-    """The maximum-likelihood optimiser did not report convergence (no silent fallback)."""
 
 
 class NormalModel:
@@ -53,7 +52,7 @@ class NormalModel:
         for a in check_alphas(alphas):
             var[a] = float(analytic.var_normal(a, self.mu, self.sigma))
             es[a] = float(analytic.es_normal(a, self.mu, self.sigma))
-        return Forecast(var=var, es=es)
+        return Forecast(var=var, es=es, dist=LocScale(self.mu, self.sigma))
 
 
 def t_neg_loglik(params, x, nu_fixed=None):
@@ -163,4 +162,4 @@ class StudentTModel:
         for a in check_alphas(alphas):
             var[a] = float(analytic.var_t(a, self.nu_hat, self.loc, self.scale))
             es[a] = float(analytic.es_t(a, self.nu_hat, self.loc, self.scale))
-        return Forecast(var=var, es=es)
+        return Forecast(var=var, es=es, dist=LocScale(self.loc, self.scale, self.nu_hat))
