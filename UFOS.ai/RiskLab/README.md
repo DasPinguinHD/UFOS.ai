@@ -6,7 +6,7 @@ It is a showcase for risk management and is part of UFOS.ai. It is independent o
 the HedgeFund backend: there are no imports between them, and it has its own
 tests and dependencies.
 
-**Status: v0.3.** Implemented:
+**Status: v0.4.** Implemented:
 
 - one-day models:
   - static: historical simulation (HS), normal and Student-t;
@@ -17,7 +17,11 @@ tests and dependencies.
 - the VaR backtests: Kupiec POF, the exact binomial test, Christoffersen
   independence and conditional coverage, and the Basel traffic light;
 - the ES backtest: Acerbi-Szekely Z2;
-- two studies: size / power of the backtests, and the 10-day VaR methods.
+- four studies: size / power of the backtests, the 10-day VaR methods, the
+  estimation window, and survivorship bias;
+- the **validation report pipeline**: seven figures, seven LaTeX tables
+  (including a findings register) and a report skeleton with marked text slots.
+  A draft PDF is built from synthetic data only (see "The validation report" below).
 
 The derivation sheets are worked through separately, outside this code (user
 decision 2026-11-05).
@@ -184,6 +188,7 @@ decision 2026-11-05).
 RiskLab/
   pyproject.toml        package "risklab", src layout, Python >= 3.10
   requirements.in       direct dependencies (numpy, scipy), unpinned
+  requirements-report.in  optional extra "report" (matplotlib), unpinned
   ci/risklab-tests.yml  GitHub Actions workflow (copy to .github/workflows/)
   src/risklab/
     conventions.py      sign / alpha / seed conventions
@@ -198,10 +203,20 @@ RiskLab/
     bootstrap.py        stationary block bootstrap, Politis-White block length
     backtest/           TestResult; Kupiec, binomial, Christoffersen, traffic light, Z2
     report/export.py    deterministic JSON / CSV / table export (default folder RiskLab/out/)
+    report/figures.py   the seven report figures (needs the "report" extra)
+    report/tables.py    the seven LaTeX tables incl. the findings register
   studies/
     var_backtest_power.py   size / power of the VaR and ES backtests on synthetic data
     horizon_10d.py          10-day VaR: sqrt(10) vs GARCH Monte Carlo vs block bootstrap
-    results/                saved full-run summaries (synthetic)
+    estimation_window.py    over-rejection of GARCH-t / FHS against the window length
+    survivorship.py         survivorship bias of growth base rates (synthetic universe)
+    results/                full-run summaries (.md) and results (.json), synthetic
+  report/
+    validation_report.tex   the report skeleton (\usertext slots)
+    build_figures.py        figures -> report/figures/
+    build_report.py         figures + tables + pdflatex -> out/report/
+    figures/, tables/       generated figures (PNG, PDF, LaTeX snippets) and tables
+    validation_report_draft.pdf   the current draft (synthetic data only)
   tests/                unittest, no network
 ```
 
@@ -215,14 +230,18 @@ python -m unittest discover -s tests
 ```
 
 A path shim in the tests puts `src/` on `sys.path`, so no install and no
-`PYTHONPATH` are needed. `-t .` (package mode, used by CI) works as well. Both
+`PYTHONPATH` are needed. `-t .` (package mode, used by CI) works as well. The
 studies run in a small "smoke" mode inside the tests.
+
+The core tests need only numpy and scipy. The figure tests need the optional
+extra (`pip install -r requirements-report.in`, or `pip install -e .[report]`);
+without matplotlib they are skipped with a message saying so.
 
 ## The size / power study
 
 ```
 python studies/var_backtest_power.py                # M = 30: a demo; measured 126 s (2.1 min) on the user's PC
-python studies/var_backtest_power.py --mode full    # M = 1000: measured 43 minutes in the cloud container
+python studies/var_backtest_power.py --mode full --save-results    # M = 1000: about 43 minutes in the cloud container
 python studies/var_backtest_power.py --m 300 --out-dir out/my_run
 ```
 
@@ -319,7 +338,7 @@ Its main results, as rejection rates in % ± se:
 
 ```
 python studies/horizon_10d.py                # M = 200: a demo; measured 30 s on the user's PC
-python studies/horizon_10d.py --mode full    # M = 1000: measured 2.1 minutes in the cloud container
+python studies/horizon_10d.py --mode full --save-results    # M = 1000: about 2 minutes in the cloud container
 ```
 
 What it does:
@@ -363,6 +382,205 @@ Its main results, as relative bias ± se and RMSE:
   - With persistence 0.98, volatility mean-reverts slowly over 10 days, so
     scaling the conditional one-day VaR is as good as the full simulation here.
 
+## The estimation-window study
+
+```
+python studies/estimation_window.py                # M = 20: a demo; measured 58 s on the user's PC
+python studies/estimation_window.py --mode full --save-results    # M = 1000: about 34 minutes in the cloud container
+```
+
+- Data: GARCH(1,1)-t6, with T = 1000 forecast days.
+- Models: GARCH-t and FHS, each with estimation windows of 250, 500, 750 and
+  1000 days, refitted every 50 days.
+- All windows forecast the same 1000 days (a paired design).
+- Reported:
+  - the exceedance rate and its **paired difference against the oracle**:
+    the per-replication difference on the same data and days, mean ± se;
+  - the Kupiec / binomial / cc / Z2 rejection rates with their reference sizes;
+  - the VaR error against the truth.
+
+The full run is in
+[`studies/results/estimation_window_full_summary.md`](studies/results/estimation_window_full_summary.md).
+
+Results in % ± se; the reference sizes are Kupiec 5.51, binomial 3.65,
+cc 2.0 ± 0.4 and Z2 5.0 ± 0.7, and the oracle exceedance rate is 1.01 %:
+
+| model | window | exceed rate | paired diff vs oracle (pp) | Kupiec | binomial | cc | Z2 |
+|---|---|---|---|---|---|---|---|
+| GARCH-t | 250 | 1.27 | +0.259 ± 0.010 | 11.8 ± 1.0 | 11.6 ± 1.0 | 6.7 ± 0.8 | 19.5 ± 1.3 |
+| GARCH-t | 500 | 1.11 | +0.096 ± 0.008 | 4.5 ± 0.7 | 4.2 ± 0.6 | 2.4 ± 0.5 | 7.4 ± 0.8 |
+| GARCH-t | 750 | 1.06 | +0.052 ± 0.007 | 3.6 ± 0.6 | 2.7 ± 0.5 | 2.2 ± 0.5 | 5.6 ± 0.7 |
+| GARCH-t | 1000 | 1.05 | +0.041 ± 0.007 | 3.7 ± 0.6 | 2.9 ± 0.5 | 2.4 ± 0.5 | 6.0 ± 0.8 |
+| FHS | 250 | 1.37 | +0.355 ± 0.013 | 15.9 ± 1.2 | 15.9 ± 1.2 | 9.8 ± 0.9 | 36.0 ± 1.5 |
+| FHS | 500 | 1.25 | +0.235 ± 0.011 | 6.7 ± 0.8 | 6.7 ± 0.8 | 5.1 ± 0.7 | 8.3 ± 0.9 |
+| FHS | 750 | 1.09 | +0.080 ± 0.010 | 2.7 ± 0.5 | 2.4 ± 0.5 | 1.6 ± 0.4 | 6.3 ± 0.8 |
+| FHS | 1000 | 1.13 | +0.115 ± 0.010 | 4.4 ± 0.6 | 4.3 ± 0.6 | 2.9 ± 0.5 | 6.3 ± 0.8 |
+
+- **The rejection rates** fall to about the reference size by 500 days for
+  GARCH-t and by 750 days for FHS.
+- **But the VaR stays slightly anti-conservative.** The exceedance rate is
+  1.05-1.13 % against the oracle's 1.01 %. The paired difference stays
+  significant even at 1000 days: +0.041 ± 0.007 points for GARCH-t and
+  +0.115 ± 0.010 for FHS.
+- This is parameter uncertainty. With M = 1000, the tests on T = 1000 days
+  cannot see such a small excess, but the paired comparison with the truth
+  can.
+- **Two 1000-day GARCH-t Kupiec rates, reconciled.** This study gives
+  3.7 ± 0.6 %; the 1000-day row of the power study gives 5.8 ± 0.7 %.
+  - The code and the design are the same: series of 2000 days, a 1000-day
+    window, refits every 50 days, the same model and tests. I checked this
+    per replication: on the same series both paths give identical exceedances.
+  - Only the data seeds differ.
+  - The difference, 2.1 ± 0.9 points (2.3 se), is Monte-Carlo noise. There
+    are 8 such comparisons between the two studies (4 tests × 2 models at
+    1000 days), and the chance that at least one differs by 2.3 se or more is
+    about 16 %.
+  - Pooled: 4.75 ± 0.48 %, against an exact size of 5.51 %.
+
+## The survivorship study
+
+```
+python studies/survivorship.py                # M = 200: a demo, a few seconds
+python studies/survivorship.py --mode full --save-results    # M = 2000: measured 7 s in the cloud container
+```
+
+**Setup** (synthetic, no real firms or data):
+
+- 2000 firms over 10 years. Each firm has a log-growth drift drawn from
+  N(5 %, 5 %) and yearly shocks with sd 15 %.
+- Each year a firm exits with probability `min(0.9, h0 exp(-kappa z))`, where
+  z is that year's standardised growth. Poor growth raises the hazard.
+
+**Three base rates** for "the share of firms with a 10-year CAGR >= g", each
+answering a different question:
+
+- **naive** (survivors only): what share of today's listed firms grew this fast?
+  This is what a database of current constituents shows.
+- **counterfactual** (all firms, had they survived): what share of firms has the
+  growth driver for this? Every growth path is simulated in full, so the CAGR
+  exists for exited firms too.
+- **full cohort** (exited firms count as misses): how likely is a firm picked
+  at the start to achieve it as a going concern? This is the forecasting base
+  rate.
+
+**Decomposition** of the naive bias (naive - full cohort):
+
+- **selection** = naive - counterfactual: the survivors are not a random
+  sample when exits depend on growth;
+- **attrition** = counterfactual - full cohort: firms that would have reached
+  the threshold but exited count as misses.
+
+**Results** (full run, CAGR >= 10 %, percentage points ± Monte-Carlo se):
+
+| h0 | kappa | survival | naive | counterfactual | full cohort | selection | attrition | total |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 0 | 100.0 % | 25.6 | 25.6 | 25.6 | 0.0 | 0.0 | 0.0 |
+| 0.04 | 0 | 66.5 % | 25.6 | 25.6 | 17.0 | 0.0 ± 0.02 | 8.6 ± 0.01 | 8.6 ± 0.01 |
+| 0.04 | 1 | 51.8 % | 34.3 | 25.5 | 17.8 | 8.8 ± 0.02 | 7.8 ± 0.01 | 16.5 ± 0.02 |
+| 0.04 | 2 | 23.8 % | 56.4 | 25.5 | 13.4 | 30.9 ± 0.04 | 12.1 ± 0.02 | 43.0 ± 0.04 |
+
+- With zero hazard all three rates coincide exactly (tested).
+- With exits unrelated to growth (kappa = 0), the survivors are a random
+  sample: the naive rate equals the counterfactual one, and the selection bias
+  is 0. The naive rate then overstates only the full-cohort rate, because
+  exited firms count as misses (attrition 8.6 points).
+- With kappa > 0, the exits remove the slow growers, and the selection bias
+  grows quickly (8.8 points at kappa = 1, 30.9 at kappa = 2).
+- **Modelling choices:**
+  - Acquisitions are treated like failures. A takeover after a strong decade
+    would reduce the bias.
+  - The ± se is Monte-Carlo noise only. The size of the bias is driven by the
+    assumed hazard (h0, kappa) and the growth model, not by the simulation
+    error.
+
+## The validation report
+
+**Draft:** [`report/validation_report_draft.pdf`](report/validation_report_draft.pdf)
+(synthetic data only). The prose is written by the author. Every open text slot
+is an orange `\usertext{...}` box with guidance, so a build with open slots is
+visibly a draft; the title page counts the open slots.
+
+Build it from `UFOS.ai/RiskLab/` (needs the "report" extra and a TeX
+installation):
+
+```
+pip install -r requirements-report.in
+python report/build_report.py              # -> out/report/validation_report.pdf
+python report/build_report.py --publish    # also copies it to report/validation_report_draft.pdf
+```
+
+**What the build does:**
+
+- It checks the toolchain first: matplotlib, `pdflatex`, `kpsewhich`, the
+  LaTeX packages and the four study result files. Anything missing stops the
+  build with a clear message; there is no fallback renderer.
+- It writes the figures to `report/figures/` and the tables to
+  `report/tables/`.
+- It runs `pdflatex` twice, and a third time only if LaTeX asks for a rerun.
+
+**Required LaTeX packages:** geometry, graphicx, xcolor, booktabs, array,
+amsmath, amssymb, caption, float, hyperref. These are standard TeX Live
+packages; no lmodern or babel is needed, because the fonts are Computer
+Modern.
+
+**Inputs:** the figures and tables read the saved full-run results in
+`studies/results/*_full_results.json`. Figures 1 and 6 come from fixed-seed
+simulations.
+
+To refresh an input, run its study with `--mode full --save-results`. This
+writes `out/<study>/` and copies `results.json` and `summary.md` to
+`studies/results/<study>_full_results.json` and `_full_summary.md`.
+
+**No stale inputs:**
+
+- Every results file records a code fingerprint (`meta.code_sha256`). It is a
+  sha256 over the study script plus every `src/risklab/**/*.py` outside
+  `risklab/report/`, with LF-normalised line endings.
+- `build_report.py` recomputes the fingerprint and refuses an input whose
+  fingerprint is missing or differs. `--allow-stale` builds anyway and prints a
+  warning for each stale file.
+- A test checks that the committed results match the current code.
+
+**Reproducibility:**
+
+- The figures use the Agg backend and a style fixed in code, which ignores any
+  user `matplotlibrc`. Fonts are DejaVu, sizes are fixed, the PNG files carry
+  no software tag and the PDF files no creation date.
+- With the same matplotlib and FreeType versions, the files are byte-identical
+  (tested).
+- Across versions the bytes differ. matplotlib 3.10.9 (the user's PC) and
+  3.11.2 (the container) gave different PNG / PDF bytes for every figure, but
+  identical LaTeX snippets, including the numbers in the captions.
+- The report PDF is built with a fixed `SOURCE_DATE_EPOCH`, no PDF date and an
+  empty trailer ID. Two builds gave byte-identical PDFs in the container.
+
+**File names and PDF numbering:** LaTeX numbers figures and tables in the
+order they appear in the report, so the numbers differ from the file names:
+
+| report | file | report | file |
+|---|---|---|---|
+| Figure 1 | `fig7_survivorship` | Table 1 | `T1_model_inventory` |
+| Figure 2 | `fig6_qq_residuals` | Table 2 | `T6_survivorship` |
+| Figure 3 | `fig1_exceedances` | Table 3 | `T2_size` |
+| Figure 4 | `fig2_rejection_rates` | Table 4 | `T3_power` |
+| Figure 5 | `fig4_traffic_light` | Table 5 | `T4_estimation_window` |
+| Figure 6 | `fig3_estimation_window` | Table 6 | `T5_horizon` |
+| Figure 7 | `fig5_horizon` | Table 7 | `T7_findings` |
+
+**Gallery:**
+
+Rejection rates by model and test (report Figure 4):
+
+![Rejection rates by model and test](report/figures/fig2_rejection_rates.png)
+
+Estimation-window curve (report Figure 6):
+
+![Estimation-window curve](report/figures/fig3_estimation_window.png)
+
+Survivorship bias: three base rates, selection and attrition (report Figure 1):
+
+![Survivorship bias](report/figures/fig7_survivorship.png)
+
 ## Open points
 
 - **Pinned lock:** the repo rule asks for pinned, hash-checked dependencies.
@@ -377,8 +595,13 @@ Its main results, as relative bias ± se and RMSE:
 - **v0.1:** the skeleton.
 - **v0.2:** HS, normal and t VaR / ES; true VaR / ES; Kupiec, the exact
   binomial test, Christoffersen and the traffic light; the size / power study.
-- **v0.3 (this version):** EWMA, GARCH(1,1)-t and filtered HS with daily
+- **v0.3:** EWMA, GARCH(1,1)-t and filtered HS with daily
   state updates; h-day VaR / ES (sqrt-of-time, GARCH Monte Carlo, stationary
   bootstrap); the Acerbi-Szekely ES test; the 10-day horizon study.
+- **v0.4 (this version):** the validation report pipeline (figures, tables,
+  LaTeX skeleton, draft PDF), the estimation-window and survivorship studies.
+- **Next:** the author writes the report prose (the text slots); then the
+  user's own data in `local_data/` for an out-of-sample section (never in
+  the repo).
 - **Next (open):** further ES tests (Z1, Z3), multivariate portfolios, and real
   data in `local_data/` (never in the repo).

@@ -6,6 +6,9 @@ stationary block bootstrap); the true 1-day and h-day VaR / ES of the synthetic
 generators; Kupiec, exact binomial, Christoffersen, the Basel traffic light and
 the Acerbi-Szekely ES test; a walk-forward engine (stateful models, h-day
 blocks) and a deterministic results export.
+
+v0.4: the validation report pipeline - figures (optional extra ``report``,
+matplotlib), LaTeX tables and a report skeleton (``report/``).
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

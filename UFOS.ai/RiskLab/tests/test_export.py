@@ -160,3 +160,36 @@ class ExportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FingerprintTests(unittest.TestCase):
+    def test_code_fingerprint_crlf_and_change(self):
+        from risklab.report.export import code_fingerprint
+
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b, c = Path(tmp, "a.py"), Path(tmp, "b.py"), Path(tmp, "c.py")
+            a.write_bytes(b"x = 1\ny = 2\n")
+            b.write_bytes(b"x = 1\r\ny = 2\r\n")
+            c.write_bytes(b"x = 1\ny = 3\n")
+            fa, fb, fc = code_fingerprint(a), code_fingerprint(b), code_fingerprint(c)
+        self.assertEqual(len(fa), 64)
+        self.assertNotEqual(fa, fc)
+        # the file name is part of the hash only through its path relative to RiskLab; same content, same rel name
+        self.assertNotEqual(fa, fb)  # different file names (a.py vs b.py)
+
+    def test_crlf_normalised(self):
+        from risklab.report.export import code_fingerprint
+
+        with tempfile.TemporaryDirectory() as t1, tempfile.TemporaryDirectory() as t2:
+            Path(t1, "s.py").write_bytes(b"x = 1\ny = 2\n")
+            Path(t2, "s.py").write_bytes(b"x = 1\r\ny = 2\r\n")
+            self.assertEqual(code_fingerprint(Path(t1, "s.py")), code_fingerprint(Path(t2, "s.py")))
+
+    def test_save_full_results(self):
+        from risklab.report.export import save_full_results
+
+        with tempfile.TemporaryDirectory() as out, tempfile.TemporaryDirectory() as res:
+            Path(out, "results.json").write_text("{}", encoding="utf-8")
+            Path(out, "summary.md").write_text("# x\n", encoding="utf-8")
+            paths = save_full_results(out, "demo", res)
+            self.assertEqual([p.name for p in paths], ["demo_full_results.json", "demo_full_summary.md"])

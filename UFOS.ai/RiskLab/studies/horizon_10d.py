@@ -63,7 +63,8 @@ from risklab.conventions import make_rng
 from risklab.data import garch11, iid_normal, iid_student_t, true_var_es_h
 from risklab.horizon import empirical_var_es, simulate_garch_sums, sqrt_time
 from risklab.models import FitError, GarchTModel, NormalModel
-from risklab.report.export import default_out_dir, table_to_csv, table_to_json, text_to_file
+from risklab.report.export import (code_fingerprint, default_out_dir, save_full_results, table_to_csv,
+                                   table_to_json, text_to_file)
 
 STUDY = "horizon_10d"
 
@@ -231,7 +232,7 @@ def summary_markdown(rows: List[dict], cfg: HorizonConfig) -> str:
 
 
 def write_outputs(rows: List[dict], cfg: HorizonConfig, out_dir: Path) -> List[Path]:
-    meta = {"study": STUDY, "config": asdict(cfg), "scipy_version": scipy.__version__}
+    meta = {"study": STUDY, "code_sha256": code_fingerprint(__file__), "config": asdict(cfg), "scipy_version": scipy.__version__}
     out_dir = Path(out_dir)
     return [
         table_to_csv(rows, COLUMNS, out_dir / "results.csv", cfg.seed, meta),
@@ -248,7 +249,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--seed", type=int, default=HorizonConfig.seed)
     ap.add_argument("--out-dir", default=None, help="default: RiskLab/out/horizon_10d")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--save-results", action="store_true",
+                    help="with --mode full: also save results.json / summary.md as studies/results/"
+                         f"{STUDY}_full_*.json / .md (the inputs of the report)")
     args = ap.parse_args(argv)
+    if args.save_results and (args.mode != "full" or args.m is not None or args.seed != ap.get_default("seed")):
+        ap.error("--save-results needs --mode full with the default M and seed")
     cfg = HorizonConfig(m=args.m if args.m is not None else MODES[args.mode], seed=args.seed)
     if args.mode == "smoke":
         cfg.n_paths, cfg.truth_sims = 1000, 2000
@@ -257,6 +263,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     start = time.perf_counter()
     rows = run_study(cfg, log)
     paths = write_outputs(rows, cfg, out_dir)
+    if args.save_results:
+        paths += save_full_results(out_dir, STUDY)
     if log:
         log(f"{len(rows)} rows in {time.perf_counter() - start:.1f} s -> " + ", ".join(str(p) for p in paths))
     return 0

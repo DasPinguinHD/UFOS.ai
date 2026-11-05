@@ -1,0 +1,3 @@
+# Optional extra "report": figures of the validation report (unpinned; the lock is generated later).
+-r requirements.in
+matplotlib

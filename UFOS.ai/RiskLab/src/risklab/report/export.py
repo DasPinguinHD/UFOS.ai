@@ -40,6 +40,44 @@ def default_out_dir() -> Path:
     return _RISKLAB_ROOT / "out"
 
 
+def code_fingerprint(study_file) -> str:
+    """sha256 of the code that produced a study result: the study script plus every
+    ``src/risklab/**/*.py`` outside ``risklab/report/`` (report code does not change results).
+
+    Paths are taken relative to the RiskLab root and sorted; line endings are
+    normalised to LF, so a CRLF checkout gives the same fingerprint.
+    """
+    import hashlib
+
+    study = Path(study_file).resolve()
+    src = _RISKLAB_ROOT / "src" / "risklab"
+    files = [study] + sorted(p for p in src.rglob("*.py") if "report" not in p.relative_to(src).parts[:1])
+    h = hashlib.sha256()
+    for p in files:
+        try:
+            rel = p.relative_to(_RISKLAB_ROOT).as_posix()
+        except ValueError:
+            rel = p.name
+        h.update(rel.encode("utf-8") + b"\0")
+        h.update(p.read_bytes().replace(b"\r\n", b"\n") + b"\0")
+    return h.hexdigest()
+
+
+def save_full_results(out_dir: PathLike, study: str, results_dir: Optional[PathLike] = None) -> List[Path]:
+    """Copy ``<out_dir>/results.json`` and ``summary.md`` to
+    ``<RiskLab>/studies/results/<study>_full_results.json`` / ``_full_summary.md`` (``--save-results``)."""
+    import shutil
+
+    target = Path(results_dir) if results_dir is not None else _RISKLAB_ROOT / "studies" / "results"
+    target.mkdir(parents=True, exist_ok=True)
+    out = []
+    for src_name, suffix in (("results.json", "results.json"), ("summary.md", "summary.md")):
+        dst = target / f"{study}_full_{suffix}"
+        shutil.copyfile(Path(out_dir) / src_name, dst)
+        out.append(dst)
+    return out
+
+
 def _f(x) -> Optional[float]:
     """Plain float at full precision (None stays None, NaN/inf refused)."""
     if x is None:

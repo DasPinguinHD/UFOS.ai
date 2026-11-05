@@ -1,0 +1,105 @@
+"""Report figures: every figure function runs on tiny inputs; byte-level reproducibility (needs matplotlib)."""
+import os
+import sys
+
+_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
+if _SRC not in sys.path:  # path shim: tests run without installing the package
+    sys.path.insert(0, _SRC)
+
+import tempfile
+import unittest
+from pathlib import Path
+
+try:
+    import matplotlib  # noqa: F401
+    HAVE_MPL = True
+except ImportError:
+    HAVE_MPL = False
+
+SKIP_MSG = "matplotlib is not installed (optional extra 'report'): report figure tests skipped"
+
+
+def tiny_power():
+    rows = []
+    for model, w in (("oracle", 250), ("normal", 250), ("hs", 250), ("ewma_t", 250), ("garch_t", 250),
+                     ("fhs", 250), ("garch_t", 1000), ("fhs", 1000)):
+        k = 0.05 if model == "oracle" else 0.2
+        rows.append({"generator": "garch_t6", "model": model, "window": w, "T": 1000, "exceed_rate": 0.012,
+                     "reject_kupiec": k, "se_kupiec": 0.01, "reject_binom": k, "se_binom": 0.01, "reject_cc": k,
+                     "se_cc": 0.01, "reject_z2": k, "se_z2": 0.01, "exact_size_kupiec": 0.055,
+                     "exact_size_binom": 0.036, "tl_green": 0.7, "tl_yellow": 0.25, "tl_red": 0.05})
+    return {"meta": {"config": {"window": 250, "m": 10}}, "rows": rows}
+
+
+def tiny_horizon():
+    rows = [{"generator": g, "method": m, "bias": 0.01 * i, "bias_se": 0.005, "rmse": 0.1}
+            for g in ("iid_normal", "garch_t6") for i, m in enumerate(("sqrt10_normal", "garch_mc"))]
+    return {"meta": {"config": {"alpha": 0.99, "window": 500, "m": 5}}, "rows": rows}
+
+
+def tiny_ew():
+    rows = [{"model": "oracle", "window": None, "exceed_rate": 0.01, "exceed_se": 0.001, "ref_kupiec": 0.055,
+             "ref_z2": 0.05, "reject_kupiec": 0.05, "se_kupiec": 0.01, "reject_z2": 0.05, "se_z2": 0.01}]
+    for model in ("garch_t", "fhs"):
+        for w in (250, 500):
+            rows.append({"model": model, "window": w, "exceed_rate": 0.012, "exceed_se": 0.001, "reject_kupiec": 0.1,
+                         "se_kupiec": 0.02, "reject_z2": 0.1, "se_z2": 0.02})
+    return {"meta": {"config": {"alpha": 0.99, "T": 1000, "m": 5}}, "rows": rows}
+
+
+def tiny_surv():
+    rows = [{"h0": h0, "kappa": k, "threshold": g, "naive": 0.3 + k / 10, "counterfactual": 0.28, "true": 0.2,
+             "bias": 0.1 + k / 10, "bias_se": 0.01, "selection": 0.02 + k / 10, "selection_se": 0.01,
+             "attrition": 0.08, "attrition_se": 0.01}
+            for h0, k in ((0.0, 0.0), (0.04, 0.0), (0.04, 1.0)) for g in (0.05, 0.1)]
+    return {"meta": {"config": {"n_firms": 100, "m": 5, "h0": 0.04}}, "rows": rows}
+
+
+@unittest.skipUnless(HAVE_MPL, SKIP_MSG)
+class FigureTests(unittest.TestCase):
+    def _all(self, out):
+        from risklab.report import figures as F
+
+        return [
+            F.fig_exceedances(F.exceedance_data(seed=1, T=60, long_window=120, short_window=60), out),
+            F.fig_rejection_rates(tiny_power(), out),
+            F.fig_estimation_window(tiny_ew(), out),
+            F.fig_traffic_light(tiny_power(), out),
+            F.fig_horizon(tiny_horizon(), out),
+            F.fig_qq(F.qq_data(seed=2, n=200), out),
+            F.fig_survivorship(tiny_surv(), out),
+        ]
+
+    def test_each_figure_writes_png_and_pdf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            specs = self._all(Path(tmp))
+            self.assertEqual(len({s.stem for s in specs}), 7)
+            for s in specs:
+                self.assertEqual([p.suffix for p in s.paths], [".png", ".pdf"])
+                for p in s.paths:
+                    self.assertGreater(p.stat().st_size, 1000)
+                self.assertTrue(s.paths[0].read_bytes().startswith(b"\x89PNG"))
+                self.assertTrue(s.paths[1].read_bytes().startswith(b"%PDF"))
+                self.assertTrue(s.caption)
+
+    def test_reproducible_bytes_and_no_dates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = Path(tmp, "a"), Path(tmp, "b")
+            for x, y in zip(self._all(a), self._all(b)):
+                for p, q in zip(x.paths, y.paths):
+                    self.assertEqual(p.read_bytes(), q.read_bytes(), p.name)
+                pdf = x.paths[1].read_bytes()
+                self.assertNotIn(b"/CreationDate", pdf)
+                self.assertNotIn(b"matplotlib v", x.paths[0].read_bytes().lower())
+
+    def test_snippet(self):
+        from risklab.report import figures as F
+
+        spec = F.FigureSpec("fig9_x", "A caption.", ())
+        text = F.latex_snippet(spec)
+        self.assertIn("\\includegraphics[width=\\linewidth]{figures/fig9_x.pdf}", text)
+        self.assertIn("\\label{fig:fig9_x}", text)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2,3 +2,4 @@
 # The hash-pinned lock (requirements.txt) is generated later on the user's PC.
 numpy
 scipy
+# The report figures need matplotlib: see requirements-report.in (optional extra "report").

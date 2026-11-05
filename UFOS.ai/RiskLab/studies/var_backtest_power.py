@@ -85,7 +85,8 @@ from risklab.engine import walk_forward
 from risklab.models import (EWMAModel, FilteredHS, FitError, GarchTModel, HistoricalSimulation, NormalModel,
                             StudentTModel)
 from risklab.models.historical import exceedance_probability
-from risklab.report.export import default_out_dir, table_to_csv, table_to_json, text_to_file
+from risklab.report.export import (code_fingerprint, default_out_dir, save_full_results, table_to_csv,
+                                   table_to_json, text_to_file)
 
 STUDY = "var_backtest_power"
 
@@ -495,7 +496,7 @@ def summary_markdown(rows: List[dict], cfg: StudyConfig) -> str:
 
 
 def write_outputs(rows: List[dict], cfg: StudyConfig, out_dir: Path) -> List[Path]:
-    meta = {"study": STUDY, "config": {k: (list(v) if isinstance(v, tuple) else v)
+    meta = {"study": STUDY, "code_sha256": code_fingerprint(__file__), "config": {k: (list(v) if isinstance(v, tuple) else v)
                                        for k, v in asdict(cfg).items() if k != "cases"},
             "cases": [list(c) for c in cfg.cases], "scipy_version": scipy.__version__}
     out_dir = Path(out_dir)
@@ -514,7 +515,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--seed", type=int, default=StudyConfig.seed)
     ap.add_argument("--out-dir", default=None, help="default: RiskLab/out/var_backtest_power")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--save-results", action="store_true",
+                    help="with --mode full: also save results.json / summary.md as studies/results/"
+                         f"{STUDY}_full_*.json / .md (the inputs of the report)")
     args = ap.parse_args(argv)
+    if args.save_results and (args.mode != "full" or args.m is not None or args.seed != ap.get_default("seed")):
+        ap.error("--save-results needs --mode full with the default M and seed")
     cfg = StudyConfig(m=args.m if args.m is not None else MODES[args.mode], seed=args.seed)
     if args.mode == "smoke":
         cfg.horizons = (250,)
@@ -523,6 +529,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     start = time.perf_counter()
     rows = run_study(cfg, log)
     paths = write_outputs(rows, cfg, out_dir)
+    if args.save_results:
+        paths += save_full_results(out_dir, STUDY)
     if log:
         log(f"{len(rows)} rows in {time.perf_counter() - start:.1f} s -> " + ", ".join(str(p) for p in paths))
     return 0
