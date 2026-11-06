@@ -47,8 +47,9 @@ a multi-agent simulation of a hedge fund decision process (paper trading, no rea
   and event calendar, and a regime snapshot per slot in `data/options_structure.db`; read-only API
   `/v2/options-structure/*`. The dividend yield is implied per expiry from put-call parity (American options:
   approximate); open interest is the newest published (in practice two sessions old) and contracts without it are left
-  out of GEX with the OI coverage shown. Everything is **PROVISIONAL** while the archive's staleness / coverage numbers
-  and the OS2 assumptions (spread maximum, parity band / pairs) are unconfirmed (confirmation via
+  out of GEX with the OI coverage shown. Everything is **PROVISIONAL** while the OS2 assumptions (spread maximum, parity
+  band / pairs, …) are unconfirmed — the archive's staleness / coverage numbers were confirmed by the RTH run of
+  2026-11-06 (confirmation via
   `data/options_structure_config.json`). Nothing trades on it; no H1 / H2
   results before the evaluation date (frozen pre-registration `docs/preregistration/`).
 - **Overview API (stage 11, 2026-11-06, contract `strategy_platform/SPEC.md` §26):** read-only

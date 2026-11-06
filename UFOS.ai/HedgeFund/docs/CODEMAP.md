@@ -283,7 +283,7 @@ Subpackages:
 | `monitoring/fx.py`, `prices.py`, `tax_notice.py` | 19–150 | §19.6–8, §19.15 | EUR/USD (FRED DEXUSEU), Shadow closes, fixed tax notice (no tax export) |
 | `monitoring/shadow/service.py` | 691 | §19.6–8 | Shadow storage + orchestration |
 | `monitoring/shadow/{importers,normalize,diagnostics,shadow_portfolio,report}.py` | 180–945 | §19.6–8 | CSV importers (Trade Republic …), FIFO lots, diagnostics, rule portfolios, HTML audit report |
-| `options_archive/config.py` | 202 | §21.10, §21.11 | OS1: ALL archive numbers (filter, cadence, staleness, gate, timeouts); `CONFIRMED` / `PROVISIONAL_KEYS` (staleness, coverage until the RTH run); override `data/options_archive_config.json` (validated against `RANGES`, refused — never clamped) |
+| `options_archive/config.py` | 202 | §21.10, §21.11 | OS1: ALL archive numbers (filter, cadence, staleness, gate, timeouts); `CONFIRMED` (staleness + coverage confirmed by the RTH run 2026-11-06) / `PROVISIONAL_KEYS` (empty); override `data/options_archive_config.json` (validated against `RANGES`, refused — never clamped) |
 | `options_archive/transport.py` | 289 | §21.4, §21.9 | GET allow-list, no-redirect opener, body cap, sliding 30/min gate, `Http` (one retry, sanitized reasons, 429 stop, server `Date` → clock skew) — shared with `tools/verify_alpaca_options.py` |
 | `options_archive/db.py`, `slots.py` | 90–120 | §21.5, §21.2 | **options_archive.db** migration (insert-only triggers, schema v1); NY slots incl. early close / DST |
 | `options_archive/collector.py` | 472 | §21.3 | One run per slot (chain / OI / FRED), PIT stamps, staleness / clock skew / OI conflicts → `os_gaps`, crash rows |

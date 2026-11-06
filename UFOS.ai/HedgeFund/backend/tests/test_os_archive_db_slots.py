@@ -123,7 +123,7 @@ class SlotsTest(unittest.TestCase):
 class ConfirmedDefaultsTest(unittest.TestCase):
     """User decision 2026-10-24 13:49 after the OS0 run 20261024T114530Z: filter ±10 % / ≤ 45 days and 28 snapshots
     per session confirmed (defaults, no override file); OI floor + FRED series confirmed by the run; quote staleness
-    and coverage stay provisional until the RTH run (Monday 2026-10-26)."""
+    and coverage confirmed 2026-11-06 by the RTH run 20261106T163343Z (no archive key provisional any more)."""
 
     def test_defaults_are_the_confirmed_values(self):
         c = config.Config()
@@ -132,14 +132,18 @@ class ConfirmedDefaultsTest(unittest.TestCase):
         self.assertEqual((c.strike_band_pct, c.expiry_days), (10.0, 45))
         self.assertEqual(c.fred_series, ("VIXCLS", "VXVCLS", "VXNCLS"))
         # OS2 (SP §21.12): the risk-free rate series DTB3 is collected with FRED — confirmed by the user 2026-11-06
-        self.assertEqual(config.PROVISIONAL_KEYS, ("quote_max_age_s", "coverage_min_pct"))
+        self.assertEqual(config.PROVISIONAL_KEYS, ())                      # RTH run 20261106T163343Z
+        self.assertEqual((config.CONFIRMED["quote_max_age_s"], config.CONFIRMED["coverage_min_pct"]), (300, 80.0))
         self.assertEqual(c.rate_series, ("DTB3",))
         self.assertIn("rate_series", config.CONFIRMED)
         self.assertEqual((c.quote_max_age_s, c.coverage_min_pct), (300, 80.0))
         st = config.key_status(c)
         self.assertEqual(set(st["confirmed_keys"]), set(config.CONFIRMED))
-        self.assertEqual(st["provisional_keys"], ["quote_max_age_s", "coverage_min_pct"])
+        self.assertEqual(st["provisional_keys"], [])
         self.assertIn("20261024T114530Z", st["confirmed_by"])
+        self.assertIn("20261106T163343Z", st["confirmed_by"])
+        # the hashed ``provisional`` flag is deliberately unchanged (clearing it would change both hashes)
+        self.assertTrue(c.provisional)
         # the confirmation is kept OUT of the hashed config; OS2 added ``rate_series`` (a collected series, so it IS
         # hashed): runs after the archive's next start carry this hash (before: acccfa42…; os_configs keeps both)
         self.assertEqual(c.assumptions_hash, "1c09d76eafabf78bae5d2a30927af4b8afcaa06fcc3d2be9ba3b1c0a42447094")
@@ -156,7 +160,9 @@ class ConfirmedDefaultsTest(unittest.TestCase):
         self.assertIn("strike_band_pct", st["provisional_keys"])
         from strategy_platform.options_archive import report
         v = report.config_view(config.Config())
-        self.assertEqual(v["provisional_keys"], ["quote_max_age_s", "coverage_min_pct"])
+        self.assertEqual(v["provisional_keys"], [])
+        st = config.key_status(replace(config.Config(), quote_max_age_s=120))      # a changed confirmed value
+        self.assertIn("quote_max_age_s", st["provisional_keys"])
         self.assertIn("expiry_days", v["confirmed_keys"])
 
 

@@ -1,7 +1,10 @@
 """Every number of the options archive in ONE place (SP §21.2 / §21.3). Filter (±10 % strikes, ≤ 45 days), cadence
 (28 snapshots per session), the OI floor and the FRED series are CONFIRMED 2026-10-24 (the user's OS0 run
-20261024T114530Z + the user's decision 13:49); the quote-staleness threshold and the coverage minimum stay PROVISIONAL
-until the RTH run on Monday 2026-10-26. The lists ``CONFIRMED`` / ``PROVISIONAL_KEYS`` below are kept OUT of the hashed
+20261024T114530Z + the user's decision 13:49); the quote-staleness threshold (5 min) and the coverage minimum (80 %)
+are CONFIRMED 2026-11-06 by the RTH run 20261106T163343Z (``tools/verify_alpaca_options.py``, RESULT OK: snapshots
+PASS — SPY 4482 / QQQ 4734 snapshots, greeks / IV 90.5 % / 91.0 %, median quote age ≈ −3.4 s = PC clock ~3 s behind;
+contracts PARTIAL = the known D−2 OI behaviour; FRED PARTIAL = VIX9D / VXST not on FRED; user approval 2026-11-06).
+The lists ``CONFIRMED`` / ``PROVISIONAL_KEYS`` below are kept OUT of the hashed
 config (confirming a value does not change ``assumptions_hash``); the values themselves are hashed — including
 ``rate_series`` (OS2, the DTB3 risk-free rate, confirmed by the user 2026-11-06), which changed the hash from the
 archive's next start. Defaults below; ``data/options_archive_config.json`` may override known keys (validated: unknown key, wrong
@@ -28,7 +31,8 @@ OI_FRESH_SESSIONS = 2
 OVERRIDE_FILE = os.path.join(DATA_DIR, "options_archive_config.json")
 
 
-CONFIRMED_BY = "confirmed 2026-10-24 (OS0 run 20261024T114530Z)"
+CONFIRMED_BY = ("confirmed 2026-10-24 (OS0 run 20261024T114530Z); quote_max_age_s + coverage_min_pct confirmed "
+                "2026-11-06 (RTH run 20261106T163343Z)")
 # key → the confirmed default (a key counts as confirmed only while the effective value equals it)
 CONFIRMED = {
     "strike_band_pct": 10.0, "expiry_days": 45,                                      # filter (user decision 13:49)
@@ -37,14 +41,19 @@ CONFIRMED = {
     "oi_floor": "08:00",                     # OI of T published the morning of the next trading day (OS0 run)
     "fred_series": ("VIXCLS", "VXVCLS", "VXNCLS"),   # on FRED; VXSTCLS / VIX9DCLS are not (OS0 run)
     "rate_series": ("DTB3",),                # OS2 risk-free rate — user decision 2026-11-06 (SP §21.12)
+    # RTH run 20261106T163343Z (2026-11-06, user-approved): measured during regular trading hours
+    "quote_max_age_s": 300, "coverage_min_pct": 80.0,
 }
-# still PROVISIONAL: measured only during regular trading hours (RTH run Monday 2026-10-26)
-PROVISIONAL_KEYS = ("quote_max_age_s", "coverage_min_pct")
+# no archive key is provisional any more (2026-11-06); the OS2 keys are separate (options_structure/config.py)
+PROVISIONAL_KEYS: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class Config:
-    provisional: bool = True               # True while ANY key is provisional (see PROVISIONAL_KEYS)
+    # Hashed flag, deliberately left at its old default on 2026-11-06: flipping it would change the archive's AND
+    # OS2's assumptions_hash (OS2 history restarts). Whether to clear it is an open lead / user decision; the key
+    # status (``key_status``) is the source of which keys are confirmed.
+    provisional: bool = True
     symbols: Tuple[str, ...] = ("SPY", "QQQ")
     strike_band_pct: float = 10.0          # ± around the spot at snapshot time — confirmed 2026-10-24 (OS0 run)
     expiry_days: int = 45                  # expiries today … today + N calendar days (0DTE archived) — confirmed
@@ -56,8 +65,8 @@ class Config:
     oi_slot: str = "08:30"                 # contracts + OI once per morning
     fred_slot: str = "08:45"
     slot_lead_seconds: int = 90            # a chain snapshot starts at slot − lead and must finish by the slot
-    quote_max_age_s: int = 300             # a quote counts only if ≤ 5 min old at the slot — PROVISIONAL (RTH run)
-    coverage_min_pct: float = 80.0         # below → a "coverage" gap (GEX unavailable) — PROVISIONAL (RTH run)
+    quote_max_age_s: int = 300             # a quote counts only if ≤ 5 min old at the slot — confirmed 2026-11-06 (RTH)
+    coverage_min_pct: float = 80.0         # below → a "coverage" gap (GEX unavailable) — confirmed 2026-11-06 (RTH)
     oi_floor: str = "08:00"                # OI of T never available before T+1 08:00 New York — confirmed
     rate_per_min: int = 30                 # the archive's OWN Alpaca gate (backend: 150 + burst 10)
     page_limit: int = 1000                 # page size for contracts and snapshots

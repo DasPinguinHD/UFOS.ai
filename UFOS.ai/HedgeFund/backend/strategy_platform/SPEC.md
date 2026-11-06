@@ -964,7 +964,7 @@ SPY / QQQ **shares** through the OMS (options trading deferred, 0DTE struck, no 
   `HedgeFund/docs/preregistration/OS-H1-H2-2026-11-06b-operationalisation.md`, sha256
   `b54447554edae538996257bb8dacf536538b455e500c59f792e773ac25f7f05e` (1 957 bytes, LF; checked by
   `tests/test_os_preregistration.py`).
-  Chain: `valid_for` = quote time, staleness ≤ 5 min at the slot (**PROVISIONAL**), coverage ≥ 80 % (**PROVISIONAL**);
+  Chain: `valid_for` = quote time, staleness ≤ 5 min at the slot (confirmed 2026-11-06, §21.10), coverage ≥ 80 % (confirmed 2026-11-06);
   indicative trades +15 min. Backfilled bars never count for H1 / H2. Readers use only `available_at` ≤ decision time.
   **Gaps recorded in `os_gaps`, never filled** (no interpolation, previous value or second source).
 - **§21.4 Archive service:** own process via the Windows scheduled task **`UFOS.ai OptionsArchive`** (root folder,
@@ -997,8 +997,14 @@ SPY / QQQ **shares** through the OMS (options trading deferred, 0DTE struck, no 
   `options_archive/transport.py`; checks a–f; report `data/os0/verify_alpaca_options_<UTC>.json`, scrubbed; exit codes
   0 / 1 / 2 keys / 3 stopped / 4 HTTP 429).
 - **§21.10 Status:** OS0 run 20261024T114530Z (no FAIL) confirmed filter, cadence, OI semantics + floor, FRED series
-  (`CONFIRMED` in `options_archive/config.py`). **Still PROVISIONAL until the RTH run on Monday 2026-10-26:** quote
-  staleness 5 min and coverage 80 % (`PROVISIONAL_KEYS`).
+  (`CONFIRMED` in `options_archive/config.py`). **RTH run 20261106T163343Z (2026-11-06, RESULT OK, user-approved)**
+  confirmed quote staleness 5 min and coverage 80 % (moved to `CONFIRMED`; `PROVISIONAL_KEYS` is empty): snapshots
+  PASS (SPY 4482 / QQQ 4734, greeks / IV 90.5 % / 91.0 %, median quote age ≈ −3.4 s = PC clock ~3 s behind),
+  contracts PARTIAL (OI present 70.7 % / 60.6 % — the known D−2 OI behaviour, §21.3), FRED PARTIAL (VIX9D / VXST not on
+  FRED). The confirmation lists are outside the hash — the archive's and OS2's `assumptions_hash` are unchanged. The
+  hashed `Config.provisional` flag stays `true` on purpose (clearing it would change both hashes and restart the OS2
+  history — open lead / user decision); OS2 output stays **provisional** through its own keys
+  (`options_structure/config.py` `PROVISIONAL_KEYS`, need real OS2 results first).
 - **§21.11 OS1 as built** (package `strategy_platform/options_archive/`: `config.py` (all numbers, ranges, override
   `data/options_archive_config.json` — a bad override is REFUSED, archive exit 3, routes 409 `config_invalid`),
   `transport.py`, `db.py`, `slots.py` (30 slots / day; a slot is collected as that slot only inside its window, else
@@ -1038,7 +1044,7 @@ SPY / QQQ **shares** through the OMS (options trading deferred, 0DTE struck, no 
   - **Model (`bs.py`, `model.py`):** BSM with the expiry's implied q; own IV by a bracketed root finder (Newton inside
     the bracket, bisection otherwise; `NoIV` with the reason — below intrinsic / above the upper bound / no root, never
     clipped); delta, gamma, vega, theta, dollar gamma. Expiry 16:00 NY, ACT/365. Per expiry (in-band, not expired):
-    **quote coverage** (usable mid + own IV) below the archive's `coverage_min_pct` (80 %, PROVISIONAL) or no implied
+    **quote coverage** (usable mid + own IV) below the archive's `coverage_min_pct` (80 %, confirmed 2026-11-06) or no implied
     q → the expiry is unavailable; **OI coverage** (contracts with PIT OI + multiplier) is shown, NOT gating (user
     decision 2026-11-06). Vendor IV only compared (`vendor_iv` stats). **Implied-q quality flag** (os2d, decision:
     flagged + shown, NOT excluded): |q| > `q_flag_abs_pct` (5 %, PROVISIONAL) → `abs_q`, the pairs' MAD >

@@ -63,7 +63,9 @@ class PointInTimeTest(RegimeCase):
         # max of: chain rows (slot − 2 s), OI (08:00 floor), rate / VIX (08:46), bars (prev 16:30)
         self.assertEqual(reg["available_ms"], SLOT - 2000)
         self.assertTrue(reg["provisional"])
-        self.assertIn("archive.quote_max_age_s", reg["payload"]["provisional_keys"])
+        # archive keys confirmed by the RTH run 20261106T163343Z; OS2 is still provisional through its own keys
+        self.assertNotIn("archive.quote_max_age_s", reg["payload"]["provisional_keys"])
+        self.assertIn("spread_max_pct", reg["payload"]["provisional_keys"])
         self.assertNotIn("archive.rate_series", reg["payload"]["provisional_keys"])     # DTB3 confirmed 2026-11-06
         self.assertEqual(reg["payload"]["oi"]["newest_valid_for"], PREV.isoformat())
         self.assertEqual(reg["payload"]["oi"]["age_sessions"], 1)
