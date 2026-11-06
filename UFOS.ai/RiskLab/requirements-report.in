@@ -1,3 +1,5 @@
-# Optional extra "report": figures of the validation report (unpinned; the lock is generated later).
+# Optional extra "report": figures of the reports (unpinned). The hash-pinned lock is
+# requirements-report.lock (core + report), generated with uv 0.13.7 like requirements.lock;
+# see the README, "Dependencies".
 -r requirements.in
 matplotlib

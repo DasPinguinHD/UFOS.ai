@@ -1,8 +1,9 @@
 """Build a report document: figures, tables, then pdflatex twice.
 
-Two documents (``--doc``): ``validation`` (the VaR / ES validation report,
-``validation_report.tex``, the default) and ``overfitting`` (the overfitting study of the
-UFOS validation gates, ``overfitting_study.tex``). Each has its own study results, figures,
+Three documents (``--doc``): ``validation`` (the VaR / ES validation report,
+``validation_report.tex``, the default), ``overfitting`` (the overfitting study of the
+UFOS validation gates, ``overfitting_study.tex``) and ``overview`` (the 3-4 page project
+overview, ``overview.tex``; published as ``overview.pdf``). Each has its own study results, figures,
 tables and draft PDF (:data:`DOCS`).
 
 Steps:
@@ -20,7 +21,8 @@ Steps:
    (``SOURCE_DATE_EPOCH`` fixed; the template omits the PDF date and trailer ID);
 5. ``--publish --publish-to <dir>`` copies the PDF to ``<dir>/<document>_draft.pdf``
    (``validation_report_draft.pdf`` / ``overfitting_study_draft.pdf``). Report PDFs do not live in
-   the repository (user decision 2026-11-05): ``--publish-to`` is required with ``--publish`` (no
+   the repository (user decision 2026-11-05; the figure PDFs in ``report/figures/`` are LaTeX
+   inputs, not reports, and stay): ``--publish-to`` is required with ``--publish`` (no
    default), the directory must exist and must lie OUTSIDE the repository; a target inside it is
    refused. The repository is the nearest ancestor of ``RiskLab/`` that contains ``.git``; in a copy
    without ``.git`` the folder that contains ``RiskLab/`` counts as the repository (stated rule, so a
@@ -29,7 +31,7 @@ Steps:
 
 Run from ``UFOS.ai/RiskLab/``::
 
-    python report/build_report.py [--doc validation|overfitting] [--publish --publish-to DIR] [--skip-figures]
+    python report/build_report.py [--doc validation|overfitting|overview] [--publish --publish-to DIR] [--skip-figures]
 """
 from __future__ import annotations
 
@@ -56,6 +58,10 @@ DOCS = {
                                "estimation_window_full_results.json", "survivorship_full_results.json")},
     "overfitting": {"tex": "overfitting_study.tex", "draft": "overfitting_study_draft.pdf",
                     "results": ("gate_overfitting_full_results.json",)},
+    "overview": {"tex": "overview.tex", "draft": "overview.pdf",
+                 "results": ("var_backtest_power_full_results.json", "horizon_10d_full_results.json",
+                             "estimation_window_full_results.json", "survivorship_full_results.json",
+                             "gate_overfitting_full_results.json")},
 }
 TEX = DOCS["validation"]["tex"]
 #: LaTeX packages the template uses (all part of a standard TeX Live "latex-extra"-level installation).
@@ -211,7 +217,8 @@ def build(publish: bool = False, skip_figures: bool = False, allow_stale: bool =
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--doc", choices=sorted(DOCS), default="validation",
-                    help="validation (the VaR / ES validation report, default) or overfitting (the gate study)")
+                    help="validation (the VaR / ES validation report, default), overfitting (the gate study) or "
+                         "overview (the project overview)")
     ap.add_argument("--publish", action="store_true",
                     help="copy the PDF to <--publish-to>/<document>_draft.pdf (outside the repository)")
     ap.add_argument("--publish-to", default=None, metavar="DIR",

@@ -234,6 +234,50 @@ class FingerprintTests(unittest.TestCase):
         self.assertIn(root / "src" / "risklab" / "__init__.py", files)
         self.assertEqual(fp, export.code_fingerprint(root / "studies" / "survivorship.py"))
 
+    def test_version_line_is_normalised(self):
+        from risklab.report.export import INIT_REL, normalised_source
+
+        a = b'"""doc"""\n\n__version__ = "0.5.0"\n'
+        b = b'"""doc"""\r\n\r\n__version__ = "0.6.0"\r\n'
+        c = b'"""doc, changed"""\n\n__version__ = "0.5.0"\n'
+        self.assertEqual(normalised_source(INIT_REL, a), normalised_source(INIT_REL, b))
+        self.assertNotEqual(normalised_source(INIT_REL, a), normalised_source(INIT_REL, c))
+        # only risklab/__init__.py is normalised
+        self.assertNotEqual(normalised_source("src/risklab/engine.py", a), normalised_source("src/risklab/engine.py", b))
+        with self.assertRaises(ValueError):
+            normalised_source(INIT_REL, b'"""no version"""\n')
+
+    def test_version_only_change_keeps_results_valid(self):
+        """End to end on a copy of the tree: bumping only __version__ keeps every study's fingerprint;
+        any other change in risklab/__init__.py changes it."""
+        import shutil
+        import subprocess
+        import sys
+
+        root = Path(__file__).resolve().parents[1]
+        code = ("import sys; sys.path.insert(0, sys.argv[1] + '/src'); "
+                "from risklab.report.export import code_fingerprint; "
+                "print(code_fingerprint(sys.argv[1] + '/studies/survivorship.py'))")
+
+        def fp(tree):
+            res = subprocess.run([sys.executable, "-I", "-c", code, str(tree)], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            return res.stdout.strip()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp, "RiskLab")
+            for part in ("src", "studies"):
+                shutil.copytree(root / part, tree / part, ignore=shutil.ignore_patterns("__pycache__", "results"))
+            shutil.copy(root / "pyproject.toml", tree / "pyproject.toml")
+            init = tree / "src" / "risklab" / "__init__.py"
+            base = fp(tree)
+            self.assertEqual(base, fp(root))
+            text = init.read_text(encoding="utf-8")
+            init.write_text(text.replace('__version__ = "', '__version__ = "99.', 1), encoding="utf-8")
+            self.assertEqual(fp(tree), base)
+            init.write_text(text + "\n# any other change\n", encoding="utf-8")
+            self.assertNotEqual(fp(tree), base)
+
     def test_save_full_results(self):
         from risklab.report.export import save_full_results
 

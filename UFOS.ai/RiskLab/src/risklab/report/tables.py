@@ -15,6 +15,8 @@ TABLE_NAMES = ("T1_model_inventory", "T2_size", "T3_power", "T4_estimation_windo
                "T6_survivorship", "T7_findings")
 #: tables of the second document, the overfitting study of the UFOS validation gates
 OVERFIT_TABLE_NAMES = ("O1_gates_scope", "O2_fpr", "O3_power", "O4_holdout", "O5_calibration", "O6_findings")
+#: table of the project overview
+OVERVIEW_TABLE_NAMES = ("V1_key_results",)
 
 _LATEX_SPECIAL = {"\\": "\\textbackslash{}", "&": "\\&", "%": "\\%", "$": "\\$", "#": "\\#", "_": "\\_",
                   "{": "\\{", "}": "\\}", "~": "\\textasciitilde{}", "^": "\\textasciicircum{}"}
@@ -571,6 +573,50 @@ def table_overfitting_findings(go: dict) -> str:
                   colsep="3pt")
 
 
+# ---- V1: key results of the project overview ----------------------------------------------
+
+def table_key_results(power: dict, horizon: dict, ew: dict, surv: dict, go: dict) -> str:
+    """One row per headline result, every number read from the saved full runs."""
+    p = {(r["generator"], r["model"], r["window"], r["T"]): r for r in power["rows"]}
+    o250 = p[("garch_t6", "oracle", 250, 250)]
+    g = p[("garch_t6", "garch_t", 250, 1000)]
+    n = p[("garch_t6", "normal", 250, 1000)]
+    h = {(r["generator"], r["method"]): r for r in horizon["rows"]}["iid_t5", "sqrt10_garch"]
+    e = {(r["model"], r["window"]): r for r in ew["rows"]}
+    e500, e1000 = e[("garch_t", 500)], e[("garch_t", 1000)]
+    sv = {(r["h0"], r["kappa"], r["threshold"]): r for r in surv["rows"]}[(surv["meta"]["config"]["h0"], 1.0, 0.1)]
+    gi = {(r["data"], r["years"], r["signal"], r["k"], r["preset"]): r for r in go["rows"]}
+    worst = max((r for r in go["rows"] if r["signal"] == 0.0 and r["preset"] == "standard"),
+                key=lambda r: r["pass_stat"])
+    p10, p20 = gi[("iid_t", 10, 1.0, 64, "standard")], gi[("iid_t", 20, 1.0, 64, "standard")]
+    rows = [
+        ["Backtest size", "Kupiec's exact size at T = 250 (nominal 5\\,\\%); exact binomial test",
+         f"{pct(o250['exact_size_kupiec'], 2)}\\,\\%; {pct(o250['exact_size_binom'], 2)}\\,\\%", "size / power"],
+        ["Estimation risk", "Correct GARCH-t, 250-day window, T = 1000: Kupiec / Z2 rejection rate "
+         f"(exact Kupiec size {pct(g['exact_size_kupiec'], 1)}\\,\\%)",
+         f"{pm(g['reject_kupiec'], g['se_kupiec'])} / {pm(g['reject_z2'], g['se_z2'])}\\,\\%", "size / power"],
+        ["", "Same model, 500-day window: Kupiec; 1000 days: exceedance excess over the true VaR (pp)",
+         f"{pm(e500['reject_kupiec'], e500['se_kupiec'])}\\,\\%; "
+         f"{round(100 * e1000['exceed_diff'], 3) + 0.0:+.3f} $\\pm$ {pct(e1000['exceed_diff_se'], 3)}",
+         "estimation window"],
+        ["Clustering", "Static normal VaR on GARCH-t data, T = 1000: cc / Z2 rejection rate",
+         f"{pm(n['reject_cc'], n['se_cc'])} / {pm(n['reject_z2'], n['se_z2'])}\\,\\%", "size / power"],
+        ["10-day VaR", "$\\sqrt{10}\\times$ GARCH-t one-day VaR on iid $t_5$ data: relative bias",
+         f"{100 * h['bias']:+.1f} $\\pm$ {pct(h['bias_se'])}\\,\\%", "10-day horizon"],
+        ["Survivorship", "CAGR $\\ge$ 10\\,\\% (hazard strength 1): survivors / counterfactual / full cohort; "
+         "selection bias (pp)", f"{pct(sv['naive'])} / {pct(sv['counterfactual'])} / {pct(sv['true'])}\\,\\%; "
+                                f"{pm(sv['selection'], sv['selection_se'], 1, 2)}", "survivorship"],
+        ["Gate study", "UFOS statistical gates, standard: worst false-positive rate under noise; power at a true "
+         "Sharpe of 1, $K$ = 64, 10 / 20 years",
+         f"{pm(worst['pass_stat'], worst['pass_stat_se'])}\\,\\%; {pm(p10['pass_stat'], p10['pass_stat_se'])} / "
+         f"{pm(p20['pass_stat'], p20['pass_stat_se'])}\\,\\%", "gate overfitting"],
+    ]
+    return _table("V1_key_results", "Key results (synthetic data with known truth; Monte-Carlo rates $\\pm$ se). "
+                  "Every number is read from the saved full runs in \\texttt{studies/results/}.",
+                  _rag("1.9cm", "7.0cm", "3.6cm", "2.2cm"), ["Topic", "Result", "Value", "Study"], rows,
+                  size="\\footnotesize", colsep="4pt")
+
+
 # ---- write all --------------------------------------------------------------------------
 
 def load(path) -> dict:
@@ -579,7 +625,7 @@ def load(path) -> dict:
 
 
 def write_all(results_dir, out_dir, doc: str = "validation") -> List[Path]:
-    """Write the tables of ``doc`` (``validation``: T1..T7; ``overfitting``: O1..O6) from
+    """Write the tables of ``doc`` (``validation``: T1..T7; ``overfitting``: O1..O6; ``overview``: V1) from
     ``<results_dir>/<study>_full_results.json`` into ``out_dir``."""
     r = Path(results_dir)
     out = Path(out_dir)
@@ -590,6 +636,10 @@ def write_all(results_dir, out_dir, doc: str = "validation") -> List[Path]:
                  "O3_power": table_go_power(go), "O4_holdout": table_go_holdout(go),
                  "O5_calibration": table_go_calibration(go), "O6_findings": table_overfitting_findings(go)}
         return _write_tables(out, OVERFIT_TABLE_NAMES, texts)
+    if doc == "overview":
+        loaded = [load(r / f"{x}_full_results.json") for x in
+                  ("var_backtest_power", "horizon_10d", "estimation_window", "survivorship", "gate_overfitting")]
+        return _write_tables(out, OVERVIEW_TABLE_NAMES, {"V1_key_results": table_key_results(*loaded)})
     if doc != "validation":
         raise ValueError(f"unknown document {doc!r}")
     power = load(r / "var_backtest_power_full_results.json")

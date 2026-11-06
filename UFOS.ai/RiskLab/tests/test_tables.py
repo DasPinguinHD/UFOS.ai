@@ -187,6 +187,18 @@ class OverfitTableTests(unittest.TestCase):
                 self.assertIn(ref, findings)
 
 
+class OverviewTableTests(unittest.TestCase):
+    def test_key_results_from_saved_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = T.write_all(RESULTS, tmp, doc="overview")
+            self.assertEqual([p.stem for p in paths], list(T.OVERVIEW_TABLE_NAMES))
+            text = paths[0].read_text(encoding="utf-8")
+        self.assertIn("\\label{tab:V1_key_results}", text)
+        self.assertEqual(text.count(" \\\\\n"), 8)     # header + 7 result rows
+        for study in ("size / power", "estimation window", "10-day horizon", "survivorship", "gate overfitting"):
+            self.assertIn(study, text)
+
+
 class WriteAllTests(unittest.TestCase):
     def test_write_all_from_saved_results(self):
         with tempfile.TemporaryDirectory() as tmp:

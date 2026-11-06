@@ -149,5 +149,5 @@ other users (background: Claude Project `claude/project-direction.md`, `claude/c
 - CODEMAP: one line per file, current state; update it in the same change when adding / moving / retiring a file.
 - No scratchpad or `/tmp` paths in repo docs — refer to `UFOS.ai/docs/tasks/<file>`.
 - **Reports (user, 2026-11-05):** whenever a feature is finished or there is something to report on an aspect, the lead
-  produces a designed PDF report and saves it in the user's report folder `C:\Users\leonh\Documents\UFOS.ai` (file name `YYYY-MM-DD_<topic>.pdf`), OUTSIDE the repo (never committed;
+  produces a designed PDF report (report PDFs only; figure PDFs used as LaTeX assets may stay in the repo) and saves it in the user's report folder `C:\Users\leonh\Documents\UFOS.ai` (file name `YYYY-MM-DD_<topic>.pdf`), OUTSIDE the repo (never committed;
   `RiskLab/report/build_report.py --publish-to <dir>` refuses targets inside the repo).

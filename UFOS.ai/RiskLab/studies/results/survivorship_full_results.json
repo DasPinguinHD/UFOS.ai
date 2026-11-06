@@ -1,6 +1,11 @@
 {
   "meta": {
-    "code_sha256": "204fdcf50d0ed71fcd6d889f9c7530c678a1627c28d9f748144c203e9031293c",
+    "code_sha256": "ec0c88c95bfc648ae3c413d236e1103ed43fc4fc3ad40fc634f98689964c8a23",
+    "code_sha256_rekey": {
+      "date": "2026-11-06",
+      "previous": "204fdcf50d0ed71fcd6d889f9c7530c678a1627c28d9f748144c203e9031293c",
+      "reason": "v0.6 changed the fingerprint definition: the __version__ line of risklab/__init__.py is normalised out. The producing code (risklab_version above) and the current code have the same normalised fingerprint, so the rows are unchanged and valid; previous = the v0.5-definition fingerprint of the producing code."
+    },
     "config": {
       "drift_mean": 0.05,
       "drift_sd": 0.05,

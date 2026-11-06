@@ -26,6 +26,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import matplotlib.patches  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from scipy import stats  # noqa: E402
@@ -508,6 +509,50 @@ def fig_holdout(go: dict, out_dir, stem: str = "fig11_holdout", data: str = "iid
                f"(points with no passing path are omitted). Right: the share of all paths that pass the statistical "
                f"gates but fail H: under noise this is the holdout's gain, under a real edge its cost. M = {c['m']} paths "
                f"per point, error bars $\\pm 1.96$ se (conditional rates: on the passing paths only).")
+    return FigureSpec(stem, caption, paths)
+
+
+# ---- 12. architecture (overview document) ------------------------------------------------
+
+ARCH_BOXES = (
+    ("data", "synthetic generators\n+ true VaR / ES", 0.0, 1.0),
+    ("models", "HS, normal, t, EWMA,\nGARCH-t, FHS", 1.0, 1.0),
+    ("engine", "walk-forward,\nh-day blocks", 2.0, 1.0),
+    ("backtests", "Kupiec, binomial,\nChristoffersen, Z2,\ntraffic light", 3.0, 1.0),
+    ("studies", "size / power, 10-day,\nwindow, survivorship", 4.0, 1.0),
+    ("validation", "UFOS gates: DSR,\nPBO, Newey-West, grid", 2.0, 0.0),
+    ("gate study", "best-of-K search,\nFPR / power / holdout", 3.0, 0.0),
+    ("report", "figures, tables,\nLaTeX, fingerprints", 5.0, 0.5),
+)
+ARCH_EDGES = (("data", "models"), ("models", "engine"), ("engine", "backtests"), ("backtests", "studies"),
+              ("validation", "gate study"), ("studies", "report"), ("gate study", "report"))
+
+
+def fig_architecture(out_dir, stem: str = "fig12_architecture") -> FigureSpec:
+    """The module pipeline as boxes and arrows (static; no data)."""
+    pos = {k: (x, y) for k, _, x, y in ARCH_BOXES}
+    w, h = 0.9, 0.62
+    with _style():
+        fig, ax = plt.subplots(figsize=(6.5, 2.6))
+        ax.set_xlim(-0.5, 5.5)
+        ax.set_ylim(-0.45, 1.45)
+        ax.axis("off")
+        for k, text, x, y in ARCH_BOXES:
+            col = PALETTE["orange"] if k in ("validation", "gate study") else (
+                PALETTE["green"] if k == "report" else PALETTE["blue"])
+            ax.add_patch(matplotlib.patches.FancyBboxPatch((x - w / 2, y - h / 2), w, h,
+                                                           boxstyle="round,pad=0.02", fc="white", ec=col, lw=1.4))
+            ax.text(x, y + 0.17, k, ha="center", va="center", fontsize=8, weight="bold", color=col)
+            ax.text(x, y - 0.08, text, ha="center", va="center", fontsize=6)
+        for a, b in ARCH_EDGES:
+            (x0, y0), (x1, y1) = pos[a], pos[b]
+            ax.annotate("", xy=(x1 - w / 2, y1), xytext=(x0 + w / 2, y0),
+                        arrowprops=dict(arrowstyle="->", color=PALETTE["grey"], lw=1.0))
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = ("Risk Lab architecture. Blue: the market-risk pipeline from the synthetic data with known truth to "
+               "the studies; orange: the re-implemented UFOS validation gates and their overfitting study; green: "
+               "the report pipeline, which reads only saved, fingerprinted study results.")
     return FigureSpec(stem, caption, paths)
 
 

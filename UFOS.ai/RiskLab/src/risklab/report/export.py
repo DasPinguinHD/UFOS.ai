@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Union
@@ -105,7 +106,9 @@ def code_fingerprint(study_file) -> str:
     :func:`risklab_imports`), except ``risklab.report.*`` (report code does not change
     results; its own imports are not followed). Modules the study does not use (e.g. the
     gate validation code for the VaR studies) do not enter the fingerprint, so adding them
-    does not make other studies' results stale; ``risklab/__init__.py`` (the version) always does.
+    does not make other studies' results stale; ``risklab/__init__.py`` always counts, but its
+    ``__version__`` line is normalised out (:func:`normalised_source`), so a version-only bump keeps
+    results valid.
 
     Paths are taken relative to the RiskLab root and sorted; line endings are
     normalised to LF, so a CRLF checkout gives the same fingerprint.
@@ -128,8 +131,27 @@ def code_fingerprint(study_file) -> str:
         except ValueError:
             rel = p.name
         h.update(rel.encode("utf-8") + b"\0")
-        h.update(p.read_bytes().replace(b"\r\n", b"\n") + b"\0")
+        h.update(normalised_source(rel, p.read_bytes()) + b"\0")
     return h.hexdigest()
+
+
+#: the version assignment in ``src/risklab/__init__.py``; normalised out of the fingerprint (v0.6)
+_VERSION_LINE = re.compile(rb'^__version__ = "[^"\n]*"$', re.MULTILINE)
+VERSION_PLACEHOLDER = b'__version__ = "<normalised>"'
+INIT_REL = "src/risklab/__init__.py"
+
+
+def normalised_source(rel: str, data: bytes) -> bytes:
+    """The bytes that enter the fingerprint for the file at ``rel`` (relative to the RiskLab root):
+    CRLF -> LF; in ``src/risklab/__init__.py`` the ``__version__ = "..."`` line is replaced by a
+    fixed placeholder, so a version bump alone does not make results stale (every other change in
+    that file still does). Results files record the producing version in ``meta.risklab_version``."""
+    data = data.replace(b"\r\n", b"\n")
+    if rel == INIT_REL:
+        data, n = _VERSION_LINE.subn(VERSION_PLACEHOLDER, data)
+        if n != 1:
+            raise ValueError(f"{rel}: expected exactly one '__version__ = \"...\"' line, found {n}")
+    return data
 
 
 def save_full_results(out_dir: PathLike, study: str, results_dir: Optional[PathLike] = None) -> List[Path]:

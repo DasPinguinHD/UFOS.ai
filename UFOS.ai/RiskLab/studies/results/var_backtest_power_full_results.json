@@ -125,7 +125,12 @@
         ]
       ]
     ],
-    "code_sha256": "f89a2598709977afc25ccc0f387c3c53affc0e49b48ffba6b26bc09d935f54d4",
+    "code_sha256": "9534696799ec9b88851c4ffcf38f747432cde46875514971921894311cff3787",
+    "code_sha256_rekey": {
+      "date": "2026-11-06",
+      "previous": "f89a2598709977afc25ccc0f387c3c53affc0e49b48ffba6b26bc09d935f54d4",
+      "reason": "v0.6 changed the fingerprint definition: the __version__ line of risklab/__init__.py is normalised out. The producing code (risklab_version above) and the current code have the same normalised fingerprint, so the rows are unchanged and valid; previous = the v0.5-definition fingerprint of the producing code."
+    },
     "config": {
       "alpha": 0.99,
       "alpha_es": 0.975,

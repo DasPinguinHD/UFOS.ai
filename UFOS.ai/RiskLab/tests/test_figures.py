@@ -97,6 +97,21 @@ class OverfitFigureTests(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_MPL, SKIP_MSG)
+class ArchitectureFigureTests(unittest.TestCase):
+    def test_architecture_reproducible(self):
+        from risklab.report import figures as F
+
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b = F.fig_architecture(Path(tmp, "a")), F.fig_architecture(Path(tmp, "b"))
+            self.assertEqual(a.stem, "fig12_architecture")
+            for p, q in zip(a.paths, b.paths):
+                self.assertGreater(p.stat().st_size, 1000)
+                self.assertEqual(p.read_bytes(), q.read_bytes())
+        names = {k for k, *_ in F.ARCH_BOXES}
+        self.assertTrue(all(x in names and y in names for x, y in F.ARCH_EDGES))
+
+
+@unittest.skipUnless(HAVE_MPL, SKIP_MSG)
 class FigureTests(unittest.TestCase):
     def _all(self, out):
         from risklab.report import figures as F

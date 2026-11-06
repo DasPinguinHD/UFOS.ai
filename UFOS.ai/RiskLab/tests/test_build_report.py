@@ -136,11 +136,15 @@ class BuildReportTests(unittest.TestCase):
         self.assertEqual(stale, [], "re-run gate_overfitting with --mode full --save-results")
 
     def test_documents(self):
-        self.assertEqual(set(self.b.DOCS), {"validation", "overfitting"})
+        self.assertEqual(set(self.b.DOCS), {"validation", "overfitting", "overview"})
         for d in self.b.DOCS.values():
             self.assertTrue((self.b.REPORT_DIR / d["tex"]).is_file(), d["tex"])
         with self.assertRaises(self.b.ReportBuildError):
             self.b.check_toolchain(which=lambda tool: None, doc="nope")
+
+    def test_saved_results_current_for_every_document(self):
+        for doc in self.b.DOCS:
+            self.assertEqual(self.b.stale_inputs(self.b.ROOT / "studies" / "results", doc=doc), [], doc)
 
     def test_overfitting_results_are_named(self):
         import tempfile
