@@ -139,6 +139,7 @@ def config_view(cfg: Config) -> dict:
             "fred_slot_ny": cfg.fred_slot, "quote_max_age_s": cfg.quote_max_age_s,
             "coverage_min_pct": cfg.coverage_min_pct, "oi_floor_ny": cfg.oi_floor, "rate_per_min": cfg.rate_per_min,
             "symbols": list(cfg.symbols), "fred_series": list(cfg.fred_series),
+            "rate_series": list(cfg.rate_series),
             "assumptions_hash": cfg.assumptions_hash, **key_status(cfg)}
 
 

@@ -131,14 +131,18 @@ class ConfirmedDefaultsTest(unittest.TestCase):
             self.assertEqual(getattr(c, k), v, k)
         self.assertEqual((c.strike_band_pct, c.expiry_days), (10.0, 45))
         self.assertEqual(c.fred_series, ("VIXCLS", "VXVCLS", "VXNCLS"))
+        # OS2 (SP §21.12): the risk-free rate series DTB3 is collected with FRED — confirmed by the user 2026-11-06
         self.assertEqual(config.PROVISIONAL_KEYS, ("quote_max_age_s", "coverage_min_pct"))
+        self.assertEqual(c.rate_series, ("DTB3",))
+        self.assertIn("rate_series", config.CONFIRMED)
         self.assertEqual((c.quote_max_age_s, c.coverage_min_pct), (300, 80.0))
         st = config.key_status(c)
         self.assertEqual(set(st["confirmed_keys"]), set(config.CONFIRMED))
         self.assertEqual(st["provisional_keys"], ["quote_max_age_s", "coverage_min_pct"])
         self.assertIn("20261024T114530Z", st["confirmed_by"])
-        # the confirmation is kept OUT of the hashed config: the registered archive's assumptions_hash is unchanged
-        self.assertEqual(c.assumptions_hash, "acccfa4219e01e2bed31958f9320bba40746b7f4dbe87002986860f4d42d3134")
+        # the confirmation is kept OUT of the hashed config; OS2 added ``rate_series`` (a collected series, so it IS
+        # hashed): runs after the archive's next start carry this hash (before: acccfa42…; os_configs keeps both)
+        self.assertEqual(c.assumptions_hash, "1c09d76eafabf78bae5d2a30927af4b8afcaa06fcc3d2be9ba3b1c0a42447094")
 
     def test_28_snapshots_per_regular_session(self):
         plan = slots.day_slots(date(2026, 10, 26), config.Config())

@@ -60,7 +60,7 @@ def payload(cfg: Config, data_dir: Optional[str] = None, executable: Optional[st
         "tool": os.path.join(workdir, SCRIPT), "service_args": ["service"], "run_once_args": ["run-once"],
         "summary": {
             "what": (f"Collects {' / '.join(cfg.symbols)} option chains (Alpaca, indicative feed), open interest and the "
-                     f"FRED series {', '.join(cfg.fred_series)} into the local archive — data collection only: no "
+                     f"FRED series {', '.join(tuple(cfg.fred_series) + tuple(cfg.rate_series))} into the local archive — data collection only: no "
                      "trading, no orders, no AI."),
             "when": (f"Starts right after you confirm, and again at every Windows logon of {who}; it keeps running in "
                      f"the background. On NYSE trading days (New York time): open interest {cfg.oi_slot}, FRED "

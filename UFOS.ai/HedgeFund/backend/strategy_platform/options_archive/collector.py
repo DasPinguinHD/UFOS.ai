@@ -7,7 +7,8 @@ PIT (§21.3): chain rows — ``quote_t_ms`` = valid_for, ``available_ms`` = ``ob
 page; quotes after the slot or older than ``quote_max_age_s`` at the slot are gaps (the raw row is kept for audit,
 readers apply the rule); coverage below ``coverage_min_pct`` is a ``coverage`` gap. OI rows — valid_for =
 ``open_interest_date``; ``available_ms`` = max(observed, T+1 ``oi_floor`` New York) (PROVISIONAL floor), ``early_oi``
-when fetched before it; an OI whose valid_for is not the previous session is a ``stale_oi`` gap; a changed value for
+when fetched before it; an OI whose valid_for is D−1 or D−2 (``OI_FRESH_SESSIONS``; Alpaca publishes day 1 on day 3)
+is fresh, D−3 or older (or newer than D−1) is a ``stale_oi`` gap; a changed value for
 the same valid_for is a NEW row (correction). FRED — valid_for = the observation date, ``available_ms`` = observed;
 "." = a missing value (gap); a revised value is a new row.
 """
@@ -21,7 +22,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from strategy_platform.core import calendars
 
 from . import db as odb
-from .config import VERSION, Config, hm
+from .config import OI_FRESH_SESSIONS, VERSION, Config, hm
 from .slots import NY, Slot
 from .transport import DATA, FRED, TRADING, Http, RateLimited, Refused, Stop
 
@@ -359,6 +360,11 @@ class Collector:
         h = self.alpaca_headers()
         today = slot.ny.date()
         expected = calendars.previous_trading_day(today)
+        # user decision 2026-11-06 (SP §21.3): Alpaca publishes the OI of day 1 on day 3 — at the 08:30 slot the OI of
+        # D−2 is the expected one; D−1 is fine too; anything older (or newer than D−1) is a ``stale_oi`` gap
+        oldest_ok = expected
+        for _ in range(OI_FRESH_SESSIONS - 1):
+            oldest_ok = calendars.previous_trading_day(oldest_ok)
         floor_t = hm(cfg.oi_floor)
         for sym in cfg.symbols:
             observed = {"ms": 0}
@@ -391,7 +397,7 @@ class Collector:
                 if oi is None or vf is None:
                     missing += 1
                     continue
-                if vf != expected:
+                if not oldest_ok <= vf <= expected:
                     stale += 1
                 floor_ms = int(datetime.combine(calendars.next_trading_day(vf), floor_t, tzinfo=NY).timestamp() * 1000)
                 if occ in seen_oi:                   # listed twice in ONE answer: never collapse silently
@@ -410,7 +416,8 @@ class Collector:
                 r.gap("oi_conflict", f"{sym}: {conflicts} contract(s) listed twice with different open interest in "
                                      "one answer — the first value was kept", underlying=sym, now_ms=self.now_ms())
             if stale:
-                r.gap("stale_oi", f"{sym}: {stale} contract(s) with OI not of the previous session ({expected})",
+                r.gap("stale_oi", f"{sym}: {stale} contract(s) with OI not of the two previous sessions ({oldest_ok} … "
+                                  f"{expected})",
                       underlying=sym, now_ms=self.now_ms())
             if not rows and status == 200:
                 r.gap("not_collected", f"{sym}: no contracts in the window", underlying=sym, now_ms=self.now_ms())
@@ -440,7 +447,7 @@ class Collector:
             return
         latest = {(row[0], row[1]): row[2] for row in self.conn.execute(
             "SELECT series_id, date, value FROM os_fred ORDER BY available_ms")}
-        for sid in self.cfg.fred_series:
+        for sid in tuple(self.cfg.fred_series) + tuple(self.cfg.rate_series):     # rate_series: OS2 (SP §21.12)
             status, data = self.http.get(FRED, "/fred/series/observations",
                                          {"series_id": sid, "api_key": key, "file_type": "json", "sort_order": "desc",
                                           "limit": self.cfg.fred_observations}, None, "fred")

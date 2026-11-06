@@ -127,7 +127,16 @@ class OiTest(ArchiveCase):
         self.assertTrue(all(r["early_oi"] == 1 and r["available_ms"] == floor for r in oi))
         g = self.rows("SELECT kind, what FROM os_gaps")
         self.assertEqual({x["kind"] for x in g}, {"stale_oi"})
-        self.assertIn("not of the previous session (2026-10-23)", g[0]["what"])
+        self.assertIn("not of the two previous sessions (2026-10-22 … 2026-10-23)", g[0]["what"])
+
+    def test_oi_two_sessions_back_is_expected(self):
+        # user decision 2026-11-06 (SP §21.3): the OI of D−2 is what Alpaca has at 08:30 — not a gap; D−3 is
+        self.api.oi_date = "2026-10-22"                       # D = Mon 2026-10-26 → D−2 = Thu 10-22
+        self.arch.run(self.s)
+        self.assertEqual([x["kind"] for x in self.rows("SELECT kind FROM os_gaps")], [])
+        self.api.oi_date = "2026-10-21"
+        self.arch.run(self.s)
+        self.assertEqual({x["kind"] for x in self.rows("SELECT kind FROM os_gaps")}, {"stale_oi"})
 
 
 class FredTest(ArchiveCase):

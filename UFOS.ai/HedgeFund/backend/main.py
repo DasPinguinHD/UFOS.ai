@@ -716,6 +716,14 @@ async def main() -> None:
     except Exception as ex:   # noqa: BLE001
         logger.error("Strategy Platform monitor could not start: %s", ex)
         sp_monitor_task = None
+    # Options Structure OS2 (SPEC §21.12): computes GEX / surface / regime after each archived slot from the archive
+    # (read-only) into data/options_structure.db; no network calls, never trades, no consumer uses it yet (OS4).
+    try:
+        from strategy_platform.options_structure import regime as os2_regime
+        sp_os2_task = asyncio.get_running_loop().create_task(os2_regime.run_forever(), name="os2-regime")
+    except Exception as ex:   # noqa: BLE001
+        logger.error("Options Structure job could not start: %s", ex)
+        sp_os2_task = None
     if research is not None:
         research.start()   # creates the supervised Research tasks only (no I/O); never raises
 

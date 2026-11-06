@@ -198,6 +198,7 @@ API routes (all `(query, body, match) -> (status, payload)`, behind api_auth):
 | `api/broker_routes.py` | 336 | `/v2/brokers*`, `/v2/brokers/routing`, live guard (SP §18.9) |
 | `api/monitoring_routes.py` | 741 | `/v2/monitoring/*`, `/v2/shadow/*`, `/v2/insights/*` (SP §19.10, §20) |
 | `api/options_archive_routes.py` | 172 | `/v2/options-archive/{status,gaps,runs,registration}` read-only + `POST …/audit` (SP §21.11; sandbox → 409) |
+| `api/options_structure_routes.py` | 330 | `/v2/options-structure/{state,gex,surface,history,calendar,quality,progress}` read-only (SP §21.12; provisional flag, no H1/H2) |
 | `api/council_routes.py` | 380 | `/v2/council/{state,runs,runs/{id},run,params,broker-params,orders}` + `GET/POST /v2/council/switchover`, `POST …/switchover/{revert,retry,abort}` (SP §22.11, §22.14) |
 
 Subpackages:
@@ -271,6 +272,10 @@ Subpackages:
 | `options_archive/db.py`, `slots.py` | 90–120 | §21.5, §21.2 | **options_archive.db** migration (insert-only triggers, schema v1); NY slots incl. early close / DST |
 | `options_archive/collector.py` | 472 | §21.3 | One run per slot (chain / OI / FRED), PIT stamps, staleness / clock skew / OI conflicts → `os_gaps`, crash rows |
 | `options_archive/report.py`, `service.py`, `registration.py` | 80–300 | §21.4, §21.11 | Gap report + status payloads (never-raising status writes, `manual` block); process loop (lock, stop file, slot windows, per-run crash handling, redacted rotated log); registration DATA (task `UFOS.ai OptionsArchive`, no script text) |
+| `options_structure/config.py` | 230 | §21.12 | OS2: all numbers + assumptions (spread max, parity-implied q band / pairs, rate conversion, flip range, buckets, RR / VRP, state age, fresh-OI window D−1 / D−2, 15 % excluded-OI evaluability, implied-q flags); override `data/options_structure_config.json` (refused, never clamped) incl. `"confirmed"` keys; `assumptions_hash`, `provisional` |
+| `options_structure/quotes.py`, `bs.py`, `model.py` | 130–270 | §21.12 | Archive read-only: chain per run + quality flags, PIT OI (newest ≤ D−1, in practice D−2; fresh only D−1 / D−2, older = no fresh OI, age distribution) / FRED; BSM with q, own IV (bracketed, `NoIV`), greeks; parity-implied q per expiry (flagged + shown when |q| / MAD large), quote / OI coverage per expiry, vendor-IV comparison |
+| `options_structure/gex.py`, `surface.py`, `calendar.py` | 150–220 | §21.12 | GEX × dealer variants A/B/C, total over quote-qualified expiries + evaluability (excluded OI ≤ 15 %), buckets, flip curve, walls; smile / ATM / 25Δ RR-BF / expected move / IV30 / VIX label / VRP; expirations + FOMC / CPI |
+| `options_structure/regime.py`, `store.py` | 170–330 | §21.12 | Regime job (task `os2-regime`, idempotent, resumable, no network); **options_structure.db** (insert-only, schema v1) |
 | `monitoring/shadow/{symbols,pricing}.py` | 80–285 | §20.10–11 | ISIN → listing maps (+ read-only US ticker check `lookup`, provenance `confirmed_via`), one pricing source per instrument |
 
 ### 3.3 `market_research/` (MR — Research section backend)
@@ -349,6 +354,7 @@ Subpackages:
 | `newsroom.db` | `newsroom/db.py` (+ `fund/store.py`) | `insider_filings`, `macro_observations`, `calendar_snapshot`, `ai_results`, `disclosure_trades`, `disclosure_returns`, `issuer_sic`, `disclosure_jobs` (v4, 2-year retention), `disclosure_watch` (v5); old engine: `prices`, `signals`, `orders`, `positions`, `equity_curve`, `fund_*` |
 | `options_archive.db` | `strategy_platform/options_archive/db.py` (archive process only; backend opens it read-only) | `os_schema`, `os_configs`, `os_runs`, `os_contracts`, `os_contract_sightings`, `os_open_interest`, `os_chain_snapshots`, `os_bars`, `os_fred`, `os_gaps` |
 | `os_archive_status.json`, `options_archive.lock`, `options_archive.stop`, `options_archive_config.json`, `logs/options_archive.log` | `options_archive/service.py`, `config.py` | archive status / heartbeat, single-instance lock, stop request, config override, archive log |
+| `options_structure.db`, `options_structure_config.json` | `strategy_platform/options_structure/store.py`, `config.py` (backend OS2 job only) | `os2_schema`, `os2_assumptions`, `os2_results` (parts regime / gex / surface / quality); OS2 config override |
 | `api-token` | `api_auth.py` | session token (rewritten every start) |
 | `logs/backend.log` | `logging_setup.py` | |
 | `sandbox/`, `SANDBOX_ACTIVE` | `tools/sandbox.py`, `sandbox_profile.py` | DB copies + marker |
@@ -567,6 +573,7 @@ Location: `backend/tests/` (unittest, no network, fakes; testkits `*_testkit.py`
 | `test_s10_cs_ambiguity` | C# ambiguity check (SP §25.3) |
 | `test_s10_hardening`, `test_s10_security`, `test_sp_broker_retired`, `test_s10_env_cs_guard`, `test_s10_env`, `test_s10_lockfile` | venv guard, calendar 2028–2030, races, notices parity; security; Kraken retirement guard; C# `.env` guard, python env guard + settings, lock files |
 | `test_os_*` | OS0 (options check, preregistration), OS1 archive (`test_os_archive_*`, testkit `os_archive_testkit.py`) |
+| `test_os2_*` | OS2 computations (`bs`, `gex`, `surface`, `calendar`, `regime`, `api`; testkit `os2_testkit.py` — synthetic chains only) |
 | `test_ai_budgets`, `test_usage`, `test_cost_ledger` | AI budgets / ledger |
 | `test_disclosures_engine`, `test_disclosures_live`, `test_disclosures_backfill` | Newsroom Disclosures (SP §24) |
 | `test_congress`, `test_congress_returns`, `test_congress_backfill` | Congress trades (SP §24.1; synthetic rows only) |

@@ -676,10 +676,11 @@ from .broker_routes import BROKER_ROUTES, BrokerRoutesMixin  # noqa: E402 — st
 from .monitoring_routes import MONITORING_ROUTES, MonitoringRoutesMixin, read_csv_body  # noqa: E402 — stage 9 (SPEC §19.10)
 from .options_archive_routes import OPTIONS_ARCHIVE_ROUTES, OptionsArchiveRoutesMixin  # noqa: E402 — OS1 (SPEC §21.11)
 from .council_routes import COUNCIL_ROUTES, CouncilRoutesMixin  # noqa: E402 — S10-C (SPEC §22.11)
+from .options_structure_routes import OPTIONS_STRUCTURE_ROUTES, OptionsStructureRoutesMixin  # noqa: E402 — OS2 (§21.12)
 
 
 class V2Api(TradingRoutesMixin, BrokerRoutesMixin, MonitoringRoutesMixin, OptionsArchiveRoutesMixin,
-            CouncilRoutesMixin):
+            CouncilRoutesMixin, OptionsStructureRoutesMixin):
     """Route handlers (see module docstring)."""
 
     async def _guarded(self, fn, *args):
@@ -1918,6 +1919,7 @@ ROUTES = ROUTES + BROKER_ROUTES      # stage 8: /v2/brokers/* (SPEC §18.9)
 ROUTES = ROUTES + MONITORING_ROUTES  # stage 9: /v2/monitoring/*, /v2/shadow/* (SPEC §19.10)
 ROUTES = ROUTES + OPTIONS_ARCHIVE_ROUTES   # OS1: /v2/options-archive/* (SPEC §21.11, read-only + audit)
 ROUTES = ROUTES + COUNCIL_ROUTES   # S10-C: /v2/council/* (SPEC §22.11)
+ROUTES = ROUTES + OPTIONS_STRUCTURE_ROUTES   # OS2: /v2/options-structure/* (SPEC §21.12, read-only)
 
 
 async def read_paper_body(request):

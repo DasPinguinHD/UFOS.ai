@@ -919,7 +919,7 @@ passed validation + holdout; nothing is faked in the real DB). Code `sandbox_pro
   "synthetic fixture for UI testing — no real validation"); payloads carry `fixture` / `fixture_note` only for it.
 - **S5 `force-decay "<strategy>"`:** sandbox only; one synthetic shock session → `decay._pause` (audit `synthetic:
   true`); monitoring shows `decay.paused.synthetic`.
-## 21. Options Structure layer — OS0 contract (2026-10-23), OS1 archive built (2026-10-24)
+## 21. Options Structure layer — OS0 contract (2026-10-23), OS1 archive built (2026-10-24), OS2 built (2026-11-06)
 
 Full text (endpoint table, request budget reasoning, tables as planned vs built, timelines, the OS0 tool's checks a–f,
 OS1 as-built detail, test lists): → spec-archive/21-options-structure.md. Plan: project doc
@@ -941,7 +941,29 @@ SPY / QQQ **shares** through the OMS (options trading deferred, 0DTE struck, no 
   sessions** (user 2026-10-24). NY wall-clock slots (DST gap week tested).
 - **§21.3 Point-in-time (binding):** every value carries `valid_for`, `available_at`, `observed_at` + via `os_runs`
   `source`, `feed`, `model_version`, `assumptions_hash`; epoch ms UTC. OI: `valid_for` = T, `available_at` ≥ **T+1
-  08:00 NY** (earlier fetch → `early_oi`), counts only if `valid_for` = the previous session; corrections = new rows.
+  08:00 NY** (earlier fetch → `early_oi`); corrections = new rows. **Changed 2026-11-06 (user decision; the frozen
+  pre-registration only requires `available_at` ≤ decision time and is NOT edited):** a reader uses per contract the
+  NEWEST OI with `valid_for` ≤ the previous session AND `available_at` ≤ the decision time — in practice D−2, because
+  Alpaca publishes the OI of day 1 on day 3 (Alpaca community forum, thread "Old option Open Interest dates", Feb 2026;
+  the archive's 08:30 runs confirm it: valid_for 10-27 / 10-28 / 11-03 for the runs of 10-29 / 10-30 / 11-05). Every
+  output states the OI date and its age. The archive's `stale_oi` gap = an OI date outside D−2 … D−1 (was: ≠ D−1).
+  Before: "counts only if `valid_for` = the previous session" (it made GEX permanently unavailable).
+  **Changed 2026-11-06 (user decision, os2c) — "total GEX = sum over quote-qualified expiries":** the total GEX of a
+  slot (the regime basis, also for H1 / H2) = the sum over ALL archived expiries that pass the quote-coverage rule;
+  failing expiries are excluded and listed with their quote coverage and the excluded share (gamma notional where
+  computable, else the excluded OI). Operational note next to the frozen file (which stays untouched):
+  `HedgeFund/docs/preregistration/OS-H1-H2-2026-11-06-operationalisation.md`, sha256
+  `2f09ddbcd02f03f888cfc4daa899dd3b2bbe689a1135e4f3f7c5fe76bc3754bc` (1 997 bytes, LF; checked by
+  `tests/test_os_preregistration.py`).
+  **Changed 2026-11-06 (user decision, os2d) — OI window + evaluability:** (a) OI is used only when its `valid_for`
+  is D−1 or D−2 (`oi_max_age_sessions` = 2, hashed; the archive's fresh window `OI_FRESH_SESSIONS` — the OS2 key is
+  refused above it); older OI = no fresh OI (the contract contributes 0 (no OI reported), counted with the reason;
+  the per-contract OI age distribution is shown). (b) A decision time is **not evaluable** when the excluded
+  expiries carry more than `max_excluded_oi_pct` = 15 % (hashed) of the total OI → the regime is `unavailable` with
+  "GEX partial: excluded OI x % > 15 %". Dated note (amends the 2026-11-06 note; both earlier files untouched):
+  `HedgeFund/docs/preregistration/OS-H1-H2-2026-11-06b-operationalisation.md`, sha256
+  `b54447554edae538996257bb8dacf536538b455e500c59f792e773ac25f7f05e` (1 957 bytes, LF; checked by
+  `tests/test_os_preregistration.py`).
   Chain: `valid_for` = quote time, staleness ≤ 5 min at the slot (**PROVISIONAL**), coverage ≥ 80 % (**PROVISIONAL**);
   indicative trades +15 min. Backfilled bars never count for H1 / H2. Readers use only `available_at` ≤ decision time.
   **Gaps recorded in `os_gaps`, never filled** (no interpolation, previous value or second source).
@@ -966,7 +988,11 @@ SPY / QQQ **shares** through the OMS (options trading deferred, 0DTE struck, no 
   frozen **2026-10-23**, before the first archived day (user approval 2026-10-22). **sha256
   `95d3ac66736ad358df23b4628f0c32425f4b0b4be37138f7b52a813afc3b8195`** (2 198 bytes, UTF-8, LF; `HedgeFund/.gitattributes`
   marks `docs/preregistration/**` `-text`). `tests/test_os_preregistration.py` recomputes it. Never edited — changes
-  only as NEW dated files (their sha256 recorded here). Measurability rules (§21.2 / §21.3) live here.
+  only as NEW dated files (their sha256 recorded here). Measurability rules (§21.2 / §21.3) live here. Dated notes:
+  **`OS-H1-H2-2026-11-06-operationalisation.md`** (sha256 `2f09ddbcd02f03f888cfc4daa899dd3b2bbe689a1135e4f3f7c5fe76bc3754bc`,
+  user decision 2026-11-06) — the operational definition of "total GEX" (§21.3); **`OS-H1-H2-2026-11-06b-operationalisation.md`**
+  (sha256 `b54447554edae538996257bb8dacf536538b455e500c59f792e773ac25f7f05e`, user decision 2026-11-06, amends the first note) — OI window D−1 / D−2 and the 15 % evaluability
+  rule (§21.3); the hypotheses are unchanged.
 - **§21.9 OS0 check** `tools/verify_alpaca_options.py` (read-only, allow-list + transport shared with the archive in
   `options_archive/transport.py`; checks a–f; report `data/os0/verify_alpaca_options_<UTC>.json`, scrubbed; exit codes
   0 / 1 / 2 keys / 3 stopped / 4 HTTP 429).
@@ -981,6 +1007,106 @@ SPY / QQQ **shares** through the OMS (options trading deferred, 0DTE struck, no 
   codes 0–7). Backend read-only API (`api/options_archive_routes.py`): `GET /v2/options-archive/status | gaps | runs |
   registration`, `POST /v2/options-archive/audit`. **Not in OS1:** the WPF card, option bars, any computation (OS2).
   Awaiting the user's registration.
+- **§21.12 OS2 computations — as built (2026-11-06, task `UFOS.ai/docs/tasks/OS2_TASK.md`; plan §4 / §6 / §6b;
+  review fixes os2b the same day).** Package `strategy_platform/options_structure/`; **nothing trades, nothing feeds a
+  strategy** (OS4 = DSL operators later); no consumer changes behaviour. **No H1 / H2 statistics** (§21.8): no
+  regressions on r_first / r_last, no hit rates per regime — only the progress counter.
+  - **Inputs (read-only):** `options_archive.db` opened `mode=ro` (`quotes.open_archive_ro`); the platform's cached
+    daily bars via `storage.db.query_bars(known_by=slot)` (no fetch); the Newsroom FOMC schedule
+    (`calendar_collector.FOMC_MEETINGS`) and economic-calendar snapshot (CPI dates, used only when its `updated` ≤ the
+    as-of time). The OS2 job makes no network calls.
+  - **Rate (user decision 2026-11-06: confirmed):** FRED **DTB3** (3-month T-bill, discount basis) archived
+    point-in-time by the OS1 FRED run — archive config key `rate_series` (default `("DTB3",)`, in `CONFIRMED`; the
+    value is hashed, so the archive's `assumptions_hash` changes at its next start). The Newsroom store was not used:
+    it replaces observations in place (not point-in-time). `r = −ln(1 − d·91/360)·365/91`, one flat rate for every
+    expiry; the newest observation with `available_at` ≤ the slot, ≤ 7 days old. Slots before the first archived DTB3
+    have no rate → unavailable (nothing backfilled).
+  - **Dividend yield (user decision 2026-11-06):** implied PER EXPIRY from put-call parity, `q_K = −ln((C − P + K
+    e^{−rT}) / S) / T`, median over the strikes within ±`parity_band_pct` (3 %) of the spot where both sides have a
+    usable mid, ≥ `parity_min_pairs` (3) pairs — else that expiry is unavailable with the reason (no fallback). SPY /
+    QQQ options are **American**: early exercise makes European parity approximate, so the implied q is a
+    market-consistent carry (it absorbs the early-exercise premium and any rate mismatch), not a dividend forecast. The
+    fixed per-symbol yields (SPY 1.2 %, QQQ 0.6 %) are only a cross-check in the outputs.
+  - **Quotes (`quotes.py`):** flags `missing_quote`, `after_slot`, `stale` (archive `quote_max_age_s`), `crossed`,
+    `locked`, `zero_bid`, `wide_spread` (> `spread_max_pct` = 50 %, PROVISIONAL), `outside_band`, `expired`; a mid only
+    from an unflagged quote. OI per §21.3 (changed 2026-11-06): per contract the newest `valid_for` ≤ the previous
+    session with `available_at` ≤ the slot and ≥ that date's T+1 08:00 floor (re-checked); `oi_summary` = the dates
+    used, the newest date, its age in sessions, the OI coverage; **fresh OI only** (os2d): `valid_for` D−1 / D−2
+    (`oi_max_age_sessions` = 2), older → reason "no fresh OI …", counted in `no_fresh_oi`, and the per-contract
+    `age_distribution` (sessions → contracts, `none` = no OI at all). Multiplier from `os_contracts.size` (missing → not in
+    GEX). Contract attributes from the OCC symbol.
+  - **Model (`bs.py`, `model.py`):** BSM with the expiry's implied q; own IV by a bracketed root finder (Newton inside
+    the bracket, bisection otherwise; `NoIV` with the reason — below intrinsic / above the upper bound / no root, never
+    clipped); delta, gamma, vega, theta, dollar gamma. Expiry 16:00 NY, ACT/365. Per expiry (in-band, not expired):
+    **quote coverage** (usable mid + own IV) below the archive's `coverage_min_pct` (80 %, PROVISIONAL) or no implied
+    q → the expiry is unavailable; **OI coverage** (contracts with PIT OI + multiplier) is shown, NOT gating (user
+    decision 2026-11-06). Vendor IV only compared (`vendor_iv` stats). **Implied-q quality flag** (os2d, decision:
+    flagged + shown, NOT excluded): |q| > `q_flag_abs_pct` (5 %, PROVISIONAL) → `abs_q`, the pairs' MAD >
+    `q_flag_mad_pct` (2 %, PROVISIONAL) → `pair_dispersion`; listed per expiry (`q_flags`, `q_mad`), in the quality
+    view (`q_flagged_expiries`) and in `dividend_yield.flagged_expiries`; the expiry stays in use (excluding it would
+    move the total-GEX basis on a provisional threshold).
+  - **GEX (`gex.py`):** USD per 1 % move, `OI × gamma × multiplier × S² × 0.01`; a contract without (fresh) OI
+    contributes 0 (no OI reported) (user 2026-11-06: no decision needed; shown as "OI reported for x %" — Alpaca never reported an
+    explicit 0); variants **A** calls + / puts − (pre-registration baseline), **B** all −, **C** OTM − / ITM +
+    (moneyness at the snapshot spot). **Total GEX (user decision 2026-11-06, §21.3) = the sum over the quote-qualified
+    expiries**: `total.included`, `total.excluded` (expiry, bucket, quote coverage, reason), `excluded_text` (e.g. "0-7
+    d: 2 of 3 expiries excluded (68 % usable quotes)"), `excluded_gamma_share_pct` (unsigned gamma notional of the
+    excluded expiries' contracts that still have an IV — a lower bound; `null` when none), `excluded_oi` (contracts,
+    OI, share of total OI); status `partial` when anything is excluded; unavailable only when no expiry qualifies or
+    no qualified contract has OI. The regime uses this total under A plus the A–C agreement. **Evaluability**
+    (os2d): `total.evaluable` {rule, max_excluded_oi_pct, excluded_oi_pct, ok, reason} — excluded OI share >
+    `max_excluded_oi_pct` (15) → the regime is `unavailable` ("GEX partial: excluded OI x % > 15 %"), no sign / flip /
+    walls; the regime / state payload carries `gex_evaluable` and `gex_excluded.oi_share_pct` (shown also when the
+    gamma share is `null`). Per strike, walls and
+    the flip curve (±5 %, 101 points, sticky strike; flip = the crossing nearest the spot or `null` + reason) use the
+    total's contracts; `agree` = same non-zero sign under A–C. **Bucket view** 0–7 / 8–30 / 31–45 unchanged and
+    strict: a bucket with a failing expiry (quote coverage / no implied q) or without any contract with OI is
+    unavailable.
+  - **Surface (`surface.py`):** smile (OTM, k = ln K/F with the expiry's q), ATM IV (linear in k), 25Δ RR / BF (linear
+    in own delta, inside the expiry only, no extrapolation), RR percentile vs earlier slots (n ≥ 20), expected move
+    today / next: the straddle mid vs the model straddle √(2/π)·IV_ATM·√T·S (≈ 0.80 σ√T S, so the difference is not
+    structurally −20 %) plus the one-sigma move IV_ATM·√T·S, ATM term structure, IV_30 by total variance, VIX label
+    VIXCLS vs VXVCLS (same date; QQQ shows VXNCLS as a level), VRP = IV_30 − RV_21 (close-to-close, √252, newest close =
+    the previous session).
+  - **Calendar (`calendar.py`):** monthly (3rd Friday, holiday → the trading day before), quarterly (Mar / Jun / Sep /
+    Dec monthlies), VIX (30 days before the next month's SPX expiration, Cboe holiday rule), FOMC, CPI; days to each.
+  - **Config + confirmation (`config.py`):** override `data/options_structure_config.json` (validated, refused —
+    never clamped); `"confirmed": {key: value}` (+ `"confirmed_note"`) confirms keys of `PROVISIONAL_KEYS`
+    (`spread_max_pct`, `parity_band_pct`, `parity_min_pairs`, `state_max_age_minutes`, `rr_history_min`,
+    `q_flag_abs_pct`, `q_flag_mad_pct`) — a key counts
+    as confirmed only while its effective value equals the confirmed one; confirmations are kept out of the
+    assumptions hash. A changed VALUE → a new `assumptions_hash` → the OS2 history restarts under it (the API says so;
+    old rows are kept).
+  - **Regime service (`regime.py`, backend task `os2-regime`, every 60 s):** per chain run (intraday / eod, not
+    failed; `manual` never) and symbol the parts `quality`, `gex`, `surface`, `regime` → **`data/options_structure.db`**
+    (`store.py`; decision: its own DB like the archive's, not hedgefund.db — derived, re-computable data with its own
+    schema; WAL, schema v1, insert-only triggers, `recursive_triggers`); key (run, symbol, part, `model_version`
+    `os2-1`, `assumptions_hash`); `valid_for` = slot, `available_at` = max of the inputs' `available_at`, `computed_at`,
+    `provisional`, reasons, `source_runs`; the regime / quality payloads carry the OI dates / age / coverage and the
+    implied q per expiry. Idempotent (done = the regime row exists), resumable, one transaction per (run, symbol); a
+    crashing computation is logged, not stored, retried ≤ 3× per process. `provisional` = the archive config is
+    provisional OR an OS2 key is unconfirmed.
+  - **API** (`api/options_structure_routes.py`, read-only, token like every `/v2` route): `GET
+    /v2/options-structure/state?symbol=&as_of=` (newest regime row with `available_at` ≤ as_of; older than 30 min →
+    `available: false` "no fresh slot", no live fallback; incl. the OI dates / age), `…/gex?symbol=&slot=` and
+    `…/surface` (slot = `latest`, ISO-8601 with offset or epoch ms; 404 `unknown_slot`), `…/history?symbol=&field=&
+    days≤90` (current assumptions only — the note says the history restarts after an OS2 config change),
+    `…/calendar?days≤400`, `…/quality?symbol=&days≤31` (coverage per expiry incl. OI coverage and implied q, flags,
+    vendor-IV stats, OI dates, rate, the archive's gaps), `…/progress` (sessions archived — independent of the
+    archive's config hash; eligible = regular sessions with 09:55 and 15:25 on time; target 120; no results). Errors
+    400 with the reason; bad config → 409 `config_invalid`.
+  - **Tests (synthetic chains, temp dirs):** `test_os2_bs` (8), `test_os2_gex` (7: known answer, hand-solved flip,
+    variants, OI coverage, total over quote-qualified expiries with the excluded list / gamma share / OI, nothing
+    qualified), `test_os2_surface` (9: incl. implied q per expiry, robust median, no
+    fallback), `test_os2_calendar` (4: 2025 / 2026 dates by hand), `test_os2_regime` (21: PIT — OI floor / D−2 rule /
+    newest per contract / today never / D−3 = no fresh OI + age distribution / after the slot, missing OI contributes
+    0, evaluability > 15 % / ≤ 15 % excluded OI, implied-q flag shown + still used, late rows, stale quotes, rate; read-only
+    archive; insert-only store; job idempotence / resume / crash / new hash; RR history; config + confirmation),
+    `test_os2_api` (8: incl. progress across archive hashes); testkit `os2_testkit.py`.
+  - **Missing OI (check 2026-11-06 on a sha256-verified copy of the archive):** the archive stores no raw JSON and
+    records a null and an omitted `open_interest` alike as missing (no row); of 19 755 stored OI values none is 0
+    (minimum 1), i.e. Alpaca never reported an explicit 0 — consistent with "missing = no open interest", not proven.
+    User 2026-11-06: no decision needed — a contract without OI contributes 0 (no OI reported) either way.
 ## 22. Stage 10 — Council of AIs migration (contract rev. 3; R1 + R2 + R3 built and committed 2026-10-24; the real switch-over only by the user in the app)
 
 Full text (review history, rev. 2 / rev. 3 answers, full tables, R1 / R2 as-built detail, parity harness detail):

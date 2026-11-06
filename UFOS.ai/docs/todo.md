@@ -8,36 +8,30 @@ in `todo-archive/2026-10.md` section B. Open task / contract files for agents: `
 `HedgeFund/backend/strategy_platform/SPEC.md` (SP), `HedgeFund/backend/market_research/SPEC.md` (MR),
 `HedgeFund/backend/fund/SPEC.md` (old engine); file map `HedgeFund/docs/CODEMAP.md`; rules `CLAUDE.md`.
 
-Last updated: 2026-10-28 (career pivot — Risk Lab first)
+Last updated: 2026-11-06 (Risk Lab complete; back to the standard plan, stage 11 next)
 
-## 0. Career focus (2026-10-28) — the priority
+## 0. Current focus (2026-11-06)
 
-User decision 2026-10-28: the project now prepares a career in **bank risk management** (plan: Claude Project
-`claude/career-plan-bank-risk.md`). The **Risk Lab** — standalone Python package `UFOS.ai/RiskLab/`, independent of the
-HedgeFund backend — comes first; UFOS gets finishing work only. Rule: the user derives the formulas first, then they
-are coded together (no VaR / ES / test formulas implemented ahead of the derivation sheets).
-
-Risk Lab sprints, in order:
-1. [ ] **v0.1 skeleton** — package layout, conventions (L = loss, positive = loss; `alpha`; daily; seeded RNG), synthetic
-   generators with true parameters only, stubs for every sheet-1 formula (`UFOS.ai/docs/tasks/RISKLAB_V01_TASK.md`, H).
-2. [ ] **Sheet 1 with the user** — VaR / ES definitions, normal / t VaR and ES, square-root-of-time, Kupiec, Basel
-   traffic light, Christoffersen; then the code.
-3. [ ] **Estimators + backtests** — historical / parametric VaR and ES, coverage and independence tests.
-4. [ ] **GARCH / FHS / Monte Carlo + an ES backtest.**
-5. [ ] **Validation report** (model-validation style write-up).
-6. [ ] **Overfitting study of the gates** (the Strategy Platform's G1–G8 / holdout as a case study).
-7. [ ] **README / application package.**
-8. [ ] **IRRBB.**
+User decision 2026-11-06: the career focus is **paused**; the Risk Lab block is **complete** (v0.1–v0.9, commits
+d5c3a68 … 4c2eb27 + CI c10521e, merged to master via PR #4; 322 tests; CI `.github/workflows/risklab-tests.yml` green).
+Plan / history: Claude Project `claude/career-plan-bank-risk.md`; reports in the user's folder
+`C:\Users\leonh\Documents\UFOS.ai` (never in the repo). Development returns to the standard plan with **stage 11**
+(§4), starting with an interview.
 
 Open user items:
 - [ ] Decide the grey tile strip (MainWindow tiles).
-- [ ] Build + click-test the Disclosures section incl. the new Congress tab (Newsroom → Disclosures).
-- [ ] Commit — only when the user asks (agents never run git).
+- [ ] Build + click-test the Disclosures section incl. the Congress tab (Newsroom → Disclosures).
 - [ ] **Status unknown — ask the user:** did the Monday 2026-10-26 options RTH check run, and were the §17.9 migration and
   the Council switch-over done? (items in §1 below).
+- [ ] Prose slots (`\usertext`) in the Risk Lab reports (user, outside the coding chat).
 
-**Parked 2026-10-28** (kept, not deleted): LSA-SRC, Depth & Range, Options Structure OS2–OS5, stage 11 visual overhaul
-(the talk no longer waits for it). R4 / R5 stay scheduled after the Council switch-over.
+Stage 11 interview 2026-11-06 (user): order as planned (shared styles → Hedge Fund Overview → other HF views → Newsroom →
+GM → LSA → Logs; MainWindow stays); **Options Structure is unparked first** — OS2 computations before the Overview, so
+its market section can show the gamma regime etc.; a **Risk Lab view** in the app comes after the Overview (Risk Lab stays
+a standalone package); screenshot inventory of the current UI runs now (lead, remote).
+
+**Parked** (kept, not deleted): LSA-SRC, Depth & Range. R4 / R5 stay scheduled after the
+Council switch-over.
 
 ## 1. Now — in this order
 
@@ -166,7 +160,7 @@ One `dotnet build`, then per item. Full step lists: `todo-archive/2026-10.md` se
 
 ## 4. Next stages (planned)
 
-- [ ] **PARKED 2026-10-28 — Stage 11 — visual overhaul of all modules** (the talk no longer waits for it) (plan §11 in `claude/strategy-platform-plan.md`): shared styles →
+- [ ] **NEXT (2026-11-06) — Stage 11 — visual overhaul of all modules** (plan §11 in `claude/strategy-platform-plan.md`): shared styles →
   Hedge Fund Overview re-invented (attention / strategies / market / system; the Council is one strategy row) → other
   Hedge Fund views → Newsroom → Global Monitoring → LiveStream Agent → System Logs / Transaction Log. MainWindow stays.
   No animations unless needed, dark only, fixed colour meanings (red/green P&L, blue/orange regime, violet AI, amber

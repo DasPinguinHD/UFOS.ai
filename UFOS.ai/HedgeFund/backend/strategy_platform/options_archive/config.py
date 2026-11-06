@@ -1,8 +1,10 @@
 """Every number of the options archive in ONE place (SP §21.2 / §21.3). Filter (±10 % strikes, ≤ 45 days), cadence
 (28 snapshots per session), the OI floor and the FRED series are CONFIRMED 2026-10-24 (the user's OS0 run
 20261024T114530Z + the user's decision 13:49); the quote-staleness threshold and the coverage minimum stay PROVISIONAL
-until the RTH run on Monday 2026-10-26 (``CONFIRMED`` / ``PROVISIONAL_KEYS`` below — kept OUT of the hashed config, so
-the running archive's ``assumptions_hash`` did not change). Defaults below; ``data/options_archive_config.json`` may override known keys (validated: unknown key, wrong
+until the RTH run on Monday 2026-10-26. The lists ``CONFIRMED`` / ``PROVISIONAL_KEYS`` below are kept OUT of the hashed
+config (confirming a value does not change ``assumptions_hash``); the values themselves are hashed — including
+``rate_series`` (OS2, the DTB3 risk-free rate, confirmed by the user 2026-11-06), which changed the hash from the
+archive's next start. Defaults below; ``data/options_archive_config.json`` may override known keys (validated: unknown key, wrong
 type, NaN / Infinity, a value outside ``RANGES`` or an inconsistent combination is REFUSED with the reason — never
 ignored, never clamped). The effective config's sha256 is the runs' ``assumptions_hash``.
 """
@@ -20,6 +22,9 @@ from typing import Dict, Optional, Tuple
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.join(BACKEND_DIR, "data")
 VERSION = "os1-1"
+# fresh OI (user decision 2026-11-06, SP §21.3): valid_for = the previous session (D−1) or the one before (D−2); D−3
+# and older is a ``stale_oi`` gap here and is NOT used by OS2 (``oi_max_age_sessions`` must stay ≤ this)
+OI_FRESH_SESSIONS = 2
 OVERRIDE_FILE = os.path.join(DATA_DIR, "options_archive_config.json")
 
 
@@ -31,6 +36,7 @@ CONFIRMED = {
     "fixed_slots": ("09:55", "15:25"), "eod_after_close_minutes": 15,                 # + 2 fixed + EOD = 28
     "oi_floor": "08:00",                     # OI of T published the morning of the next trading day (OS0 run)
     "fred_series": ("VIXCLS", "VXVCLS", "VXNCLS"),   # on FRED; VXSTCLS / VIX9DCLS are not (OS0 run)
+    "rate_series": ("DTB3",),                # OS2 risk-free rate — user decision 2026-11-06 (SP §21.12)
 }
 # still PROVISIONAL: measured only during regular trading hours (RTH run Monday 2026-10-26)
 PROVISIONAL_KEYS = ("quote_max_age_s", "coverage_min_pct")
@@ -62,6 +68,9 @@ class Config:
     timeouts_s: Dict[str, float] = field(default_factory=lambda: {"contracts": 30.0, "snapshots": 20.0,
                                                                   "stock": 10.0, "fred": 20.0, "bars": 20.0})
     fred_series: Tuple[str, ...] = ("VIXCLS", "VXVCLS", "VXNCLS")
+    # OS2 (SP §21.12): the risk-free rate of the option model, archived point-in-time with the VIX series in the same
+    # FRED run — DTB3 = 3-month Treasury bill, secondary market, discount basis (%). Confirmed 2026-11-06 (user).
+    rate_series: Tuple[str, ...] = ("DTB3",)
     fred_observations: int = 10            # newest N observations per run (revisions are new rows)
     eod_grace_minutes: int = 45            # a missed EOD / OI / FRED slot is still run up to this late (else missing)
     heartbeat_s: int = 60
@@ -125,6 +134,9 @@ def validate(cfg: Config, where: str = "config") -> Config:
         bad(f"symbols must be a non-empty list of distinct values from {', '.join(SYMBOLS_ALLOWED)}")
     if not cfg.fred_series or len(cfg.fred_series) > 10 or not all(_SERIES.fullmatch(x) for x in cfg.fred_series):
         bad("fred_series must be 1 … 10 FRED series ids (A-Z, 0-9)")
+    if len(cfg.rate_series) > 2 or not all(_SERIES.fullmatch(x) for x in cfg.rate_series) or \
+            set(cfg.rate_series) & set(cfg.fred_series):
+        bad("rate_series must be 0 … 2 FRED series ids (A-Z, 0-9), not also in fred_series")
     if len(cfg.fixed_slots) > 4:
         bad("fixed_slots: at most 4")
     for name in ("intraday_first", "intraday_last", "oi_slot", "fred_slot", "oi_floor"):

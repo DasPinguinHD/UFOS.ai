@@ -38,6 +38,19 @@ a multi-agent simulation of a hedge fund decision process (paper trading, no rea
 - **Dashboard (agents, verdict, portfolio, execution):** illustrative only —
   hardcoded sample data, no agents or broker connected yet. (The former
   WebSocket placeholder on 8865 was removed in stage 10 — nothing used it.)
+- **Options Structure (SPY / QQQ; contract `strategy_platform/SPEC.md` §21):** the OS1 **archive** is its own
+  process (Windows scheduled task, GET-only, no port) that collects option chains (Alpaca indicative feed), open
+  interest and FRED series (VIX term structure, the DTB3 rate since OS2) point-in-time into
+  `data/options_archive.db`; gaps are recorded, never filled. **OS2 computations** (2026-11-06, §21.12) run inside the
+  backend (task `os2-regime`, read-only on the archive, no network): quote quality, own BSM IV / greeks, GEX under
+  three dealer assumptions with the gamma flip and walls, skew / expected move / term structure / VRP, the expiration
+  and event calendar, and a regime snapshot per slot in `data/options_structure.db`; read-only API
+  `/v2/options-structure/*`. The dividend yield is implied per expiry from put-call parity (American options:
+  approximate); open interest is the newest published (in practice two sessions old) and contracts without it are left
+  out of GEX with the OI coverage shown. Everything is **PROVISIONAL** while the archive's staleness / coverage numbers
+  and the OS2 assumptions (spread maximum, parity band / pairs) are unconfirmed (confirmation via
+  `data/options_structure_config.json`). Nothing trades on it; no H1 / H2
+  results before the evaluation date (frozen pre-registration `docs/preregistration/`).
 - **Financial Newsroom: live.** Insider trades (SEC EDGAR) and macro
   indicators (FRED), moved here from the Global Monitoring module on
   2026-09-24. See below.
