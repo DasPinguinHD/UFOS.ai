@@ -871,6 +871,194 @@ def fig_duration_check(res: dict, out_dir, stem: str = "fig17_duration_check") -
     return FigureSpec(stem, caption, paths)
 
 
+# ---- 23-27: reverse DCF and sensitivity -------------------------------------------------
+
+VAL_LABELS = {"discount_rate": "discount rate", "terminal_growth": "terminal growth", "growth": "growth (10 y)",
+              "fcf0": "free cash flow", "net_debt": "net debt", "years": "explicit years",
+              "ca_core_share": "current accounts: core share", "ca_avg_maturity": "current accounts: avg maturity",
+              "sav_core_share": "savings: core share", "sav_avg_maturity": "savings: avg maturity",
+              "downside_weight": "downside weight", "downside_severity": "downside severity",
+              "sicr_multiple": "SICR multiple", "lgd_scale": "LGD scale", "pd_scale": "current PD scale",
+              "x1": "x1", "x2": "x2", "x3": "x3"}
+
+
+def _vs(res: dict, table: str, **kw) -> List[dict]:
+    return [r for r in res["rows"] if r["table"] == table and all(r.get(k) == v for k, v in kw.items())]
+
+
+def fig_implied_growth(res: dict, out_dir, stem: str = "fig23_implied_growth") -> FigureSpec:
+    rows = sorted(_vs(res, "implied"), key=lambda r: r["price"])
+    p = [r["price"] for r in rows]
+    ref = res["meta"]["reference"]
+    with _style():
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=WIDE)
+        a1.plot(p, [100 * r["implied_growth"] for r in rows], color=PALETTE["blue"], label="constant growth")
+        a1.plot(p, [100 * r["implied_fade_start"] for r in rows], color=PALETTE["orange"], ls="--",
+                label="fade: start growth")
+        a1.plot(p, [100 * r["fade_cagr"] for r in rows], color=PALETTE["orange"], ls=":", label="fade: 10-year CAGR")
+        a1.axvline(ref["price"], color=PALETTE["grey"], lw=0.8)
+        a1.set_xlabel("price per share")
+        a1.set_ylabel("implied FCF growth (% a year)")
+        a1.legend(frameon=False, fontsize=7)
+        a2.plot(p, [100 * r["implied_discount_rate"] for r in rows], color=PALETTE["vermillion"])
+        a2.axvline(ref["price"], color=PALETTE["grey"], lw=0.8)
+        a2.set_xlabel("price per share")
+        a2.set_ylabel("implied discount rate at 5 % growth (%)")
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    c = res["meta"]["company"]
+    caption = ("Reverse DCF of the synthetic company (invented; FCF " f"{c['fcf0']:g}, discount rate "
+               f"{100 * c['discount_rate']:g}\\,\\%, terminal growth {100 * c['terminal_growth']:g}\\,\\%, "
+               f"{c['years']}-year explicit period). Left: the FCF growth that a price implies - constant for "
+               "10 years, or the start growth of a linear fade to the terminal growth (dashed) with its 10-year CAGR "
+               "(dotted). Right: the discount rate a price implies at a fixed 5\\,\\% growth. Grey line: the "
+               f"reference price {ref['price']:g}.")
+    return FigureSpec(stem, caption, paths)
+
+
+def _tornado_panel(ax, bars: List[dict], scale: float, xlabel: str):
+    bars = sorted(bars, key=lambda b: b["swing"])
+    y = np.arange(len(bars))
+    base = bars[0]["base_y"] * scale if bars else 0.0
+    for i, b in enumerate(bars):
+        lo, hi = b["y_low"] * scale, b["y_high"] * scale
+        ax.barh(i, lo - base, left=base, color=PALETTE["blue"], height=0.6)
+        ax.barh(i, hi - base, left=base, color=PALETTE["orange"], height=0.6)
+    ax.axvline(base, color=PALETTE["black"], lw=0.8)
+    ax.set_yticks(y)
+    ax.set_yticklabels([VAL_LABELS.get(b["name"], b["name"]) for b in bars], fontsize=7)
+    ax.set_xlabel(xlabel)
+    ax.grid(axis="y", visible=False)
+
+
+def fig_tornado(res: dict, out_dir, stem: str = "fig24_tornado") -> FigureSpec:
+    v = _vs(res, "tornado", model="dcf", output="value_per_share")
+    g = _vs(res, "tornado", model="dcf", output="implied_growth")
+    with _style():
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=WIDE_LEGEND)
+        _tornado_panel(a1, v, 1.0, "value per share")
+        _tornado_panel(a2, g, 100.0, "implied growth at the reference price (%)")
+        handles = [matplotlib.patches.Patch(color=PALETTE["blue"], label="input at its low end"),
+                   matplotlib.patches.Patch(color=PALETTE["orange"], label="input at its high end")]
+        fig.legend(handles=handles, loc="lower center", ncol=2, frameon=False, fontsize=7)
+        fig.tight_layout(rect=(0, 0.07, 1, 1))
+        paths = _save(fig, out_dir, stem)
+    rg = res["meta"]["dcf_ranges"]
+    caption = ("One-way sensitivity (tornado) of the synthetic company, each input moved alone. Left: the value per "
+               "share, at the growth the reference price implies (so the base value is the price). Right: the growth "
+               "the reference price implies. Ranges: discount rate and terminal growth $\\pm$1 percentage point, growth "
+               f"$\\pm$3 points, FCF $\\pm$10\\,\\%, net debt $\\pm$50\\,\\%, explicit period {rg['years'][0]:g}--"
+               f"{rg['years'][1]:g} years.")
+    return FigureSpec(stem, caption, paths)
+
+
+def _grid(rows: List[dict]):
+    xs = sorted({r["x"] for r in rows})
+    ys = sorted({r["y"] for r in rows})
+    z = {(r["x"], r["y"]): r["z"] for r in rows}
+    return xs, ys, np.array([[z[(x, y)] for x in xs] for y in ys])
+
+
+def fig_two_way(res: dict, out_dir, stem: str = "fig25_two_way") -> FigureSpec:
+    ref = res["meta"]["reference"]
+    with _style():
+        fig, axes = plt.subplots(1, 2, figsize=(6.5, 3.0))
+        for ax, (output, scale, fmt, lab) in zip(axes, (("value_per_share", 1.0, "{:.0f}", "value per share"),
+                                                       ("implied_growth", 100.0, "{:.1f}", "implied growth (%)"))):
+            xs, ys, Z = _grid(_vs(res, "two_way", output=output))
+            Z = Z * scale
+            ax.imshow(Z, cmap="Greys", aspect="auto", origin="lower")
+            hi = np.nanmax(Z) - 0.45 * (np.nanmax(Z) - np.nanmin(Z))
+            for i in range(len(ys)):
+                for j in range(len(xs)):
+                    ax.text(j, i, fmt.format(Z[i, j]), ha="center", va="center", fontsize=5.5,
+                            color="white" if Z[i, j] > hi else "black")
+            ax.set_xticks(range(len(xs)))
+            ax.set_xticklabels([f"{100 * x:g}" for x in xs], fontsize=6.5)
+            ax.set_yticks(range(len(ys)))
+            ax.set_yticklabels([f"{100 * y:g}" for y in ys], fontsize=6.5)
+            ax.set_xlabel("discount rate (%)")
+            ax.set_ylabel("terminal growth (%)")
+            ax.set_title(lab)
+            ax.grid(False)
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = ("Two-way sensitivity over the discount rate and the terminal growth (all other inputs at base). Left: "
+               f"value per share at the growth implied by the reference price ({100 * ref['implied_growth']:.1f}\\,\\%); "
+               f"right: the growth the reference price {ref['price']:g} implies. Synthetic company.")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_sobol(res: dict, out_dir, stem: str = "fig26_sobol") -> FigureSpec:
+    panels = (("dcf", "DCF value per share"), ("ishigami", "Ishigami (validation)"),
+              ("irrbb", "worst ΔEVE / Tier 1 (v0.7)"), ("ecl", "ECL coverage (v0.8)"))
+    with _style():
+        fig, axes = plt.subplots(2, 2, figsize=(6.5, 4.6))
+        for ax, (model, title) in zip(axes.ravel(), panels):
+            rr = _vs(res, "sobol", model=model)
+            x = np.arange(len(rr))
+            ax.bar(x - 0.19, [r["first"] for r in rr], 0.38, yerr=[1.96 * r["first_se"] for r in rr], capsize=2,
+                   color=PALETTE["blue"], label="first order")
+            ax.bar(x + 0.19, [r["total"] for r in rr], 0.38, yerr=[1.96 * r["total_se"] for r in rr], capsize=2,
+                   color=PALETTE["orange"], label="total order")
+            if all("analytic_first" in r for r in rr):
+                ax.plot(x - 0.19, [r["analytic_first"] for r in rr], "k_", ms=12, mew=1.5, label="analytic")
+                ax.plot(x + 0.19, [r["analytic_total"] for r in rr], "k_", ms=12, mew=1.5)
+            ax.axhline(0, color=PALETTE["grey"], lw=0.6)
+            ax.set_xticks(x)
+            ax.set_xticklabels([VAL_LABELS.get(r["name"], r["name"]) for r in rr], rotation=25, ha="right", fontsize=6)
+            ax.set_title(f"{title}, N = {rr[0]['n']:,}".replace(",", " "), fontsize=8)
+            ax.set_ylabel("Sobol index")
+            ax.legend(frameon=False, fontsize=6)
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = ("Variance-based (Sobol) sensitivity indices: first order (the input alone) and total order (with all "
+               "interactions), Saltelli sampling with the Jansen total-order estimator, error bars $\\pm 1.96$ bootstrap "
+               "se. Top left: the synthetic company's value per share over the six inputs and ranges of the tornado (the "
+               "explicit period discrete uniform over 7--13 years). Top right: the "
+               "Ishigami function, where the analytic indices (black marks) are known - a check of the estimator. "
+               "Bottom: the same tool on the v0.7 bank (non-maturity-deposit assumptions) and on a v0.8 loan book "
+               "(scenario weight and severity, SICR threshold, LGD and PD scaling).")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_base_rates(res: dict, out_dir, stem: str = "fig27_base_rates") -> FigureSpec:
+    curve = sorted(_vs(res, "base_rate_curve"), key=lambda r: r["hurdle"])
+    refs = sorted(_vs(res, "base_rate_ref"), key=lambda r: r["kappa"])
+    g = res["meta"]["reference"]["implied_growth"]
+    names = (("survivors_only", "survivors only", PALETTE["vermillion"]),
+             ("counterfactual", "counterfactual (no exits)", PALETTE["green"]),
+             ("full_cohort", "full cohort (exit = miss)", PALETTE["blue"]))
+    with _style():
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=WIDE_LEGEND)
+        h = [100 * r["hurdle"] for r in curve]
+        for k, lab, col in names:
+            a1.plot(h, [100 * r[k] for r in curve], color=col, label=lab)
+        a1.axvline(100 * g, color=PALETTE["grey"], lw=0.8, ls="--", label="implied by the reference price")
+        a1.set_xlabel("10-year CAGR hurdle (%)")
+        a1.set_ylabel("share of firms reaching it (%)")
+        a1.set_title(f"kappa = {curve[0]['kappa']:g}" if curve else "")
+        a1.legend(frameon=False, fontsize=6.5)
+        x = np.arange(len(refs))
+        for j, (k, lab, col) in enumerate(names):
+            a2.bar(x + (j - 1) * 0.27, [100 * r[k] for r in refs], 0.27, color=col,
+                   yerr=[196 * r[k + "_se"] for r in refs], capsize=2)
+        a2.set_xticks(x)
+        a2.set_xticklabels([f"kappa = {r['kappa']:g}\n(survival {100 * r['survival_rate']:.0f} %)" for r in refs],
+                           fontsize=6.5)
+        a2.set_ylabel(f"share reaching {100 * g:.1f} % a year (%)")
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    m = refs[0]["m"] if refs else 0
+    caption = ("How often is the growth implied by the reference price achieved? Synthetic universe of the v0.4 "
+               f"survivorship study ({m} cohorts of 2000 firms, 10 years; FCF growth compared with revenue growth, i.e. "
+               "a constant FCF margin assumed). Left: the three base rates against the CAGR hurdle (exit hazard "
+               "strength kappa = 1). Right: at the implied growth, for exits unrelated to growth (kappa = 0) and "
+               "increasingly growth-driven exits; error bars $\\pm 1.96$ se. A database of today's survivors overstates "
+               "the chance of a firm picked today.")
+    return FigureSpec(stem, caption, paths)
+
+
 # ---- LaTeX snippets --------------------------------------------------------------------
 
 def latex_snippet(spec: FigureSpec, width: str = "\\linewidth") -> str:

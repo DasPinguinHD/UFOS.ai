@@ -1,0 +1,38 @@
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{Sobol indices (first order: the input alone; total order: with all its interactions), N base rows ($N(k+2)$ runs), $\pm$ bootstrap se; independent uniform inputs over the ranges of Tab.~\ref{tab:D5_assumptions} (DCF: the tornado's six inputs, the explicit period over whole years 7--13). A first-order index above its total (savings core share, $\Delta$EVE) is Monte-Carlo noise; in theory $S_i \le S_{Ti}$.}
+\label{tab:D4_sobol}
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lrrr}
+\toprule
+Input & First order & Total order & Analytic first / total \\
+\midrule
+\textit{DCF value per share}\, N = 65\,536 &  &  &  \\
+discount rate & 0.176 $\pm$ 0.002 & 0.190 $\pm$ 0.001 &  \\
+terminal growth & 0.059 $\pm$ 0.001 & 0.063 $\pm$ 0.000 &  \\
+growth (10 y) & 0.311 $\pm$ 0.003 & 0.349 $\pm$ 0.002 &  \\
+free cash flow & 0.058 $\pm$ 0.001 & 0.062 $\pm$ 0.000 &  \\
+net debt & 0.011 $\pm$ 0.001 & 0.011 $\pm$ 0.000 &  \\
+explicit years & 0.339 $\pm$ 0.003 & 0.377 $\pm$ 0.003 &  \\
+\midrule
+\textit{Ishigami (analytic check)}\, N = 65\,536 &  &  &  \\
+$x_1$ & 0.314 $\pm$ 0.004 & 0.560 $\pm$ 0.005 & 0.314 / 0.558 \\
+$x_2$ & 0.440 $\pm$ 0.003 & 0.442 $\pm$ 0.003 & 0.442 / 0.442 \\
+$x_3$ & 0.003 $\pm$ 0.003 & 0.246 $\pm$ 0.002 & 0.000 / 0.244 \\
+\midrule
+\textit{worst $\Delta$EVE / Tier 1 (v0.7)}\, N = 1\,024 &  &  &  \\
+current accounts: core share & 0.188 $\pm$ 0.020 & 0.199 $\pm$ 0.011 &  \\
+current accounts: avg.\ maturity & 0.770 $\pm$ 0.034 & 0.794 $\pm$ 0.031 &  \\
+savings: core share & 0.030 $\pm$ 0.006 & 0.021 $\pm$ 0.001 &  \\
+savings: avg.\ maturity & 0.036 $\pm$ 0.008 & 0.035 $\pm$ 0.002 &  \\
+\midrule
+\textit{ECL coverage (v0.8)}\, N = 2\,048 &  &  &  \\
+downside weight & 0.092 $\pm$ 0.009 & 0.091 $\pm$ 0.004 &  \\
+downside severity & 0.051 $\pm$ 0.007 & 0.054 $\pm$ 0.002 &  \\
+SICR multiple & 0.081 $\pm$ 0.011 & 0.111 $\pm$ 0.005 &  \\
+LGD scale & 0.328 $\pm$ 0.017 & 0.355 $\pm$ 0.012 &  \\
+current PD scale & 0.401 $\pm$ 0.020 & 0.455 $\pm$ 0.017 &  \\
+\bottomrule
+\end{tabular}
+\end{table}

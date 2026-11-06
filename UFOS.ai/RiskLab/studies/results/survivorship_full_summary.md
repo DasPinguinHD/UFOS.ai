@@ -1,6 +1,6 @@
 # Survivorship bias in 10-year growth base rates (synthetic universe)
 
-N = 2000 firms, 10 years, log growth mu_i + sigma eps with mu_i ~ N(0.05, 0.05), sigma = 0.15; yearly exit probability min(0.9, h0 exp(-kappa z)), h0 = 0.04; M = 2000 cohorts per setting, seed = 20261108. risklab 0.5.0, numpy 2.5.3. No real firms or data.
+N = 2000 firms, 10 years, log growth mu_i + sigma eps with mu_i ~ N(0.05, 0.05), sigma = 0.15; yearly exit probability min(0.9, h0 exp(-kappa z)), h0 = 0.04; M = 2000 cohorts per setting, seed = 20261108. risklab 0.9.0, numpy 2.5.3. No real firms or data.
 
 Base rate = share of firms with a 10-year CAGR >= the threshold, in %. Three rates, three questions:
 

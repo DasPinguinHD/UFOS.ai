@@ -21,6 +21,8 @@ OVERVIEW_TABLE_NAMES = ("V1_key_results",)
 IRRBB_TABLE_NAMES = ("R1_scenarios", "R2_outlier_test", "R3_assumptions", "R4_findings")
 #: tables of the credit risk report
 CREDIT_TABLE_NAMES = ("C1_pd_model", "C2_calibration", "C3_ecl", "C4_irb", "C5_assumptions", "C6_findings")
+#: tables of the valuation report (reverse DCF and sensitivity)
+VALUATION_TABLE_NAMES = ("D1_dcf", "D2_implied_growth", "D3_tornado", "D4_sobol", "D5_assumptions", "D6_findings")
 
 _LATEX_SPECIAL = {"\\": "\\textbackslash{}", "&": "\\&", "%": "\\%", "$": "\\$", "#": "\\#", "_": "\\_",
                   "{": "\\{", "}": "\\}", "~": "\\textasciitilde{}", "^": "\\textasciicircum{}"}
@@ -985,6 +987,247 @@ def table_credit_findings(res: dict) -> str:
                   colsep="3pt")
 
 
+# ---- D1..D6: reverse DCF and sensitivity ----------------------------------------------------
+
+VAL_NAMES = {"discount_rate": "discount rate", "terminal_growth": "terminal growth", "growth": "growth (10 y)",
+             "fcf0": "free cash flow", "net_debt": "net debt", "years": "explicit years",
+             "ca_core_share": "current accounts: core share", "ca_avg_maturity": "current accounts: avg.\\ maturity",
+             "sav_core_share": "savings: core share", "sav_avg_maturity": "savings: avg.\\ maturity",
+             "downside_weight": "downside weight", "downside_severity": "downside severity",
+             "sicr_multiple": "SICR multiple", "lgd_scale": "LGD scale", "pd_scale": "current PD scale",
+             "x1": "$x_1$", "x2": "$x_2$", "x3": "$x_3$"}
+VAL_MODELS = {"dcf": "DCF value per share", "ishigami": "Ishigami (analytic check)",
+              "irrbb": "worst $\\Delta$EVE / Tier 1 (v0.7)", "ecl": "ECL coverage (v0.8)"}
+
+
+def _vr(res: dict, table: str, **kw) -> List[dict]:
+    return [r for r in res["rows"] if r["table"] == table and all(r.get(k) == v for k, v in kw.items())]
+
+
+def _range_text(name: str, lo: float, hi: float) -> str:
+    if name in ("discount_rate", "terminal_growth", "growth"):
+        return f"{100 * lo:.2f}--{100 * hi:.2f}\\,\\%"
+    if name in ("ca_core_share", "sav_core_share"):
+        return f"{100 * lo:.0f}--{100 * hi:.0f}\\,\\%"
+    return f"{lo:g}--{hi:g}"
+
+
+def table_valuation_dcf(res: dict) -> str:
+    m = res["meta"]
+    c, ref = m["company"], m["reference"]
+    imp = {r["price"]: r for r in _vr(res, "implied")}[ref["price"]]
+    body = [["Free cash flow (year 0)", f"{c['fcf0']:g}"], ["Discount rate", f"{100 * c['discount_rate']:g}\\,\\%"],
+            ["Terminal growth", f"{100 * c['terminal_growth']:g}\\,\\%"], ["Explicit period", f"{c['years']} years"],
+            ["Net debt / other claims / shares", f"{c['net_debt']:g} / {c['other_claims']:g} / {c['shares']:g}"],
+            "MIDRULE",
+            [f"Reference price per share", f"{ref['price']:g}"],
+            ["Implied constant growth (10 years)", f"{100 * ref['implied_growth']:.2f}\\,\\%"],
+            ["Implied fade: start growth (10-year CAGR)",
+             f"{100 * imp['implied_fade_start']:.2f}\\,\\% ({100 * imp['fade_cagr']:.2f}\\,\\%)"],
+            ["Implied discount rate at 5\\,\\% growth", f"{100 * imp['implied_discount_rate']:.2f}\\,\\%"],
+            "MIDRULE",
+            ["PV of the explicit cash flows", f"{ref['pv_explicit']:.1f}"],
+            ["PV of the terminal value", f"{ref['pv_terminal']:.1f}"],
+            ["Enterprise value", f"{ref['enterprise_value']:.1f}"],
+            ["Terminal value share of EV", f"{100 * ref['terminal_share']:.1f}\\,\\%"]]
+    return _table("D1_dcf", "The synthetic company (invented; currency units arbitrary) and its reverse DCF at the "
+                  "reference price. Bottom: the DCF bridge at the implied constant growth (equity = EV $-$ net debt "
+                  "$-$ other claims = price $\\times$ shares).", "lr", ["Item", "Value"], body, size="\\small")
+
+
+def table_valuation_implied(res: dict) -> str:
+    rows = sorted(_vr(res, "implied"), key=lambda r: r["price"])
+    show = [r for r in rows if r["price"] in (10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0)]
+    body = [[f"{r['price']:g}", f"{100 * r['implied_growth']:.2f}", f"{100 * r['implied_fade_start']:.2f}",
+             f"{100 * r['fade_cagr']:.2f}", f"{100 * r['implied_discount_rate']:.2f}"] for r in show]
+    body.append("MIDRULE")
+    ref = res["meta"]["reference"]
+    body.append([f"\\textit{{price {ref['price']:g}}}", "\\textit{survivors only}", "\\textit{full cohort}",
+                 "\\textit{counterfactual}", "\\textit{survival}"])
+    for r in sorted(_vr(res, "base_rate_ref"), key=lambda r: r["kappa"]):
+        body.append([f"$\\kappa$ = {r['kappa']:g}", pm(r["survivors_only"], r["survivors_only_se"], 1, 2),
+                     pm(r["full_cohort"], r["full_cohort_se"], 1, 2), pm(r["counterfactual"], r["counterfactual_se"], 1, 2),
+                     f"{100 * r['survival_rate']:.1f}"])
+    m = _vr(res, "base_rate_ref")[0]["m"]
+    return _table("D2_implied_growth", "Top: what a price implies (\\%): the constant 10-year FCF growth, the start "
+                  "growth of a linear fade to the terminal growth with its 10-year CAGR, and the discount rate at a "
+                  "fixed 5\\,\\% growth. Bottom: the share of firms (\\%, $\\pm$ Monte-Carlo se) whose 10-year CAGR "
+                  f"reaches the growth implied by the reference price, in the synthetic universe of the v0.4 survivorship "
+                  f"study ({m} cohorts of 2000 firms; $\\kappa$ = strength of growth-driven exits; survival in \\%).",
+                  "lrrrr", ["Price", "Constant", "Fade start", "Fade CAGR", "Rate at 5\\,\\%"], body,
+                  size="\\scriptsize", colsep="5pt")
+
+
+def table_valuation_tornado(res: dict) -> str:
+    body = []
+    for model, output, lab, fmt in (("dcf", "value_per_share", "Value per share", "{:.2f}"),
+                                    ("dcf", "implied_growth", "Implied growth (\\%)", "pct"),
+                                    ("irrbb", "worst_eve_tier1", "Worst $\\Delta$EVE / Tier 1 (\\%)", "pct"),
+                                    ("ecl", "coverage", "ECL coverage (\\%)", "pct2")):
+        bars = _vr(res, "tornado", model=model, output=output)
+        if body:
+            body.append("MIDRULE")
+        body.append([f"\\textit{{{lab}}}", "", "", "", ""])
+        for b in bars:
+            f = ((lambda x: f"{100 * x:.2f}") if fmt == "pct" else (lambda x: f"{100 * x:.3f}") if fmt == "pct2"
+                 else (lambda x: fmt.format(x)))
+            body.append([VAL_NAMES.get(b["name"], esc(b["name"])), _range_text(b["name"], b["low"], b["high"]),
+                         f(b["y_low"]), f(b["y_high"]), f(b["swing"])])
+    return _table("D3_tornado", "One-way sensitivity (tornado), largest swing first; each input moved alone, all others "
+                  "at base. DCF: synthetic company at the reference price; the implied growth is re-solved for every "
+                  "input change. $\\Delta$EVE: the v0.7 reference bank, non-maturity-deposit assumptions inside their "
+                  "caps. ECL: a 200-loan synthetic book with the v0.8 IFRS 9 model.", "lrrrr",
+                  ["Input", "Range", "Output at low", "Output at high", "Swing"], body, size="\\scriptsize",
+                  colsep="4pt")
+
+
+def table_valuation_sobol(res: dict) -> str:
+    body = []
+    for model in ("dcf", "ishigami", "irrbb", "ecl"):
+        rr = _vr(res, "sobol", model=model)
+        if body:
+            body.append("MIDRULE")
+        body.append([f"\\textit{{{VAL_MODELS[model]}}}, N = {rr[0]['n']:,}".replace(",", "\\,"), "", "", ""])
+        for r in rr:
+            an = (f"{r['analytic_first']:.3f} / {r['analytic_total']:.3f}" if "analytic_first" in r else "")
+            body.append([VAL_NAMES.get(r["name"], esc(r["name"])), f"{r['first']:.3f} $\\pm$ {r['first_se']:.3f}",
+                         f"{r['total']:.3f} $\\pm$ {r['total_se']:.3f}", an])
+    return _table("D4_sobol", "Sobol indices (first order: the input alone; total order: with all its interactions), "
+                  "N base rows ($N(k+2)$ runs), $\\pm$ bootstrap se; independent uniform inputs over the ranges of "
+                  "Tab.~\\ref{tab:D5_assumptions} (DCF: the tornado's six inputs, the explicit period over whole years "
+                  "7--13). A first-order index above its total (savings core share, $\\Delta$EVE) is Monte-Carlo "
+                  "noise; in theory $S_i \\le S_{Ti}$.",
+                  "lrrr", ["Input", "First order", "Total order", "Analytic first / total"], body,
+                  size="\\scriptsize", colsep="5pt")
+
+
+def valuation_assumptions(res: dict) -> Dict[str, str]:
+    m = res["meta"]
+    out = {f"source: {k}": v for k, v in m["sources"].items()}
+    out["company"] = ("synthetic, invented with round numbers; not a real company and not calibrated to market data; "
+                      "for a real company the inputs are user-provided at run time")
+    out["cash-flow timing"] = "end of year (no mid-year convention); terminal value by the Gordon growth formula"
+    out["Sobol ranges (DCF)"] = "; ".join(f"{k} U({v[0]:.4g}, {v[1]:.4g})" for k, v in m["dcf_dists"].items())
+    out["Sobol ranges (IRRBB)"] = "; ".join(f"{k} U({v[0]:.4g}, {v[1]:.4g})" for k, v in m["irrbb_ranges"].items())
+    out["Sobol ranges (ECL)"] = "; ".join(f"{k} U({v[0]:.4g}, {v[1]:.4g})" for k, v in m["ecl_ranges"].items())
+    out["Sobol inputs"] = ("independent and uniform (a modelling choice; the DCF explicit period discrete uniform over "
+                           "whole years); the DCF ranges equal the tornado ranges; the indices describe the variance over "
+                           "these ranges, not the world")
+    out["Sobol sampling"] = ("plain Monte Carlo (not quasi-random) so that the bootstrap error is valid; first-order "
+                             "estimator with outputs centred by their mean (numerical-stability variant: same estimand, "
+                             "O(1/N) bias, lower variance)")
+    out["base-rate proxy"] = ("FCF growth compared with the revenue growth of the synthetic universe: assumes a constant "
+                              "FCF margin - ASSUMPTION of the comparison")
+    return out
+
+
+def table_valuation_assumptions(res: dict) -> str:
+    body = []
+    for k, v in sorted(valuation_assumptions(res).items()):
+        flag = "ASSUMPTION" if "ASSUMPTION" in v or "as recalled" in v else "stated"
+        body.append([esc(k), esc(v), flag])
+    return _table("D5_assumptions", "Assumptions register of the valuation study (``ASSUMPTION'' = not verified against "
+                  "a primary source in this work, or a modelling assumption the result depends on; ``stated'' = a "
+                  "modelling choice or a cited textbook method).", _rag("3.0cm", "10.6cm", "2.1cm"),
+                  ["Item", "Statement and source", "Status"], body, size="\\scriptsize", colsep="3pt")
+
+
+def pmn(r: dict, k: str) -> str:
+    """'x.xxx $\\pm$ se' for a Sobol row's ``first`` / ``total``."""
+    return f"{r[k]:.3f} $\\pm$ {r[k + '_se']:.3f}"
+
+
+def valuation_findings(res: dict) -> List[Dict[str, str]]:
+    m = res["meta"]
+    ref = m["reference"]
+    br = {r["kappa"]: r for r in _vr(res, "base_rate_ref")}
+    b1 = br[1.0]
+    tv = {b["name"]: b for b in _vr(res, "tornado", model="dcf", output="implied_growth")}
+    sd = {r["name"]: r for r in _vr(res, "sobol", model="dcf")}
+    si = {r["name"]: r for r in _vr(res, "sobol", model="ishigami")}
+    sr = {r["name"]: r for r in _vr(res, "sobol", model="irrbb")}
+    se = {r["name"]: r for r in _vr(res, "sobol", model="ecl")}
+    ti = {b["name"]: b for b in _vr(res, "tornado", model="irrbb")}
+    dev = max(max(abs(r["first"] - r["analytic_first"]) / r["first_se"], abs(r["total"] - r["analytic_total"]) / r["total_se"])
+              for r in si.values())
+    lo_y, hi_y = m["dcf_ranges"]["years"]
+    lo_r, hi_r = m["dcf_ranges"]["discount_rate"]
+    return [
+        {"id": "D-F1", "severity": "High",
+         "finding": f"The reference price {ref['price']:g} implies {100 * ref['implied_growth']:.1f}\\,\\% FCF growth a "
+                    f"year for 10 years. In the synthetic universe ($\\kappa$ = 1) {pm(b1['survivors_only'], b1['survivors_only_se'], 1, 2)}"
+                    f"\\,\\% of today's survivors reached that, but only {pm(b1['full_cohort'], b1['full_cohort_se'], 1, 2)}"
+                    f"\\,\\% of the firms alive at the start: a survivors-only base rate overstates the chance by a factor "
+                    f"{b1['survivors_only'] / b1['full_cohort']:.1f} (factor {br[2.0]['survivors_only'] / br[2.0]['full_cohort']:.1f} "
+                    f"with strongly growth-driven exits, $\\kappa$ = 2).",
+         "evidence": "Tab.~\\ref{tab:D2_implied_growth}; Fig.~\\ref{fig:fig27_base_rates}",
+         "remediation": "Judge an implied growth against full-cohort base rates (exits counted as misses), not "
+                        "against databases of current constituents."},
+        {"id": "D-F2", "severity": "Medium",
+         "finding": f"The implied growth is not a market fact but conditional on unobservable inputs: the explicit "
+                    f"period ({lo_y:g} vs {hi_y:g} years) moves it from {100 * tv['years']['y_low']:.1f} to "
+                    f"{100 * tv['years']['y_high']:.1f}\\,\\%, the discount rate ({100 * lo_r:g} vs {100 * hi_r:g}\\,\\%) "
+                    f"from {100 * tv['discount_rate']['y_low']:.1f} to {100 * tv['discount_rate']['y_high']:.1f}\\,\\%; the "
+                    f"terminal value is {100 * ref['terminal_share']:.0f}\\,\\% of the enterprise value.",
+         "evidence": "Tab.~\\ref{tab:D3_tornado}; Fig.~\\ref{fig:fig24_tornado}, \\ref{fig:fig25_two_way}",
+         "remediation": "Report the implied growth with its sensitivity to the discount rate, the horizon and the "
+                        "terminal growth, never as a single number."},
+        {"id": "D-F3", "severity": "Low",
+         "finding": f"Over the tornado's ranges (including the explicit period, discrete uniform {lo_y:g}--{hi_y:g} years) "
+                    f"the DCF value is driven by the explicit period (total index {sd['years']['total']:.2f}), the growth "
+                    f"({sd['growth']['total']:.2f}) and the discount rate ({sd['discount_rate']['total']:.2f}); terminal "
+                    f"growth and FCF contribute {sd['terminal_growth']['total']:.2f} and {sd['fcf0']['total']:.2f}, net debt "
+                    f"{sd['net_debt']['total']:.3f}. The first-order indices sum to {sum(r['first'] for r in sd.values()):.2f}; "
+                    f"the largest first / total gaps are those of the growth and the explicit period (about "
+                    f"{sd['growth']['total'] - sd['growth']['first']:.2f} each), consistent with their interaction (growth "
+                    f"compounds over the period).",
+         "evidence": "Tab.~\\ref{tab:D4_sobol}; Fig.~\\ref{fig:fig26_sobol}",
+         "remediation": "State the input ranges with every index: the ranking depends on them."},
+        {"id": "D-F4", "severity": "Medium",
+         "finding": f"Applied to the v0.7 bank, the average maturity of the current-account deposits alone explains "
+                    f"{sr['ca_avg_maturity']['first']:.2f} $\\pm$ {sr['ca_avg_maturity']['first_se']:.2f} of the variance "
+                    f"of the worst $\\Delta$EVE / Tier 1 (total {sr['ca_avg_maturity']['total']:.2f}); within the caps it "
+                    f"moves the ratio from {100 * ti['ca_avg_maturity']['y_high']:.1f} to "
+                    f"{100 * ti['ca_avg_maturity']['y_low']:.1f}\\,\\% of Tier 1, across the 15\\,\\% outlier threshold.",
+         "evidence": "Tab.~\\ref{tab:D3_tornado}, \\ref{tab:D4_sobol}",
+         "remediation": "Validate and disclose the NMD maturity assumption first; it decides the outlier test."},
+        {"id": "D-F5", "severity": "Low",
+         "finding": f"For the v0.8 ECL, current-PD and LGD scaling dominate (total {pmn(se['pd_scale'], 'total')} and "
+                    f"{pmn(se['lgd_scale'], 'total')}). The SICR multiple has a first-order index of "
+                    f"{pmn(se['sicr_multiple'], 'first')} and a total index of {pmn(se['sicr_multiple'], 'total')} (N = " +
+                    f"{se['sicr_multiple']['n']:,}".replace(",", "\\,") + "): the gap of "
+                    f"{se['sicr_multiple']['total'] - se['sicr_multiple']['first']:.2f} is about "
+                    f"{(se['sicr_multiple']['total'] - se['sicr_multiple']['first']) / se['sicr_multiple']['first_se']:.0f} "
+                    "first-order se: a modest interaction (plausibly with the PD level), not conclusive. Staging is "
+                    "the v0.8 same-basis rule (scenarios change the amount, not the stage).",
+         "evidence": "Tab.~\\ref{tab:D3_tornado}, \\ref{tab:D4_sobol}",
+         "remediation": "Use global (Sobol) sensitivity for models with thresholds and report the errors with the indices."},
+        {"id": "D-F6", "severity": "Low",
+         "finding": f"The Sobol estimators (Saltelli et al. 2010 (b), Jansen 1999; confirmed in the review, consistent "
+                    f"with SALib) reproduce the analytic Ishigami "
+                    f"indices within Monte-Carlo error (largest deviation {dev:.1f} bootstrap se, N = " +
+                    f"{si['x1']['n']:,}".replace(",", "\\,") + "); centred first order: same estimand, O(1/N) bias.",
+         "evidence": "Tab.~\\ref{tab:D4_sobol}; Fig.~\\ref{fig:fig26_sobol}",
+         "remediation": "Keep the analytic test cases in the test suite."},
+        {"id": "D-F7", "severity": "Low",
+         "finding": "The base rates come from a synthetic revenue-growth universe; comparing FCF growth with it assumes "
+                    "a constant FCF margin, and the universe's parameters (drift, volatility, exit hazard) are modelling "
+                    "choices, not calibrations.",
+         "evidence": "Tab.~\\ref{tab:D5_assumptions}",
+         "remediation": "For a real decision, use a full-cohort database (including delisted firms) of the relevant "
+                        "metric."},
+    ]
+
+
+def table_valuation_findings(res: dict) -> str:
+    rows = [[f["id"], f["finding"], f"PROPOSED: {f['severity']}", f["evidence"], f["remediation"]]
+            for f in valuation_findings(res)]
+    return _table("D6_findings", "Findings register of the valuation study. Severities are PROPOSED and must be "
+                  "confirmed by the validator.", _rag("0.75cm", "6.6cm", "1.85cm", "2.4cm", "3.5cm"),
+                  ["ID", "Finding", "Severity", "Evidence", "Proposed remediation"], rows, size="\\scriptsize",
+                  colsep="3pt")
+
+
 # ---- write all --------------------------------------------------------------------------
 
 def load(path) -> dict:
@@ -993,7 +1236,7 @@ def load(path) -> dict:
 
 
 def write_all(results_dir, out_dir, doc: str = "validation") -> List[Path]:
-    """Write the tables of ``doc`` (``validation``: T1..T7; ``overfitting``: O1..O6; ``overview``: V1; ``irrbb``: R1..R4; ``credit``: C1..C6) from
+    """Write the tables of ``doc`` (``validation``: T1..T7; ``overfitting``: O1..O6; ``overview``: V1; ``irrbb``: R1..R4; ``credit``: C1..C6; ``valuation``: D1..D6) from
     ``<results_dir>/<study>_full_results.json`` into ``out_dir``."""
     r = Path(results_dir)
     out = Path(out_dir)
@@ -1010,6 +1253,12 @@ def write_all(results_dir, out_dir, doc: str = "validation") -> List[Path]:
                  "C3_ecl": table_credit_ecl(res), "C4_irb": table_credit_irb(res),
                  "C5_assumptions": table_credit_assumptions(res), "C6_findings": table_credit_findings(res)}
         return _write_tables(out, CREDIT_TABLE_NAMES, texts)
+    if doc == "valuation":
+        res = load(r / "valuation_sensitivity_full_results.json")
+        texts = {"D1_dcf": table_valuation_dcf(res), "D2_implied_growth": table_valuation_implied(res),
+                 "D3_tornado": table_valuation_tornado(res), "D4_sobol": table_valuation_sobol(res),
+                 "D5_assumptions": table_valuation_assumptions(res), "D6_findings": table_valuation_findings(res)}
+        return _write_tables(out, VALUATION_TABLE_NAMES, texts)
     if doc == "irrbb":
         res = load(r / "irrbb_scenarios_full_results.json")
         texts = {"R1_scenarios": table_irrbb_scenarios(res), "R2_outlier_test": table_irrbb_outlier(res),

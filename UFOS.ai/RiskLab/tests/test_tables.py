@@ -237,6 +237,22 @@ class CreditTableTests(unittest.TestCase):
         self.assertIn("Jensen", texts["C6_findings"])
 
 
+class ValuationTableTests(unittest.TestCase):
+    def test_valuation_tables_from_saved_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = T.write_all(RESULTS, tmp, doc="valuation")
+            self.assertEqual([p.stem for p in paths], list(T.VALUATION_TABLE_NAMES))
+            texts = {p.stem: p.read_text(encoding="utf-8") for p in paths}
+        for name, text in texts.items():
+            self.assertIn(f"\\label{{tab:{name}}}", text)
+            self.assertNotRegex(text, r"[^\\]%")
+            self.assertEqual(text.count("\\begin{tabular}"), text.count("\\end{tabular}"))
+        self.assertGreaterEqual(texts["D6_findings"].count("PROPOSED:"), 7)
+        self.assertIn("ASSUMPTION", texts["D5_assumptions"])
+        self.assertIn("synthetic", texts["D1_dcf"])
+        self.assertIn("Ishigami", texts["D4_sobol"])
+
+
 class WriteAllTests(unittest.TestCase):
     def test_write_all_from_saved_results(self):
         with tempfile.TemporaryDirectory() as tmp:

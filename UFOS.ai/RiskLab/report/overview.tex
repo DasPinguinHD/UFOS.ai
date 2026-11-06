@@ -70,8 +70,8 @@ are strongly biased; and the UFOS validation gates stop searched noise rules but
 \item \textbf{Reproducibility:} the same seed gives the same numbers within one numpy version; re-running all
   studies under a new package version gave identical results; figures and PDFs are byte-identical when rebuilt
   with the same tool versions.
-\item \textbf{Tests and reviews:} 289 unit tests (closed forms, golden tables, smoke runs of every study); every
-  version from v0.1 to v0.7 had an independent review whose findings were fixed in a follow-up round; a parity test checks the re-implemented
+\item \textbf{Tests and reviews:} 322 unit tests (closed forms, golden tables, smoke runs of every study); every
+  version from v0.1 to v0.8 had an independent review whose findings were fixed in a follow-up round; a parity test checks the re-implemented
   validation gates against the platform's own code.
 \end{itemize}
 
@@ -97,11 +97,14 @@ The reports are built with \texttt{python report/build\_report.py --doc validati
 \item The prose of the two detailed reports (validation report, gate study) is still open.
 \end{itemize}
 
-\section*{Since v0.7, and next}
+\section*{Since v0.7}
 v0.7 adds interest rate risk in the banking book (IRRBB): Nelson--Siegel curves, banking-book instruments, the six
 standardised shock scenarios with the post-shock floor, $\Delta$EVE / $\Delta$NII and the supervisory outlier
 tests, with a study of a synthetic bank and its own report (\texttt{--doc irrbb}). v0.8 adds credit risk: a logistic
 PD model with its validation tests, IFRS 9 expected credit loss and Basel IRB capital checked against the one-factor
-loss distribution (\texttt{--doc credit}). Next: a reverse DCF.
+loss distribution (\texttt{--doc credit}). v0.9 adds a free-cash-flow DCF and the reverse DCF (the growth a price
+implies, compared with synthetic base rates), and a generic sensitivity toolkit -- tornado, two-way tables and
+Sobol indices validated on the Ishigami function -- applied to the DCF, the IRRBB and the ECL models
+(\texttt{--doc valuation}). The Risk Lab block ends with v0.9.
 
 \end{document}

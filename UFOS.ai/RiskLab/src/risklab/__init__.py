@@ -16,4 +16,4 @@ folds, the parameter grid and its neighbours, the gate presets) and a simulator
 for the overfitting study of those gates (``studies/gate_overfitting.py``).
 """
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"

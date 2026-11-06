@@ -6,7 +6,8 @@ simulations (figures 1 and 6). ``--doc overfitting``: figures 8-11 of the gate o
 study, from ``gate_overfitting_full_results.json``. ``--doc overview``: the architecture figure 12
 and figure 3 for the project overview. ``--doc irrbb``: figures 13-17 of the IRRBB report, from
 ``irrbb_scenarios_full_results.json``. ``--doc credit``: figures 18-22 of the credit report, from
-``credit_risk_full_results.json``. Needs the optional extra ``report``
+``credit_risk_full_results.json``. ``--doc valuation``: figures 23-27 of the valuation report, from
+``valuation_sensitivity_full_results.json``. Needs the optional extra ``report``
 (matplotlib); without it the script stops with a clear message.
 
 Run from ``UFOS.ai/RiskLab/``::
@@ -64,6 +65,15 @@ def build_figures(results_dir: Path = RESULTS, out_dir: Path = FIGURES, doc: str
             width = "0.6\\linewidth" if s.stem == "fig18_cap_roc" else "\\linewidth"
             written += list(s.paths) + [F.write_snippet(s, out_dir, width)]
         return written
+    if doc == "valuation":
+        res = F.load_results(results_dir / "valuation_sensitivity_full_results.json")
+        specs = [F.fig_implied_growth(res, out_dir), F.fig_tornado(res, out_dir), F.fig_two_way(res, out_dir),
+                 F.fig_sobol(res, out_dir), F.fig_base_rates(res, out_dir)]
+        written = []
+        for s in specs:
+            width = "0.66\\linewidth" if s.stem == "fig26_sobol" else "0.74\\linewidth"
+            written += list(s.paths) + [F.write_snippet(s, out_dir, width)]
+        return written
     if doc == "irrbb":
         res = F.load_results(results_dir / "irrbb_scenarios_full_results.json")
         specs = [F.fig_irrbb_curves(res, out_dir), F.fig_irrbb_delta(res, out_dir), F.fig_key_rates(res, out_dir),
@@ -104,7 +114,7 @@ def build_figures(results_dir: Path = RESULTS, out_dir: Path = FIGURES, doc: str
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--doc", choices=("validation", "overfitting", "irrbb", "credit", "overview"), default="validation")
+    ap.add_argument("--doc", choices=("validation", "overfitting", "irrbb", "credit", "valuation", "overview"), default="validation")
     ap.add_argument("--results-dir", default=str(RESULTS))
     ap.add_argument("--out-dir", default=str(FIGURES))
     args = ap.parse_args(argv)

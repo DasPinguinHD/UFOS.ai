@@ -125,6 +125,30 @@ class CreditFigureTests(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_MPL, SKIP_MSG)
+class ValuationFigureTests(unittest.TestCase):
+    def test_five_figures_from_saved_results(self):
+        import json
+
+        from risklab.report import figures as F
+
+        path = Path(__file__).resolve().parents[1] / "studies" / "results" / "valuation_sensitivity_full_results.json"
+        res = json.loads(path.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            out = []
+            for d in ("a", "b"):
+                out.append([F.fig_implied_growth(res, Path(tmp, d)), F.fig_tornado(res, Path(tmp, d)),
+                            F.fig_two_way(res, Path(tmp, d)), F.fig_sobol(res, Path(tmp, d)),
+                            F.fig_base_rates(res, Path(tmp, d))])
+            self.assertEqual([s.stem for s in out[0]], ["fig23_implied_growth", "fig24_tornado", "fig25_two_way",
+                                                        "fig26_sobol", "fig27_base_rates"])
+            for x, y in zip(*out):
+                self.assertNotIn("%", x.caption.replace("\\%", ""))
+                for p, q in zip(x.paths, y.paths):
+                    self.assertGreater(p.stat().st_size, 1000)
+                    self.assertEqual(p.read_bytes(), q.read_bytes())
+
+
+@unittest.skipUnless(HAVE_MPL, SKIP_MSG)
 class IRRBBFigureTests(unittest.TestCase):
     def test_five_figures_from_a_smoke_run(self):
         import importlib.util

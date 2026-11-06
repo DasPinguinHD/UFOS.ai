@@ -1,0 +1,20 @@
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{Findings register of the valuation study. Severities are PROPOSED and must be confirmed by the validator.}
+\label{tab:D6_findings}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.75cm}>{\raggedright\arraybackslash}p{6.6cm}>{\raggedright\arraybackslash}p{1.85cm}>{\raggedright\arraybackslash}p{2.4cm}>{\raggedright\arraybackslash}p{3.5cm}}
+\toprule
+ID & Finding & Severity & Evidence & Proposed remediation \\
+\midrule
+D-F1 & The reference price 30 implies 13.1\,\% FCF growth a year for 10 years. In the synthetic universe ($\kappa$ = 1) 20.2 $\pm$ 0.03\,\% of today's survivors reached that, but only 10.4 $\pm$ 0.02\,\% of the firms alive at the start: a survivors-only base rate overstates the chance by a factor 1.9 (factor 4.2 with strongly growth-driven exits, $\kappa$ = 2). & PROPOSED: High & Tab.~\ref{tab:D2_implied_growth}; Fig.~\ref{fig:fig27_base_rates} & Judge an implied growth against full-cohort base rates (exits counted as misses), not against databases of current constituents. \\
+D-F2 & The implied growth is not a market fact but conditional on unobservable inputs: the explicit period (7 vs 13 years) moves it from 17.1 to 11.1\,\%, the discount rate (8 vs 10\,\%) from 10.8 to 15.3\,\%; the terminal value is 63\,\% of the enterprise value. & PROPOSED: Medium & Tab.~\ref{tab:D3_tornado}; Fig.~\ref{fig:fig24_tornado}, \ref{fig:fig25_two_way} & Report the implied growth with its sensitivity to the discount rate, the horizon and the terminal growth, never as a single number. \\
+D-F3 & Over the tornado's ranges (including the explicit period, discrete uniform 7--13 years) the DCF value is driven by the explicit period (total index 0.38), the growth (0.35) and the discount rate (0.19); terminal growth and FCF contribute 0.06 and 0.06, net debt 0.011. The first-order indices sum to 0.95; the largest first / total gaps are those of the growth and the explicit period (about 0.04 each), consistent with their interaction (growth compounds over the period). & PROPOSED: Low & Tab.~\ref{tab:D4_sobol}; Fig.~\ref{fig:fig26_sobol} & State the input ranges with every index: the ranking depends on them. \\
+D-F4 & Applied to the v0.7 bank, the average maturity of the current-account deposits alone explains 0.77 $\pm$ 0.03 of the variance of the worst $\Delta$EVE / Tier 1 (total 0.79); within the caps it moves the ratio from 8.4 to 29.1\,\% of Tier 1, across the 15\,\% outlier threshold. & PROPOSED: Medium & Tab.~\ref{tab:D3_tornado}, \ref{tab:D4_sobol} & Validate and disclose the NMD maturity assumption first; it decides the outlier test. \\
+D-F5 & For the v0.8 ECL, current-PD and LGD scaling dominate (total 0.455 $\pm$ 0.017 and 0.355 $\pm$ 0.012). The SICR multiple has a first-order index of 0.081 $\pm$ 0.011 and a total index of 0.111 $\pm$ 0.005 (N = 2\,048): the gap of 0.03 is about 3 first-order se: a modest interaction (plausibly with the PD level), not conclusive. Staging is the v0.8 same-basis rule (scenarios change the amount, not the stage). & PROPOSED: Low & Tab.~\ref{tab:D3_tornado}, \ref{tab:D4_sobol} & Use global (Sobol) sensitivity for models with thresholds and report the errors with the indices. \\
+D-F6 & The Sobol estimators (Saltelli et al. 2010 (b), Jansen 1999; confirmed in the review, consistent with SALib) reproduce the analytic Ishigami indices within Monte-Carlo error (largest deviation 1.1 bootstrap se, N = 65\,536); centred first order: same estimand, O(1/N) bias. & PROPOSED: Low & Tab.~\ref{tab:D4_sobol}; Fig.~\ref{fig:fig26_sobol} & Keep the analytic test cases in the test suite. \\
+D-F7 & The base rates come from a synthetic revenue-growth universe; comparing FCF growth with it assumes a constant FCF margin, and the universe's parameters (drift, volatility, exit hazard) are modelling choices, not calibrations. & PROPOSED: Low & Tab.~\ref{tab:D5_assumptions} & For a real decision, use a full-cohort database (including delisted firms) of the relevant metric. \\
+\bottomrule
+\end{tabular}
+\end{table}

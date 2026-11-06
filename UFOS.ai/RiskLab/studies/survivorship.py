@@ -44,6 +44,12 @@ dominate the size of the bias.
 
 With zero hazard (h0 = 0) nobody exits and all three rates coincide exactly.
 
+The same generator is duplicated, draw for draw, in ``risklab.valuation.base_rates`` (v0.9: the
+reverse DCF's base rates). It is a copy rather than an import because a library module must not
+import a study script and the code fingerprint follows only ``risklab`` imports; the parity test
+``tests/test_valuation_reverse.py::BaseRateTests::test_parity_with_the_v04_study`` keeps the two
+identical. Change both together.
+
 M replications per setting give the Monte-Carlo mean and its se. A sweep over
 kappa (with h0 fixed) and the zero-hazard control show when the bias matters.
 

@@ -212,3 +212,35 @@ so that the README stays short; the content is unchanged.
   `ifrs9_sources`) gives every source. Items that are not verified are marked
   ASSUMPTION.
 
+
+## Valuation and sensitivity (`risklab.valuation`, `risklab.sensitivity`, v0.9)
+
+- **Rates and growth** are annual decimals. Free cash flows arrive at the
+  END of each year (no mid-year convention). The terminal value is the Gordon
+  value `FCF_N (1 + g_T) / (r - g_T)` at year N.
+- **Growth path:** constant, or a linear fade from the start growth in year 1
+  to the terminal growth in year N (`fade=True`, N >= 2).
+- **Equity bridge:** equity = EV - net debt - other claims; the value per
+  share is equity / shares.
+- **Invalid inputs** (`r <= g_T`, growth <= -100 %, non-integer years, shares
+  <= 0, non-finite values) raise `DCFInputError`. Nothing is clipped.
+- **Reverse DCF:** Brent's method on an explicit bracket. If the price is
+  outside the values at the bracket ends, `NoRootInBracket` reports both
+  values; there is no extrapolation. It needs `fcf0 > 0`, which makes the
+  root unique.
+- **Base rates:** the universe reproduces the v0.4 survivorship study draw
+  for draw (a parity test guards it). Comparing FCF growth with its revenue
+  growth assumes a constant FCF margin.
+- **Tornado:** each input alone at the ends of its range, sorted by swing.
+  Ties keep the input order.
+- **Two-way tables:** a cell is NaN only for exception types the caller
+  passes in `invalid`; any other error propagates.
+- **Sobol indices:**
+  - Saltelli sampling with matrices A, B and A_B^(i), N (k + 2) runs, plain
+    Monte Carlo.
+  - First order with outputs centred by their mean; total order by the
+    Jansen estimator.
+  - Bootstrap over the N rows for the se and a percentile interval.
+  - Estimates are reported as estimated, never clipped to [0, 1].
+  - Inputs must be independent, and the indices hold only for the stated
+    ranges. Whole-number inputs (e.g. years) use `DiscreteUniform`.

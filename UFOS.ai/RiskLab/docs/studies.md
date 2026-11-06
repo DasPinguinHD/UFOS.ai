@@ -383,6 +383,65 @@ The full run is in
 - **IRB:** (q99.9 - EL) / sum K is 0.993 for 10 000 names and 1.69 for 30
   names.
 
+## The valuation and sensitivity study
+
+```
+python studies/valuation_sensitivity.py                # M = 200 cohorts, N = 4096: 9 s in the cloud container
+python studies/valuation_sensitivity.py --mode full --save-results    # M = 2000, N = 65 536 / 1024 / 2048: 5 min
+```
+
+**Design (synthetic example):**
+
+- **Company:** "Synthetic Co.", invented with round numbers: FCF 100,
+  discount rate 9 %, terminal growth 2 %, a 10-year explicit period, net
+  debt 300, other claims 50, 100 shares. The reference price is 30 per
+  share. No market or company data.
+- **A. Implied growth vs price** (10–60): the constant growth, the fade
+  start with its CAGR, and the discount rate at 5 % growth.
+- **B. Base rates:** the share of firms that reach the implied 10-year CAGR
+  in the v0.4 universe (2000 cohorts of 2000 firms). It is reported for
+  survivors only, the full cohort and the counterfactual, with kappa 0 / 1 / 2.
+- **C. One-way and two-way sensitivity** of the value per share and of the
+  implied growth itself.
+- **D. Sobol indices** of the value per share over the six inputs and
+  ranges of the tornado (the explicit period discrete uniform over 7–13
+  years), and the Ishigami function against its analytic indices.
+- **E. Cross-module use:** tornado and Sobol for the worst ΔEVE / Tier 1 of
+  the v0.7 bank against the NMD assumptions, and for the ECL coverage of a
+  200-loan v0.8 book against the scenario weight and severity, the SICR
+  multiple and LGD / PD scaling.
+
+The full run is in
+[`studies/results/valuation_sensitivity_full_summary.md`](../studies/results/valuation_sensitivity_full_summary.md).
+
+**Results:**
+
+- **Implied growth:** the reference price implies 13.1 % FCF growth a year
+  for 10 years. The terminal value is 63 % of the enterprise value.
+- **Base rates (kappa = 1):** 20.2 % of today's survivors reached that
+  growth, against 10.4 % of the full cohort (14.3 % counterfactual). With
+  kappa = 2 the survivors-only rate is 36.7 % against 8.7 %.
+- **What moves the implied growth:** an explicit period of 7 vs 13 years
+  gives 17.1 % vs 11.1 %. A discount rate of 8 % vs 10 % gives 10.8 % vs
+  15.3 %.
+- **DCF Sobol (total order):** explicit period 0.38, growth 0.35, discount
+  rate 0.19, terminal growth 0.06, FCF 0.06, net debt 0.011. The first-order
+  indices sum to 0.95; the gaps of growth and explicit period (about 0.04
+  each) are consistent with their interaction.
+- **Ishigami check:** the estimates are within 1.1 bootstrap se of the
+  analytic indices (N = 65 536).
+- **IRRBB:** the current-account average maturity explains 0.77 of the
+  variance of the worst ΔEVE / Tier 1. Within the caps it moves the ratio
+  from 8.4 % to 29.1 %.
+- **ECL** (N = 2048): current-PD and LGD scaling dominate (total
+  0.455 ± 0.017 / 0.355 ± 0.012). The SICR multiple has a first-order index
+  of 0.081 ± 0.011 and a total index of 0.111 ± 0.005: a modest interaction,
+  not conclusive. Staging follows the v0.8 same-basis rule, so the scenario
+  weight and severity change the amount, not the stage.
+
+The findings register is table D6 of the report (severities PROPOSED); the
+assumptions register is table D5.
+
 ## The validation report
 
 **Report PDFs are not kept in the repository** (user decision 2026-11-05):
