@@ -1,4 +1,6 @@
-# Direct dependencies of the Risk Lab (unpinned).
-# The hash-pinned lock (requirements.txt) is generated later on the user's PC.
+# Direct dependencies of the Risk Lab (unpinned). The hash-pinned lock is requirements.lock,
+# generated from this file with uv 0.13.7 (`uv pip compile --universal --fork-strategy fewest
+# --generate-hashes --python-version 3.10`); see the README, "Dependencies".
 numpy
 scipy
+# The report figures need matplotlib: see requirements-report.in (optional extra "report").

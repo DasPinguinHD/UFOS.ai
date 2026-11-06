@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Union
@@ -38,6 +39,134 @@ def default_out_dir() -> Path:
     if not (_RISKLAB_ROOT / "pyproject.toml").is_file() or not (_RISKLAB_ROOT / "src" / "risklab").is_dir():
         raise ValueError("risklab is not running from its source tree: pass out_dir explicitly")
     return _RISKLAB_ROOT / "out"
+
+
+def _module_file(name: str) -> Optional[Path]:
+    """Source file of a ``risklab`` module name (package -> its ``__init__.py``), None if not in the tree."""
+    parts = name.split(".")
+    if parts[0] != "risklab":
+        return None
+    base = _RISKLAB_ROOT / "src" / Path(*parts)
+    if (base / "__init__.py").is_file():
+        return base / "__init__.py"
+    if base.with_suffix(".py").is_file():
+        return base.with_suffix(".py")
+    return None
+
+
+def _module_name(path: Path) -> Optional[str]:
+    try:
+        rel = path.resolve().relative_to(_RISKLAB_ROOT / "src")
+    except ValueError:
+        return None
+    parts = list(rel.with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def risklab_imports(path: Path) -> List[str]:
+    """``risklab`` modules a source file imports (static, by AST; relative imports resolved): for
+    ``from risklab.x import y`` both ``risklab.x`` and, if it exists, the submodule ``risklab.x.y``;
+    every parent package of a module is included (Python imports it first)."""
+    import ast
+
+    path = Path(path)
+    tree = ast.parse(path.read_bytes())
+    own = _module_name(path)
+    is_pkg = path.name == "__init__.py"
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                if own is None:
+                    continue
+                pkg = own.split(".") if is_pkg else own.split(".")[:-1]
+                pkg = pkg[: len(pkg) - (node.level - 1)]
+                mod = ".".join(pkg + ([node.module] if node.module else []))
+            else:
+                mod = node.module or ""
+            names.add(mod)
+            names.update(f"{mod}.{a.name}" for a in node.names)
+    out = set()
+    for n in names:
+        parts = n.split(".")
+        for k in range(1, len(parts) + 1):
+            sub = ".".join(parts[:k])
+            if _module_file(sub) is not None:
+                out.add(sub)
+    return sorted(out)
+
+
+def code_fingerprint(study_file) -> str:
+    """sha256 of the code that produced a study result: the study script plus every
+    ``risklab`` module it imports, directly or transitively (static import graph, see
+    :func:`risklab_imports`), except ``risklab.report.*`` (report code does not change
+    results; its own imports are not followed). Modules the study does not use (e.g. the
+    gate validation code for the VaR studies) do not enter the fingerprint, so adding them
+    does not make other studies' results stale; ``risklab/__init__.py`` always counts, but its
+    ``__version__`` line is normalised out (:func:`normalised_source`), so a version-only bump keeps
+    results valid.
+
+    Paths are taken relative to the RiskLab root and sorted; line endings are
+    normalised to LF, so a CRLF checkout gives the same fingerprint.
+    """
+    import hashlib
+
+    study = Path(study_file).resolve()
+    seen, todo = set(), list(risklab_imports(study))
+    while todo:
+        name = todo.pop()
+        if name in seen or name == "risklab.report" or name.startswith("risklab.report."):
+            continue
+        seen.add(name)
+        todo.extend(risklab_imports(_module_file(name)))
+    files = [study] + sorted({_module_file(n) for n in seen})
+    h = hashlib.sha256()
+    for p in files:
+        try:
+            rel = p.relative_to(_RISKLAB_ROOT).as_posix()
+        except ValueError:
+            rel = p.name
+        h.update(rel.encode("utf-8") + b"\0")
+        h.update(normalised_source(rel, p.read_bytes()) + b"\0")
+    return h.hexdigest()
+
+
+#: the version assignment in ``src/risklab/__init__.py``; normalised out of the fingerprint (v0.6)
+_VERSION_LINE = re.compile(rb'^__version__ = "[^"\n]*"$', re.MULTILINE)
+VERSION_PLACEHOLDER = b'__version__ = "<normalised>"'
+INIT_REL = "src/risklab/__init__.py"
+
+
+def normalised_source(rel: str, data: bytes) -> bytes:
+    """The bytes that enter the fingerprint for the file at ``rel`` (relative to the RiskLab root):
+    CRLF -> LF; in ``src/risklab/__init__.py`` the ``__version__ = "..."`` line is replaced by a
+    fixed placeholder, so a version bump alone does not make results stale (every other change in
+    that file still does). Results files record the producing version in ``meta.risklab_version``."""
+    data = data.replace(b"\r\n", b"\n")
+    if rel == INIT_REL:
+        data, n = _VERSION_LINE.subn(VERSION_PLACEHOLDER, data)
+        if n != 1:
+            raise ValueError(f"{rel}: expected exactly one '__version__ = \"...\"' line, found {n}")
+    return data
+
+
+def save_full_results(out_dir: PathLike, study: str, results_dir: Optional[PathLike] = None) -> List[Path]:
+    """Copy ``<out_dir>/results.json`` and ``summary.md`` to
+    ``<RiskLab>/studies/results/<study>_full_results.json`` / ``_full_summary.md`` (``--save-results``)."""
+    import shutil
+
+    target = Path(results_dir) if results_dir is not None else _RISKLAB_ROOT / "studies" / "results"
+    target.mkdir(parents=True, exist_ok=True)
+    out = []
+    for src_name, suffix in (("results.json", "results.json"), ("summary.md", "summary.md")):
+        dst = target / f"{study}_full_{suffix}"
+        shutil.copyfile(Path(out_dir) / src_name, dst)
+        out.append(dst)
+    return out
 
 
 def _f(x) -> Optional[float]:

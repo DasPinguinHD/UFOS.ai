@@ -1,0 +1,31 @@
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{Assumptions register of the credit study (``ASSUMPTION'' = not verified against a primary source in this work; ``stated'' = a modelling choice or a cited rule).}
+\label{tab:C5_assumptions}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{10.6cm}>{\raggedright\arraybackslash}p{2.1cm}}
+\toprule
+Item & Statement and source & Status \\
+\midrule
+IFRS 9 EAD & annual annuity balance at the start of each year (amortising) or full balance (bullet), with the default at the end of the year (simplification, slightly conservative) & stated \\
+IFRS 9 LGD & constant per loan (synthetic parameter) & stated \\
+IFRS 9 PD term structure & constant hazard = 12-month PD x scenario multiplier per year (simple model, synthetic) & stated \\
+IFRS 9 backstop & 30 days past due: rebuttable presumption of SICR, IFRS 9 5.5.11 (as recalled) & stated \\
+IFRS 9 default & 90 days past due: rebuttable presumption of default, IFRS 9 B5.5.37 (as recalled) & stated \\
+IFRS 9 sicr proxy & 12-month PD change as a proxy for the lifetime PD change (IFRS 9 B5.5.13; confirmed in the v0.8 review) & stated \\
+IFRS 9 stage 3 & ECL = LGD x EAD, undiscounted and without scenarios (simplification) & stated \\
+IFRS 9 stages & IFRS 9 5.5.3 (lifetime if SICR) / 5.5.5 (12-month otherwise); paragraph numbers as recalled - ASSUMPTION & ASSUMPTION \\
+IFRS 9 staging basis & current 12-month PD and the PD at origination compared on the same basis: both base-scenario PDs without the scenario overlay (modelling choice; scenarios affect the ECL, not the stage) & stated \\
+IFRS 9 weighting & probability-weighted over scenarios, discounted at the EIR (IFRS 9 5.5.17 as recalled) & stated \\
+IRB formula & BCBS (2006) Basel II para 272 / Basel Framework CRE31.4-31.5 / CRR Art. 153(1); reproduces the illustrative risk weights of Basel II Annex 5 and the CRE99 tables (14.44 / 29.65 / 92.32 \% at PD 0.03 / 0.10 / 1 \%, LGD 45 \%, M 2.5) exactly - confirmed in the v0.8 review & stated \\
+IRB maturity & M floored at 1 and capped at 5 years (Basel Framework CRE32.46, confirmed in the v0.8 review; CRR Art. 162); parameters & stated \\
+IRB not modelled & SME firm-size adjustment (CRE31.8), defaulted exposures, double default, credit risk mitigation & stated \\
+IRB pd\_floor & 0.05 \% (Basel Framework CRE32.4; confirmed in the v0.8 review); parameter & stated \\
+IRB scaling & 1.0 (Basel framework, CRE31); the 1.06 factor is CRR-only (CRR Art. 153(1)); parameter, default 1.0 & stated \\
+Jeffreys test & ECB instructions for reporting the validation results of IRB models (2019), as recalled - ASSUMPTION; formula: Jeffreys-prior posterior & ASSUMPTION \\
+data & synthetic: logit PD with known coefficients, one-factor Gaussian copula with asset correlation 0.12, observable AR(1) macro variable (modelling choices, not calibrations) & stated \\
+master scale & 9 grades with PD bounds 0.1, 0.25, 0.5, 1, 2, 4, 8, 15 \% (synthetic) & stated \\
+\bottomrule
+\end{tabular}
+\end{table}

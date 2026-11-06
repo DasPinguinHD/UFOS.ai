@@ -1,0 +1,26 @@
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{Logistic PD model. Top: one fit on 50000 borrower-years against the true coefficients (standard errors from the MLE information matrix; $z$ = (estimate $-$ true) / se). Bottom: out-of-time quality against the training size (M = 200 replications, $\pm$ Monte-Carlo se); failed = fits stopped with an explicit separation error. Failed fits are EXCLUDED: all averages are conditional on a successful fit. Macro: standard deviation of the macro coefficient over the successful fits / mean MLE standard error.}
+\label{tab:C1_pd_model}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrr}
+\toprule
+Coefficient & True & Estimate & SE & $z$ &  \\
+\midrule
+const & -4.00 & -4.341 & 0.177 & -1.92 &  \\
+leverage & +2.50 & +2.689 & 0.179 & +1.06 &  \\
+log\_icr & -0.90 & -0.849 & 0.063 & +0.81 &  \\
+log\_size & -0.25 & -0.264 & 0.037 & -0.37 &  \\
+sector\_1 & +0.40 & +0.566 & 0.090 & +1.85 &  \\
+sector\_2 & -0.30 & -0.077 & 0.103 & +2.18 &  \\
+macro & -0.45 & -0.356 & 0.029 & +3.21 &  \\
+\midrule
+\textit{N train} & \textit{failed} & \textit{AUC} & \textit{gap to true} & \textit{coef.\ RMSE} & \textit{macro: sd / se} \\
+500 & 74 & 0.675 $\pm$ 0.007 & +0.072 $\pm$ 0.007 & 1.594 $\pm$ 0.192 & 2.678 / 1.074 \\
+2000 & 4 & 0.710 $\pm$ 0.005 & +0.036 $\pm$ 0.004 & 0.788 $\pm$ 0.039 & 1.478 / 0.499 \\
+10000 & 0 & 0.714 $\pm$ 0.005 & +0.029 $\pm$ 0.005 & 0.547 $\pm$ 0.037 & 1.252 / 0.229 \\
+50000 & 0 & 0.730 $\pm$ 0.004 & +0.018 $\pm$ 0.004 & 0.421 $\pm$ 0.023 & 1.026 / 0.087 \\
+\bottomrule
+\end{tabular}
+\end{table}

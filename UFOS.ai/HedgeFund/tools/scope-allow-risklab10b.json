@@ -1,0 +1,17 @@
+{
+  "label": "risklab10b",
+  "approved": "lead, 2026-11-06: v0.6 review fixes (M1 CI YAML + PyYAML test; minor 1-6) (Agent H)",
+  "files": [
+    "UFOS.ai/RiskLab/ci/risklab-tests.yml",
+    "UFOS.ai/RiskLab/tests/test_ci_workflow.py",
+    "UFOS.ai/RiskLab/requirements.in",
+    "UFOS.ai/RiskLab/requirements-report.in",
+    "UFOS.ai/RiskLab/README.md",
+    "UFOS.ai/RiskLab/examples/quickstart.py",
+    "UFOS.ai/RiskLab/tests/test_quickstart.py",
+    "UFOS.ai/RiskLab/report/build_report.py",
+    "UFOS.ai/RiskLab/src/risklab/report/tables.py",
+    "UFOS.ai/RiskLab/report/overview.tex",
+    "UFOS.ai/RiskLab/report/tables/V1_key_results.tex"
+  ]
+}

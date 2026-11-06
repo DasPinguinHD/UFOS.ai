@@ -1,0 +1,25 @@
+\begin{table}[H]
+\centering
+\small
+\caption{Size of the backtests at 5\,\% (rejection rate of a correct VaR / ES, in \%). Exact binomial sums; oracle rows: M = 1000 synthetic replications ($\pm$ se).}
+\label{tab:T2_size}
+\begin{tabular}{lrrrr}
+\toprule
+ & Kupiec & Binomial exact & Christoffersen cc & ES Z2 \\
+\midrule
+exact size, T = 250 & 9.48 & 4.12 & -- & -- \\
+exact size, T = 1000 & 5.51 & 3.65 & -- & -- \\
+\midrule
+oracle, garch\_normal, T = 250 & 10.6 $\pm$ 1.0 & 4.5 $\pm$ 0.7 & 1.0 $\pm$ 0.3 & 4.6 $\pm$ 0.7 \\
+oracle, garch\_normal, T = 1000 & 6.2 $\pm$ 0.8 & 4.6 $\pm$ 0.7 & 2.8 $\pm$ 0.5 & 4.6 $\pm$ 0.7 \\
+oracle, garch\_t6, T = 250 & 9.6 $\pm$ 0.9 & 3.8 $\pm$ 0.6 & 1.0 $\pm$ 0.3 & 4.4 $\pm$ 0.6 \\
+oracle, garch\_t6, T = 1000 & 4.6 $\pm$ 0.7 & 2.5 $\pm$ 0.5 & 1.7 $\pm$ 0.4 & 4.6 $\pm$ 0.7 \\
+oracle, iid\_normal, T = 250 & 8.7 $\pm$ 0.9 & 5.3 $\pm$ 0.7 & 1.1 $\pm$ 0.3 & 6.4 $\pm$ 0.8 \\
+oracle, iid\_normal, T = 1000 & 5.7 $\pm$ 0.7 & 4.1 $\pm$ 0.6 & 2.7 $\pm$ 0.5 & 4.8 $\pm$ 0.7 \\
+oracle, iid\_t5, T = 250 & 9.0 $\pm$ 0.9 & 4.0 $\pm$ 0.6 & 1.0 $\pm$ 0.3 & 5.1 $\pm$ 0.7 \\
+oracle, iid\_t5, T = 1000 & 7.4 $\pm$ 0.8 & 5.0 $\pm$ 0.7 & 4.1 $\pm$ 0.6 & 6.5 $\pm$ 0.8 \\
+oracle, regime, T = 250 & 10.5 $\pm$ 1.0 & 4.3 $\pm$ 0.6 & 1.0 $\pm$ 0.3 & 5.0 $\pm$ 0.7 \\
+oracle, regime, T = 1000 & 5.1 $\pm$ 0.7 & 3.4 $\pm$ 0.6 & 2.6 $\pm$ 0.5 & 4.4 $\pm$ 0.6 \\
+\bottomrule
+\end{tabular}
+\end{table}

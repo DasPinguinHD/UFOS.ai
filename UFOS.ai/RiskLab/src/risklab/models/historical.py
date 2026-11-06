@@ -1,32 +1,29 @@
 """Historical simulation: empirical VaR / ES of the window's losses."""
 from __future__ import annotations
 
-import math
 from typing import Sequence
 
 import numpy as np
 
 from risklab.conventions import as_loss_array, check_alphas
+from risklab.dists import Empirical, ceil_rounded, order_statistic_index  # noqa: F401 (re-exported)
 from risklab.models.base import Forecast
-
-#: Decimal places used to round ``n * alpha`` and ``1 / (1 - alpha)`` before ``ceil``,
-#: so that binary floating-point noise (``1 / (1 - 0.99) = 100.00000000000009``)
-#: cannot move the result to the next integer.
-_ROUND_DIGITS = 9
-
-
-def _ceil(x: float) -> int:
-    return int(math.ceil(round(x, _ROUND_DIGITS)))
-
-
-def order_statistic_index(n: int, alpha: float) -> int:
-    """1-based rank ``k = ceil(n * alpha)`` of the HS VaR in the ascending sample."""
-    return _ceil(n * alpha)
 
 
 def min_window(alpha: float) -> int:
-    """Smallest window for HS at level alpha: ``ceil(1 / (1 - alpha))``."""
-    return _ceil(1.0 / (1.0 - alpha))
+    """Smallest window for HS at level alpha: ``ceil(1 / (1 - alpha))`` (rounded to 9 decimals first)."""
+    return ceil_rounded(1.0 / (1.0 - alpha))
+
+
+def hs_var_es(sorted_x: np.ndarray, alpha: float):
+    """(VaR, ES) of an ascending sample with the HS convention; ValueError if the sample is too short."""
+    n = sorted_x.shape[0]
+    need = min_window(alpha)
+    if n < need:
+        raise ValueError(f"historical simulation at alpha={alpha} needs at least {need} observations "
+                         f"(ceil(1 / (1 - alpha))), got {n}")
+    v = float(sorted_x[order_statistic_index(n, alpha) - 1])
+    return v, float(np.mean(sorted_x[sorted_x >= v]))
 
 
 def exceedance_probability(n: int, alpha: float) -> float:
@@ -76,15 +73,7 @@ class HistoricalSimulation:
     def forecast(self, alphas: Sequence[float]) -> Forecast:
         if self._sorted is None:
             raise RuntimeError("fit() must be called before forecast()")
-        x = self._sorted
-        n = x.shape[0]
         var, es = {}, {}
         for a in check_alphas(alphas):
-            need = min_window(a)
-            if n < need:
-                raise ValueError(f"historical simulation at alpha={a} needs at least {need} losses "
-                                 f"(ceil(1 / (1 - alpha))), the window has {n}")
-            v = float(x[order_statistic_index(n, a) - 1])
-            var[a] = v
-            es[a] = float(np.mean(x[x >= v]))
-        return Forecast(var=var, es=es)
+            var[a], es[a] = hs_var_es(self._sorted, a)
+        return Forecast(var=var, es=es, dist=Empirical(self._sorted))

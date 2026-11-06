@@ -1,0 +1,25 @@
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{Assumptions register of the valuation study (``ASSUMPTION'' = not verified against a primary source in this work, or a modelling assumption the result depends on; ``stated'' = a modelling choice or a cited textbook method).}
+\label{tab:D5_assumptions}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{10.6cm}>{\raggedright\arraybackslash}p{2.1cm}}
+\toprule
+Item & Statement and source & Status \\
+\midrule
+Sobol inputs & independent and uniform (a modelling choice; the DCF explicit period discrete uniform over whole years); the DCF ranges equal the tornado ranges; the indices describe the variance over these ranges, not the world & stated \\
+Sobol ranges (DCF) & discount\_rate U(0.08, 0.1); fcf0 U(90, 110); growth U(0.1014, 0.1614); net\_debt U(150, 450); terminal\_growth U(0.01, 0.03); years U(7, 13) & stated \\
+Sobol ranges (ECL) & downside\_severity U(0.5, 1.5); downside\_weight U(0.1, 0.5); lgd\_scale U(0.8, 1.2); pd\_scale U(0.8, 1.2); sicr\_multiple U(2, 4) & stated \\
+Sobol ranges (IRRBB) & ca\_avg\_maturity U(1, 5); ca\_core\_share U(0.5, 0.9); sav\_avg\_maturity U(1, 4.5); sav\_core\_share U(0.3, 0.7) & stated \\
+Sobol sampling & plain Monte Carlo (not quasi-random) so that the bootstrap error is valid; first-order estimator with outputs centred by their mean (numerical-stability variant: same estimand, O(1/N) bias, lower variance) & stated \\
+base-rate proxy & FCF growth compared with the revenue growth of the synthetic universe: assumes a constant FCF margin - ASSUMPTION of the comparison & ASSUMPTION \\
+cash-flow timing & end of year (no mid-year convention); terminal value by the Gordon growth formula & stated \\
+company & synthetic, invented with round numbers; not a real company and not calibrated to market data; for a real company the inputs are user-provided at run time & stated \\
+source: base rates & synthetic universe of the v0.4 survivorship study (same draws); FCF growth compared with revenue growth assumes a constant FCF margin (modelling assumption) & stated \\
+source: dcf & enterprise DCF with Gordon terminal value (textbook: Koller, Goedhart and Wessels, Valuation; Damodaran, Investment Valuation); end-of-year cash flows & stated \\
+source: reverse DCF & price as given, solve for the implied growth (Mauboussin and Rappaport, Expectations Investing); Brent root finding on an explicit bracket & stated \\
+source: sobol & Sobol' (2001); estimators of Saltelli et al. (2010, Comput. Phys. Commun. 181, 259-270) Table 2: first order (b), total order (f) = Jansen (1999); confirmed in the v0.9 review (consistent with SALib) and checked against the analytic Ishigami indices; the first-order estimator uses centred outputs (numerical-stability variant, same estimand, O(1/N) bias) & stated \\
+\bottomrule
+\end{tabular}
+\end{table}

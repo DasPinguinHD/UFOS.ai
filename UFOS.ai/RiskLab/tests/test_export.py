@@ -160,3 +160,129 @@ class ExportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FingerprintTests(unittest.TestCase):
+    def test_code_fingerprint_crlf_and_change(self):
+        from risklab.report.export import code_fingerprint
+
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b, c = Path(tmp, "a.py"), Path(tmp, "b.py"), Path(tmp, "c.py")
+            a.write_bytes(b"x = 1\ny = 2\n")
+            b.write_bytes(b"x = 1\r\ny = 2\r\n")
+            c.write_bytes(b"x = 1\ny = 3\n")
+            fa, fb, fc = code_fingerprint(a), code_fingerprint(b), code_fingerprint(c)
+        self.assertEqual(len(fa), 64)
+        self.assertNotEqual(fa, fc)
+        # the file name is part of the hash only through its path relative to RiskLab; same content, same rel name
+        self.assertNotEqual(fa, fb)  # different file names (a.py vs b.py)
+
+    def test_crlf_normalised(self):
+        from risklab.report.export import code_fingerprint
+
+        with tempfile.TemporaryDirectory() as t1, tempfile.TemporaryDirectory() as t2:
+            Path(t1, "s.py").write_bytes(b"x = 1\ny = 2\n")
+            Path(t2, "s.py").write_bytes(b"x = 1\r\ny = 2\r\n")
+            self.assertEqual(code_fingerprint(Path(t1, "s.py")), code_fingerprint(Path(t2, "s.py")))
+
+    def test_fingerprint_covers_the_runtime_imports(self):
+        """Every risklab module (outside risklab.report) a study loads at import time is in the
+        static import closure that the fingerprint hashes."""
+        import subprocess
+        import sys
+
+        from risklab.report import export
+
+        root = Path(__file__).resolve().parents[1]
+        for study in sorted((root / "studies").glob("*.py")):
+            code = ("import sys, runpy; sys.path.insert(0, %r); sys.argv=['x']; "
+                    "runpy.run_path(%r, run_name='not_main'); print('\\n'.join(sorted(k for k in sys.modules if k.startswith('risklab'))))"
+                    % (str(root / "src"), str(study)))
+            res = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=str(root))
+            self.assertEqual(res.returncode, 0, res.stderr)
+            loaded = {n for n in res.stdout.split() if not (n == "risklab.report" or n.startswith("risklab.report."))}
+            def closure(start):
+                seen, todo = set(), list(start)
+                while todo:
+                    n = todo.pop()
+                    if n in seen or n == "risklab.report" or n.startswith("risklab.report."):
+                        continue
+                    seen.add(n)
+                    todo.extend(export.risklab_imports(export._module_file(n)))
+                return seen
+
+            seen = closure(export.risklab_imports(study))
+            # modules loaded only because report code imports them (export.py imports the engine and
+            # the backtest base) do not compute results
+            via_report = closure(export.risklab_imports(Path(export.__file__)))
+            self.assertTrue(loaded <= seen | via_report, (study.name, loaded - seen - via_report))
+
+    def test_unrelated_module_does_not_change_fingerprint(self):
+        from risklab.report import export
+
+        root = Path(__file__).resolve().parents[1]
+        fp = export.code_fingerprint(root / "studies" / "survivorship.py")
+        files = set()
+        todo = list(export.risklab_imports(root / "studies" / "survivorship.py"))
+        while todo:
+            n = todo.pop()
+            if n.startswith("risklab.report") or export._module_file(n) in files:
+                continue
+            files.add(export._module_file(n))
+            todo.extend(export.risklab_imports(export._module_file(n)))
+        self.assertNotIn(root / "src" / "risklab" / "validation" / "stats.py", files)
+        self.assertIn(root / "src" / "risklab" / "__init__.py", files)
+        self.assertEqual(fp, export.code_fingerprint(root / "studies" / "survivorship.py"))
+
+    def test_version_line_is_normalised(self):
+        from risklab.report.export import INIT_REL, normalised_source
+
+        a = b'"""doc"""\n\n__version__ = "0.5.0"\n'
+        b = b'"""doc"""\r\n\r\n__version__ = "0.6.0"\r\n'
+        c = b'"""doc, changed"""\n\n__version__ = "0.5.0"\n'
+        self.assertEqual(normalised_source(INIT_REL, a), normalised_source(INIT_REL, b))
+        self.assertNotEqual(normalised_source(INIT_REL, a), normalised_source(INIT_REL, c))
+        # only risklab/__init__.py is normalised
+        self.assertNotEqual(normalised_source("src/risklab/engine.py", a), normalised_source("src/risklab/engine.py", b))
+        with self.assertRaises(ValueError):
+            normalised_source(INIT_REL, b'"""no version"""\n')
+
+    def test_version_only_change_keeps_results_valid(self):
+        """End to end on a copy of the tree: bumping only __version__ keeps every study's fingerprint;
+        any other change in risklab/__init__.py changes it."""
+        import shutil
+        import subprocess
+        import sys
+
+        root = Path(__file__).resolve().parents[1]
+        code = ("import sys; sys.path.insert(0, sys.argv[1] + '/src'); "
+                "from risklab.report.export import code_fingerprint; "
+                "print(code_fingerprint(sys.argv[1] + '/studies/survivorship.py'))")
+
+        def fp(tree):
+            res = subprocess.run([sys.executable, "-I", "-c", code, str(tree)], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            return res.stdout.strip()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp, "RiskLab")
+            for part in ("src", "studies"):
+                shutil.copytree(root / part, tree / part, ignore=shutil.ignore_patterns("__pycache__", "results"))
+            shutil.copy(root / "pyproject.toml", tree / "pyproject.toml")
+            init = tree / "src" / "risklab" / "__init__.py"
+            base = fp(tree)
+            self.assertEqual(base, fp(root))
+            text = init.read_text(encoding="utf-8")
+            init.write_text(text.replace('__version__ = "', '__version__ = "99.', 1), encoding="utf-8")
+            self.assertEqual(fp(tree), base)
+            init.write_text(text + "\n# any other change\n", encoding="utf-8")
+            self.assertNotEqual(fp(tree), base)
+
+    def test_save_full_results(self):
+        from risklab.report.export import save_full_results
+
+        with tempfile.TemporaryDirectory() as out, tempfile.TemporaryDirectory() as res:
+            Path(out, "results.json").write_text("{}", encoding="utf-8")
+            Path(out, "summary.md").write_text("# x\n", encoding="utf-8")
+            paths = save_full_results(out, "demo", res)
+            self.assertEqual([p.name for p in paths], ["demo_full_results.json", "demo_full_summary.md"])

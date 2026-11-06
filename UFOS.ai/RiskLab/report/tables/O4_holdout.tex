@@ -1,0 +1,24 @@
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{Value of the holdout gate H (20 training years, best of $K$ = 64, standard preset): the unconditional H pass rate, the conditional rates given G4 and given the statistical gates (number of passing paths in brackets), and the statistical gates without and with H. M = 2000 paths per cell, rates in \%, $\pm$ Monte-Carlo se; a rate of 0 or 100 shows the 95\,\% bound of the rule of three in brackets (3 / n).}
+\label{tab:O4_holdout}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+Data & True SR & P(H) & P(H $\mid$ G4) (n) & P(H $\mid$ stat.) (n) & Stat. & Stat. + H \\
+\midrule
+iid $t_5$ & 0 & 42.8 $\pm$ 1.1 & -- (0) & -- (0) & 0 ($\le$ 0.15) & 0 ($\le$ 0.15) \\
+iid $t_5$ & 0.25 & 48.8 $\pm$ 1.1 & 50.0 $\pm$ 12.5 (16) & 57.1 $\pm$ 18.7 (7) & 0.4 $\pm$ 0.1 & 0.2 $\pm$ 0.1 \\
+iid $t_5$ & 0.5 & 54.4 $\pm$ 1.1 & 51.5 $\pm$ 3.9 (167) & 42.0 $\pm$ 5.9 (69) & 3.5 $\pm$ 0.4 & 1.5 $\pm$ 0.3 \\
+iid $t_5$ & 0.75 & 61.4 $\pm$ 1.1 & 58.1 $\pm$ 1.9 (702) & 54.9 $\pm$ 2.8 (308) & 15.4 $\pm$ 0.8 & 8.5 $\pm$ 0.6 \\
+iid $t_5$ & 1 & 69.5 $\pm$ 1.0 & 67.8 $\pm$ 1.2 (1495) & 67.8 $\pm$ 1.7 (715) & 35.8 $\pm$ 1.1 & 24.2 $\pm$ 1.0 \\
+\midrule
+GARCH-$t_5$ & 0 & 42.1 $\pm$ 1.1 & -- (0) & -- (0) & 0 ($\le$ 0.15) & 0 ($\le$ 0.15) \\
+GARCH-$t_5$ & 0.25 & 49.0 $\pm$ 1.1 & 38.9 $\pm$ 11.5 (18) & 33.3 $\pm$ 19.2 (6) & 0.3 $\pm$ 0.1 & 0.1 $\pm$ 0.1 \\
+GARCH-$t_5$ & 0.5 & 56.5 $\pm$ 1.1 & 53.7 $\pm$ 3.6 (188) & 47.3 $\pm$ 5.8 (74) & 3.7 $\pm$ 0.4 & 1.8 $\pm$ 0.3 \\
+GARCH-$t_5$ & 0.75 & 64.4 $\pm$ 1.1 & 59.2 $\pm$ 1.7 (809) & 58.5 $\pm$ 2.6 (359) & 17.9 $\pm$ 0.9 & 10.5 $\pm$ 0.7 \\
+GARCH-$t_5$ & 1 & 71.0 $\pm$ 1.0 & 69.0 $\pm$ 1.2 (1573) & 65.7 $\pm$ 1.7 (740) & 37.0 $\pm$ 1.1 & 24.3 $\pm$ 1.0 \\
+\bottomrule
+\end{tabular}
+\end{table}

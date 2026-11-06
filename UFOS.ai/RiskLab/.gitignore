@@ -1,6 +1,6 @@
 # Own (non-synthetic) data never enters the repo
 local_data/
-# Results export
+# Results export and the LaTeX build directory (out/report/)
 out/
 # Virtual environments
 .venv/

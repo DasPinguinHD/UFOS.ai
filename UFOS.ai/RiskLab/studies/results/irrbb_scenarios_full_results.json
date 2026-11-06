@@ -1,0 +1,685 @@
+{
+  "meta": {
+    "assumptions": {
+      "EVE": "run-off cash flows, equity excluded, single currency (no 50 % weight on gains across currencies)",
+      "FRN": "reprices to par at the next reset; margins after it are excluded from EVE",
+      "NII horizon": "12 months, monthly grid, constant balance sheet, instantaneous shock",
+      "NMD caps": "BCBS (2016) d368 table 2 / Basel Framework SRP31, as recalled - ASSUMPTION (not verified against the primary text)",
+      "NMD rate": "pass-through beta on the 0.25-year zero-rate shock, floored at the rate floor",
+      "NMD replicating portfolio": "non-core overnight; core in equal monthly tranches over 2 x average maturity",
+      "constant balance sheet": "for NII, maturing / amortised / reset balances are replaced by the same product at the contractual rate plus the shock to the zero rate at its repricing tenor",
+      "discounting": "every cash flow on the risk-free zero curve (no credit spreads); continuous compounding",
+      "floor below observed": "observed rate below the floor -> the lower observed rate applies: EBA/RTS/2022/10 Art. 4(k) / 1(2)",
+      "post-shock floor": "min(0, -150 bp + 3 bp x t) - -150 bp at immediate maturity, +3 bp a year, 0 from 50 years: EBA/RTS/2022/10 Art. 4(k) (Delegated Regulation (EU) 2024/856); applied to both shock presets (a choice of this study)",
+      "run-off": "EVE on contractual run-off cash flows (principal + interest); equity excluded",
+      "shock flattener": "+0.8 |short| - 0.6 |long|: EBA/RTS/2022/10 Art. 3(d) (Delegated Regulation (EU) 2024/856)",
+      "shock shapes": "short e^{-t/4}, long 1 - e^{-t/4}: BCBS d368 annex 2 / SRP31.91; checked against d578",
+      "shock sizes EUR_BCBS2016": "EUR_BCBS2016: {'parallel': 200.0, 'short': 250.0, 'long': 100.0} bp - BCBS (2016) d368, annex 2, table of specified shocks: EUR 200 / 250 / 100 bp",
+      "shock sizes EUR_BCBS2024": "EUR_BCBS2024: {'parallel': 225.0, 'short': 350.0, 'long': 200.0} bp - BCBS (2024) d578 recalibration (16 July 2024, effective 1 January 2026): EUR 225 / 350 / 200 bp",
+      "shock steepener": "-0.65 |short| + 0.9 |long|: checked against the worked example in d578 (SRP31.92)"
+    },
+    "balance_sheet": {
+      "assets": 1000.0,
+      "composition": "REFERENCE_COMPOSITION (risklab.rates.instruments)",
+      "equity": 100.0,
+      "instruments": [
+        "mortgages (annuity, 10 y fixed)",
+        "corporate loans (annuity, 5 y)",
+        "government bonds (5 y)",
+        "government bonds (10 y)",
+        "floating-rate loans (3 m reset)",
+        "central-bank reserves (overnight)",
+        "retail current accounts (NMD)",
+        "retail savings (NMD)",
+        "term deposits (1 y)",
+        "term deposits (3 y)",
+        "covered bond issued (7 y)"
+      ],
+      "liabilities": 900.0,
+      "tier1": 90.0,
+      "tier1_rule": "9% of total assets (synthetic)",
+      "variation": "reference bank"
+    },
+    "code_sha256": "6e0c9fdb9b75e5d2fe252e7ae6aa8ff80364bf590d8d86847e063ee601598a47",
+    "config": {
+      "avg_maturities": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0
+      ],
+      "core_shares": [
+        0.5,
+        0.6,
+        0.7,
+        0.8,
+        0.9
+      ],
+      "eve_threshold": 0.15,
+      "m": 2000,
+      "nii_threshold": 0.05,
+      "presets": [
+        "EUR_BCBS2016",
+        "EUR_BCBS2024"
+      ],
+      "seed": 20261110,
+      "shifts_bp": [
+        -400,
+        -300,
+        -200,
+        -100,
+        -50,
+        50,
+        100,
+        200,
+        300,
+        400
+      ]
+    },
+    "curve": {
+      "b0": 0.03,
+      "b1": -0.015,
+      "b2": 0.01,
+      "b3": 0.0,
+      "tau": 2.0,
+      "tau2": 1.0
+    },
+    "key_rates": [
+      0.25,
+      0.5,
+      1.0,
+      2.0,
+      3.0,
+      5.0,
+      7.0,
+      10.0,
+      15.0,
+      20.0,
+      30.0
+    ],
+    "numpy_version": "2.5.3",
+    "outlier_tests": {
+      "EUR_BCBS2016": {
+        "eve_outlier": true,
+        "eve_ratio": 0.1759525739834465,
+        "eve_threshold": 0.15,
+        "eve_worst_scenario": "parallel_up",
+        "nii_outlier": true,
+        "nii_ratio": 0.06390328017510036,
+        "nii_threshold": 0.05,
+        "nii_worst_scenario": "parallel_down",
+        "sources": {
+          "eve": "EVE decline > 15 % of Tier 1: CRD Art. 98(5)",
+          "nii": "NII decline > 5 % of Tier 1 over the two parallel scenarios: Delegated Regulation (EU) 2024/856 Art. 6(1) (EBA Opinion of 26 April 2023, replacing 2.5 %)"
+        }
+      },
+      "EUR_BCBS2024": {
+        "eve_outlier": true,
+        "eve_ratio": 0.19553572630756105,
+        "eve_threshold": 0.15,
+        "eve_worst_scenario": "parallel_up",
+        "nii_outlier": true,
+        "nii_ratio": 0.07355785686365467,
+        "nii_threshold": 0.05,
+        "nii_worst_scenario": "parallel_down",
+        "sources": {
+          "eve": "EVE decline > 15 % of Tier 1: CRD Art. 98(5)",
+          "nii": "NII decline > 5 % of Tier 1 over the two parallel scenarios: Delegated Regulation (EU) 2024/856 Art. 6(1) (EBA Opinion of 26 April 2023, replacing 2.5 %)"
+        }
+      }
+    },
+    "risklab_version": "0.7.0",
+    "seed": 20261110,
+    "shock_presets": {
+      "EUR_BCBS2016": {
+        "long": 100.0,
+        "parallel": 200.0,
+        "short": 250.0
+      },
+      "EUR_BCBS2024": {
+        "long": 200.0,
+        "parallel": 225.0,
+        "short": 350.0
+      }
+    },
+    "shock_sources": {
+      "EUR_BCBS2016": "BCBS (2016) d368, annex 2, table of specified shocks: EUR 200 / 250 / 100 bp",
+      "EUR_BCBS2024": "BCBS (2024) d578 recalibration (16 July 2024, effective 1 January 2026): EUR 225 / 350 / 200 bp",
+      "eve_sot": "EVE decline > 15 % of Tier 1: CRD Art. 98(5)",
+      "flattener": "+0.8 |short| - 0.6 |long|: EBA/RTS/2022/10 Art. 3(d) (Delegated Regulation (EU) 2024/856)",
+      "floor": "-150 bp at immediate maturity, +3 bp a year, 0 from 50 years: EBA/RTS/2022/10 Art. 4(k) (Delegated Regulation (EU) 2024/856); applied to both shock presets (a choice of this study)",
+      "floor_observed": "observed rate below the floor -> the lower observed rate applies: EBA/RTS/2022/10 Art. 4(k) / 1(2)",
+      "nii_sot": "NII decline > 5 % of Tier 1 over the two parallel scenarios: Delegated Regulation (EU) 2024/856 Art. 6(1) (EBA Opinion of 26 April 2023, replacing 2.5 %)",
+      "shapes": "short e^{-t/4}, long 1 - e^{-t/4}: BCBS d368 annex 2 / SRP31.91; checked against d578",
+      "steepener": "-0.65 |short| + 0.9 |long|: checked against the worked example in d578 (SRP31.92)"
+    },
+    "study": "irrbb_scenarios"
+  },
+  "rows": [
+    {
+      "delta_eve": -15.835731658510184,
+      "delta_eve_tier1": -0.1759525739834465,
+      "delta_nii": 2.7512952157590433,
+      "delta_nii_tier1": 0.03056994684176715,
+      "preset": "EUR_BCBS2016",
+      "scenario": "parallel_up",
+      "table": "scenario"
+    },
+    {
+      "delta_eve": 19.36045080461878,
+      "delta_eve_tier1": 0.21511612005131978,
+      "delta_nii": -5.751295215759033,
+      "delta_nii_tier1": -0.06390328017510036,
+      "preset": "EUR_BCBS2016",
+      "scenario": "parallel_down",
+      "table": "scenario"
+    },
+    {
+      "delta_eve": -7.230991141939995,
+      "delta_eve_tier1": -0.0803443460215555,
+      "delta_nii": -3.566802834485486,
+      "delta_nii_tier1": -0.03963114260539429,
+      "preset": "EUR_BCBS2016",
+      "scenario": "steepener",
+      "table": "scenario"
+    },
+    {
+      "delta_eve": 4.787859448054007,
+      "delta_eve_tier1": 0.05319843831171119,
+      "delta_nii": 2.1748033487860923,
+      "delta_nii_tier1": 0.024164481653178804,
+      "preset": "EUR_BCBS2016",
+      "scenario": "flattener",
+      "table": "scenario"
+    },
+    {
+      "delta_eve": -0.4664055359818917,
+      "delta_eve_tier1": -0.00518228373313213,
+      "delta_nii": 2.884799916840194,
+      "delta_nii_tier1": 0.03205333240933549,
+      "preset": "EUR_BCBS2016",
+      "scenario": "short_up",
+      "table": "scenario"
+    },
+    {
+      "delta_eve": 0.4765010178834359,
+      "delta_eve_tier1": 0.005294455754260399,
+      "delta_nii": -6.61671849661094,
+      "delta_nii_tier1": -0.07351909440678822,
+      "preset": "EUR_BCBS2016",
+      "scenario": "short_down",
+      "table": "scenario"
+    },
+    {
+      "delta_nii_tier1": -0.06390328017510036,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "scenario": "parallel_up",
+      "table": "outlier",
+      "worst_eve_tier1": -0.1759525739834465
+    },
+    {
+      "delta_eve": -17.598215367680496,
+      "delta_eve_tier1": -0.19553572630756105,
+      "delta_nii": 3.0952071177289184,
+      "delta_nii_tier1": 0.034391190196987984,
+      "preset": "EUR_BCBS2024",
+      "scenario": "parallel_up",
+      "table": "scenario"
+    },
+    {
+      "delta_eve": 22.062609198629332,
+      "delta_eve_tier1": 0.2451401022069926,
+      "delta_nii": -6.620207117728921,
+      "delta_nii_tier1": -0.07355785686365467,
+      "preset": "EUR_BCBS2024",
+      "scenario": "parallel_down",
+      "table": "scenario"
+    },
+    {
+      "delta_eve": -14.197699960289413,
+      "delta_eve_tier1": -0.15775222178099346,
+      "delta_nii": -5.285085455292705,
+      "delta_nii_tier1": -0.058723171725474504,
+      "preset": "EUR_BCBS2024",
+      "scenario": "steepener",
+      "table": "scenario"
+    },
+    {
+      "delta_eve": 9.983351875659423,
+      "delta_eve_tier1": 0.11092613195177137,
+      "delta_nii": 2.9649027374888988,
+      "delta_nii_tier1": 0.03294336374987665,
+      "preset": "EUR_BCBS2024",
+      "scenario": "flattener",
+      "table": "scenario"
+    },
+    {
+      "delta_eve": -0.6502840719513188,
+      "delta_eve_tier1": -0.007225378577236875,
+      "delta_nii": 4.03871988357627,
+      "delta_nii_tier1": 0.04487466537306967,
+      "preset": "EUR_BCBS2024",
+      "scenario": "short_up",
+      "table": "scenario"
+    },
+    {
+      "delta_eve": 0.5643464953306818,
+      "delta_eve_tier1": 0.006270516614785353,
+      "delta_nii": -9.009803718716283,
+      "delta_nii_tier1": -0.10010893020795869,
+      "preset": "EUR_BCBS2024",
+      "scenario": "short_down",
+      "table": "scenario"
+    },
+    {
+      "delta_nii_tier1": -0.07355785686365467,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2024",
+      "scenario": "parallel_up",
+      "table": "outlier",
+      "worst_eve_tier1": -0.19553572630756105
+    },
+    {
+      "dv01_assets": 0.0035339021295399675,
+      "dv01_liabilities": -0.0005668201640389725,
+      "dv01_net": 0.002967081965500995,
+      "key_tenor": 0.25,
+      "table": "key_rate"
+    },
+    {
+      "dv01_assets": 0.001484545530104242,
+      "dv01_liabilities": -0.00154267953581666,
+      "dv01_net": -5.8134005712418e-05,
+      "key_tenor": 0.5,
+      "table": "key_rate"
+    },
+    {
+      "dv01_assets": 0.006282174772053395,
+      "dv01_liabilities": -0.018428484363781195,
+      "dv01_net": -0.0121463095917278,
+      "key_tenor": 1.0,
+      "table": "key_rate"
+    },
+    {
+      "dv01_assets": 0.01391661911557307,
+      "dv01_liabilities": -0.014182818188970714,
+      "dv01_net": -0.0002661990733976438,
+      "key_tenor": 2.0,
+      "table": "key_rate"
+    },
+    {
+      "dv01_assets": 0.033416193872305655,
+      "dv01_liabilities": -0.05662026351562588,
+      "dv01_net": -0.023204069643320224,
+      "key_tenor": 3.0,
+      "table": "key_rate"
+    },
+    {
+      "dv01_assets": 0.09943316552105586,
+      "dv01_liabilities": -0.04366666281533327,
+      "dv01_net": 0.05576650270572259,
+      "key_tenor": 5.0,
+      "table": "key_rate"
+    },
+    {
+      "dv01_assets": 0.05411638999908064,
+      "dv01_liabilities": -0.06676602544382604,
+      "dv01_net": -0.0126496354447454,
+      "key_tenor": 7.0,
+      "table": "key_rate"
+    },
+    {
+      "dv01_assets": 0.07703766296886272,
+      "dv01_liabilities": 0.0,
+      "dv01_net": 0.07703766296886272,
+      "key_tenor": 10.0,
+      "table": "key_rate"
+    },
+    {
+      "dv01_assets": 0.0,
+      "dv01_liabilities": 0.0,
+      "dv01_net": 0.0,
+      "key_tenor": 15.0,
+      "table": "key_rate"
+    },
+    {
+      "dv01_assets": 0.0,
+      "dv01_liabilities": 0.0,
+      "dv01_net": 0.0,
+      "key_tenor": 20.0,
+      "table": "key_rate"
+    },
+    {
+      "dv01_assets": 0.0,
+      "dv01_liabilities": 0.0,
+      "dv01_net": 0.0,
+      "key_tenor": 30.0,
+      "table": "key_rate"
+    },
+    {
+      "avg_maturity": 1.0,
+      "core_share": 0.5,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.3106868385939047,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 2.0,
+      "core_share": 0.5,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.2674220974828147,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 3.0,
+      "core_share": 0.5,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.22868252489046484,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 4.0,
+      "core_share": 0.5,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.1940489859060692,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 5.0,
+      "core_share": 0.5,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.1631143426648303,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 1.0,
+      "core_share": 0.6,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.30072272588108434,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 2.0,
+      "core_share": 0.6,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.24880503654777644,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 3.0,
+      "core_share": 0.6,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.20231754943695535,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 4.0,
+      "core_share": 0.6,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.16075730265568275,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 5.0,
+      "core_share": 0.6,
+      "eve_outlier": false,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.12363573076619552,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 1.0,
+      "core_share": 0.7,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.29075861316826396,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 2.0,
+      "core_share": 0.7,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.23018797561273693,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 3.0,
+      "core_share": 0.7,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.1759525739834465,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 4.0,
+      "core_share": 0.7,
+      "eve_outlier": false,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.12746561940529563,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 5.0,
+      "core_share": 0.7,
+      "eve_outlier": false,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.08415711886756078,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 1.0,
+      "core_share": 0.8,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.28079450045544485,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 2.0,
+      "core_share": 0.8,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.2115709146776993,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 3.0,
+      "core_share": 0.8,
+      "eve_outlier": false,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.14958759852993764,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 4.0,
+      "core_share": 0.8,
+      "eve_outlier": false,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.09417393615490854,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 5.0,
+      "core_share": 0.8,
+      "eve_outlier": false,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.04467850696892476,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 1.0,
+      "core_share": 0.9,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.27083038774262386,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 2.0,
+      "core_share": 0.9,
+      "eve_outlier": true,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.19295385374266041,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 3.0,
+      "core_share": 0.9,
+      "eve_outlier": false,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.12322262307642941,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 4.0,
+      "core_share": 0.9,
+      "eve_outlier": false,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.060882252904521456,
+      "worst_scenario": "parallel_up"
+    },
+    {
+      "avg_maturity": 5.0,
+      "core_share": 0.9,
+      "eve_outlier": false,
+      "preset": "EUR_BCBS2016",
+      "table": "nmd",
+      "worst_eve_tier1": -0.01508557339888215,
+      "worst_scenario": "steepener"
+    },
+    {
+      "first_order": 34.9787618889593,
+      "full": 42.963814729009016,
+      "second_order": 42.007879003102744,
+      "shift_bp": -400.0,
+      "table": "duration"
+    },
+    {
+      "first_order": 26.234071416719477,
+      "full": 30.58142731492802,
+      "second_order": 30.187949793425165,
+      "shift_bp": -300.0,
+      "table": "duration"
+    },
+    {
+      "first_order": 17.48938094447965,
+      "full": 19.36045080461878,
+      "second_order": 19.24666022301551,
+      "shift_bp": -200.0,
+      "table": "duration"
+    },
+    {
+      "first_order": 8.744690472239824,
+      "full": 9.197897149675924,
+      "second_order": 9.18401029187379,
+      "shift_bp": -100.0,
+      "table": "duration"
+    },
+    {
+      "first_order": 4.372345236119912,
+      "full": 4.483890138209347,
+      "second_order": 4.482175191028404,
+      "shift_bp": -50.0,
+      "table": "duration"
+    },
+    {
+      "first_order": -4.372345236119912,
+      "full": -4.26419059873237,
+      "second_order": -4.262515281211421,
+      "shift_bp": 50.0,
+      "table": "duration"
+    },
+    {
+      "first_order": -8.744690472239824,
+      "full": -8.318623101484093,
+      "second_order": -8.305370652605859,
+      "shift_bp": 100.0,
+      "table": "duration"
+    },
+    {
+      "first_order": -17.48938094447965,
+      "full": -15.835731658510184,
+      "second_order": -15.732101665943787,
+      "shift_bp": 200.0,
+      "table": "duration"
+    },
+    {
+      "first_order": -26.234071416719477,
+      "full": -22.622153388313762,
+      "second_order": -22.28019304001379,
+      "shift_bp": 300.0,
+      "table": "duration"
+    },
+    {
+      "first_order": -34.9787618889593,
+      "full": -28.742412051703823,
+      "second_order": -27.94964477481585,
+      "shift_bp": 400.0,
+      "table": "duration"
+    },
+    {
+      "m": 2000,
+      "mean": -0.1756832108926352,
+      "mean_se": 0.0013687918353777373,
+      "nii_outlier_share": 0.9665,
+      "nii_outlier_share_se": 0.004023540107914917,
+      "outlier_share": 0.6565,
+      "outlier_share_se": 0.010618562755853544,
+      "preset": "EUR_BCBS2016",
+      "q05": -0.2758237584811657,
+      "q50": -0.17744205680635816,
+      "q95": -0.0760853005202043,
+      "table": "population"
+    },
+    {
+      "m": 2000,
+      "mean": -0.20274574829691602,
+      "mean_se": 0.0013228756682544596,
+      "nii_outlier_share": 0.9995,
+      "nii_outlier_share_se": 0.000499874984371065,
+      "outlier_share": 0.771,
+      "outlier_share_se": 0.009395717109406817,
+      "preset": "EUR_BCBS2024",
+      "q05": -0.30710831063200816,
+      "q50": -0.19783737553495057,
+      "q95": -0.11814134174669563,
+      "table": "population"
+    }
+  ]
+}

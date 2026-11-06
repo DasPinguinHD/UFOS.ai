@@ -1,0 +1,110 @@
+% Risk Lab - project overview (3-4 pages). Generated parts: figures/fig12_architecture.tex,
+% figures/fig3_estimation_window.tex and tables/V1_key_results.tex (report/build_report.py --doc overview).
+% Synthetic data only. Required LaTeX packages: as the other reports (checked by build_report.py).
+\documentclass[11pt,a4paper]{article}
+\usepackage[a4paper,margin=2.3cm]{geometry}
+\usepackage{graphicx}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{amsmath,amssymb}
+\usepackage{caption}
+\usepackage{float}
+\usepackage[hidelinks]{hyperref}
+\captionsetup{font=small,labelfont=bf}
+\graphicspath{{./}}
+\ifdefined\pdfinfoomitdate \pdfinfoomitdate=1 \fi
+\ifdefined\pdftrailerid \pdftrailerid{} \fi
+
+\title{Risk Lab -- project overview\\[0.3em]
+  \large A bank-style market-risk lab with measured backtests, on synthetic data with known truth}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-2.5em}
+
+\section*{What it is}
+Risk Lab is a bank-style market-risk lab: VaR / ES models, regulatory backtests and a model-validation report --
+with the tests' own size and power measured on synthetic data with known truth. Every data series is simulated,
+so the true VaR and ES are known on every day, and the lab can measure how often a correct model is rejected
+(size) and how often a wrong one is caught (power), not only whether one backtest passed. It is written in
+Python (numpy, scipy; matplotlib for the figures) and is part of the UFOS.ai portfolio project.
+
+What is implemented:
+\begin{itemize}
+\item one-day VaR / ES models: historical simulation, normal, Student-$t$, EWMA, GARCH(1,1)-$t$ and filtered
+  historical simulation, refitted walk-forward with daily state updates;
+\item 10-day VaR: $\sqrt{10}$ scaling, GARCH Monte Carlo and the stationary block bootstrap;
+\item backtests: Kupiec, the exact binomial test, Christoffersen independence and conditional coverage, the Basel
+  traffic light and the Acerbi--Sz\'ekely Z2 test of ES;
+\item five Monte-Carlo studies (backtest size and power, the 10-day VaR, the estimation window, survivorship
+  bias, and the overfitting of the UFOS strategy-validation gates);
+\item a report pipeline that turns the saved, fingerprinted study results into figures, tables and LaTeX
+  reports.
+\end{itemize}
+
+\input{figures/fig12_architecture.tex}
+
+\section*{Key results}
+\input{tables/V1_key_results.tex}
+In words: a one-year Kupiec backtest rejects a correct VaR almost twice as often as its nominal 5\,\%; a correctly
+specified GARCH-$t$ with a 250-day estimation window still fails backtests about twice as often as it should,
+which is estimation risk, and a window of 500 days or more removes most of it; static models miss volatility
+clustering; $\sqrt{10}$ scaling of a fat-tailed one-day VaR overstates the 10-day VaR; survivors-only base rates
+are strongly biased; and the UFOS validation gates stop searched noise rules but confirm a real Sharpe ratio of
+1 only in a minority of cases. The figure below shows the estimation-window result.
+
+\input{figures/fig3_estimation_window.tex}
+
+\section*{How the results are made traceable}
+\begin{itemize}
+\item \textbf{Known truth:} every generator stores its true conditional parameters; the true VaR / ES are
+  computed from them, so every model error and every test decision can be checked.
+\item \textbf{Monte-Carlo uncertainty:} every rate carries its standard error; full runs use 1000 to 2000
+  replications per setting.
+\item \textbf{Fingerprints:} every saved full run records the sha256 of the code that produced it (the study
+  script and the modules it imports), and the report build refuses results whose fingerprint does not match the
+  current code.
+\item \textbf{Reproducibility:} the same seed gives the same numbers within one numpy version; re-running all
+  studies under a new package version gave identical results; figures and PDFs are byte-identical when rebuilt
+  with the same tool versions.
+\item \textbf{Tests and reviews:} 322 unit tests (closed forms, golden tables, smoke runs of every study); every
+  version from v0.1 to v0.8 had an independent review whose findings were fixed in a follow-up round; a parity test checks the re-implemented
+  validation gates against the platform's own code.
+\end{itemize}
+
+\section*{Reproduce}
+From \texttt{UFOS.ai/RiskLab/} on Linux (verified with Python 3.10; hash-pinned dependencies):
+\begin{verbatim}
+python3 -m venv .venv && . .venv/bin/activate
+python -m pip install --require-hashes -r requirements.lock
+python -m unittest discover -s tests
+python studies/var_backtest_power.py --mode smoke
+python examples/quickstart.py
+\end{verbatim}
+The reports are built with \texttt{python report/build\_report.py --doc validation | overfitting | overview}
+(needs \texttt{requirements-report.lock} and a TeX installation); the PDFs are not kept in the repository.
+
+\section*{Limitations}
+\begin{itemize}
+\item Synthetic data only; the conclusions depend on the chosen generators and parameters, which are stated with
+  every result. Real data would stay outside the repository.
+\item One risk factor; no portfolios, no multivariate models, no Z1 / Z3 ES tests yet.
+\item The gate study covers one rule family and part of the gates (G3, the cost and stress parts of G6 and G8 are
+  out of scope).
+\item The prose of the two detailed reports (validation report, gate study) is still open.
+\end{itemize}
+
+\section*{Since v0.7}
+v0.7 adds interest rate risk in the banking book (IRRBB): Nelson--Siegel curves, banking-book instruments, the six
+standardised shock scenarios with the post-shock floor, $\Delta$EVE / $\Delta$NII and the supervisory outlier
+tests, with a study of a synthetic bank and its own report (\texttt{--doc irrbb}). v0.8 adds credit risk: a logistic
+PD model with its validation tests, IFRS 9 expected credit loss and Basel IRB capital checked against the one-factor
+loss distribution (\texttt{--doc credit}). v0.9 adds a free-cash-flow DCF and the reverse DCF (the growth a price
+implies, compared with synthetic base rates), and a generic sensitivity toolkit -- tornado, two-way tables and
+Sobol indices validated on the Ishigami function -- applied to the DCF, the IRRBB and the ECL models
+(\texttt{--doc valuation}). The Risk Lab block ends with v0.9.
+
+\end{document}

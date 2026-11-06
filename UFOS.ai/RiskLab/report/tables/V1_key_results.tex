@@ -1,0 +1,20 @@
+\begin{table}[H]
+\centering
+\footnotesize
+\caption{Key results (synthetic data with known truth; Monte-Carlo rates $\pm$ se). Every number is read from the saved full runs in \texttt{studies/results/}.}
+\label{tab:V1_key_results}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{>{\raggedright\arraybackslash}p{1.9cm}>{\raggedright\arraybackslash}p{7.0cm}>{\raggedright\arraybackslash}p{3.6cm}>{\raggedright\arraybackslash}p{2.2cm}}
+\toprule
+Topic & Result & Value & Study \\
+\midrule
+Backtest size & Kupiec's exact size at T = 250 (nominal 5\,\%); exact binomial test & 9.48\,\%; 4.12\,\% & size / power \\
+Estimation risk & Correct GARCH-t, 250-day window, T = 1000: Kupiec / Z2 rejection rate (exact Kupiec size 5.5\,\%) & 10.6 $\pm$ 1.0 / 17.7 $\pm$ 1.2\,\% & size / power \\
+ & Same model, 500-day window: Kupiec; 1000 days: exceedance excess over the true VaR (pp) & 4.5 $\pm$ 0.7\,\%; +0.041 $\pm$ 0.007 & estimation window \\
+Clustering & Static normal VaR on GARCH-t data, T = 1000: cc / Z2 rejection rate & 59.7 $\pm$ 1.6 / 64.7 $\pm$ 1.5\,\% & size / power \\
+10-day VaR & $\sqrt{10}\times$ GARCH-t one-day VaR on iid $t_5$ data: relative bias & +8.6 $\pm$ 0.3\,\% & 10-day horizon \\
+Survivorship & CAGR $\ge$ 10\,\% (hazard strength 1): survivors / counterfactual / full cohort; selection bias (pp) & 34.3 / 25.5 / 17.8\,\%; 8.8 $\pm$ 0.02 & survivorship \\
+Gate study & UFOS statistical gates, standard: worst false-positive rate under noise; power at a true Sharpe of 1, $K$ = 64, 10 / 20 years & 0.5 $\pm$ 0.2\,\%; 13.1 $\pm$ 0.8 / 35.8 $\pm$ 1.1\,\% & gate overfitting \\
+\bottomrule
+\end{tabular}
+\end{table}

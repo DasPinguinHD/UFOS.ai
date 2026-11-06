@@ -1,0 +1,16 @@
+{
+  "label": "risklab8b",
+  "approved": "lead 2026-11-05: v0.4 results re-saved with the new fingerprint/version; test_export updated; missed in risklab8 amend",
+  "note": "Retroactive label: these 9 files were changed in risklab8 before this label existed (risklab8 was closed before the approved amendment took effect), so no snapshot was taken before the change. Per the lead, snapshot/check/close are NOT run for this label; the backups of the previous versions are in HedgeFund/backend/data/risklab8-backup/.",
+  "files": [
+    "UFOS.ai/RiskLab/studies/results/var_backtest_power_full_results.json",
+    "UFOS.ai/RiskLab/studies/results/var_backtest_power_full_summary.md",
+    "UFOS.ai/RiskLab/studies/results/horizon_10d_full_results.json",
+    "UFOS.ai/RiskLab/studies/results/horizon_10d_full_summary.md",
+    "UFOS.ai/RiskLab/studies/results/estimation_window_full_results.json",
+    "UFOS.ai/RiskLab/studies/results/estimation_window_full_summary.md",
+    "UFOS.ai/RiskLab/studies/results/survivorship_full_results.json",
+    "UFOS.ai/RiskLab/studies/results/survivorship_full_summary.md",
+    "UFOS.ai/RiskLab/tests/test_export.py"
+  ]
+}

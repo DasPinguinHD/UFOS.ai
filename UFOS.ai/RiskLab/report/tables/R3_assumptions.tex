@@ -1,0 +1,29 @@
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{Assumptions register: every modelling choice and parameter source the results carry (``ASSUMPTION'' = not verified against a primary source in this work; ``verify'' = taken from a secondary source).}
+\label{tab:R3_assumptions}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{10.6cm}>{\raggedright\arraybackslash}p{2.1cm}}
+\toprule
+Item & Statement and source & Status \\
+\midrule
+EVE & run-off cash flows, equity excluded, single currency (no 50 \% weight on gains across currencies) & sourced \\
+FRN & reprices to par at the next reset; margins after it are excluded from EVE & sourced \\
+NII horizon & 12 months, monthly grid, constant balance sheet, instantaneous shock & sourced \\
+NMD caps & BCBS (2016) d368 table 2 / Basel Framework SRP31, as recalled - ASSUMPTION (not verified against the primary text) & ASSUMPTION \\
+NMD rate & pass-through beta on the 0.25-year zero-rate shock, floored at the rate floor & sourced \\
+NMD replicating portfolio & non-core overnight; core in equal monthly tranches over 2 x average maturity & sourced \\
+constant balance sheet & for NII, maturing / amortised / reset balances are replaced by the same product at the contractual rate plus the shock to the zero rate at its repricing tenor & sourced \\
+discounting & every cash flow on the risk-free zero curve (no credit spreads); continuous compounding & sourced \\
+floor below observed & observed rate below the floor -> the lower observed rate applies: EBA/RTS/2022/10 Art. 4(k) / 1(2) & sourced \\
+post-shock floor & min(0, -150 bp + 3 bp x t) - -150 bp at immediate maturity, +3 bp a year, 0 from 50 years: EBA/RTS/2022/10 Art. 4(k) (Delegated Regulation (EU) 2024/856); applied to both shock presets (a choice of this study) & sourced \\
+run-off & EVE on contractual run-off cash flows (principal + interest); equity excluded & sourced \\
+shock flattener & +0.8 |short| - 0.6 |long|: EBA/RTS/2022/10 Art. 3(d) (Delegated Regulation (EU) 2024/856) & sourced \\
+shock shapes & short e\textasciicircum{}\{-t/4\}, long 1 - e\textasciicircum{}\{-t/4\}: BCBS d368 annex 2 / SRP31.91; checked against d578 & sourced \\
+shock sizes EUR\_BCBS2016 & EUR\_BCBS2016: \{'parallel': 200.0, 'short': 250.0, 'long': 100.0\} bp - BCBS (2016) d368, annex 2, table of specified shocks: EUR 200 / 250 / 100 bp & sourced \\
+shock sizes EUR\_BCBS2024 & EUR\_BCBS2024: \{'parallel': 225.0, 'short': 350.0, 'long': 200.0\} bp - BCBS (2024) d578 recalibration (16 July 2024, effective 1 January 2026): EUR 225 / 350 / 200 bp & sourced \\
+shock steepener & -0.65 |short| + 0.9 |long|: checked against the worked example in d578 (SRP31.92) & sourced \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -62,6 +62,8 @@ other users (background: Claude Project `claude/project-direction.md`, `claude/c
 - **No deleting:** rename to `*.stale` instead; deletion only in a lead-approved step with the user's permission.
 - **Git:** commits / pushes only when the user asked for them; the lead session commits, sub-agents use read-only git
   only. Never rewrite published history without the user's explicit go.
+  Commit trailer: only `Co-Authored-By: Claude ...`; PR descriptions end with "Generated with Claude Code" only.
+  Never put a claude.ai session link (or any other private link) into commits, PRs or repo files (user, 2026-11-05).
 - **Public repo — no third-party data, no personal data** (2026-10-24, after a real-price test fixture had to be
   purged from the history): never commit market data (prices, bars, quotes, option chains, volumes), news or article
   text, provider responses, filings exports, databases, caches or exports — not even as small test fixtures. Test data
@@ -146,3 +148,6 @@ other users (background: Claude Project `claude/project-direction.md`, `claude/c
   Market Research is recorded in both SPECs.
 - CODEMAP: one line per file, current state; update it in the same change when adding / moving / retiring a file.
 - No scratchpad or `/tmp` paths in repo docs — refer to `UFOS.ai/docs/tasks/<file>`.
+- **Reports (user, 2026-11-05):** whenever a feature is finished or there is something to report on an aspect, the lead
+  produces a designed PDF report (report PDFs only; figure PDFs used as LaTeX assets may stay in the repo) and saves it in the user's report folder `C:\Users\leonh\Documents\UFOS.ai` (file name `YYYY-MM-DD_<topic>.pdf`), OUTSIDE the repo (never committed;
+  `RiskLab/report/build_report.py --publish-to <dir>` refuses targets inside the repo).

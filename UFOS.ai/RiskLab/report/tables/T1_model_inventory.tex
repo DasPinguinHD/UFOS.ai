@@ -1,0 +1,21 @@
+\begin{table}[H]
+\centering
+\footnotesize
+\caption{Model inventory: the models under validation.}
+\label{tab:T1_model_inventory}
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{4.0cm}>{\raggedright\arraybackslash}p{1.4cm}>{\raggedright\arraybackslash}p{2.0cm}}
+\toprule
+Model & Assumptions & Parameters & Window (days) & Refit \\
+\midrule
+Historical simulation & iid losses; the window is representative & none (order statistic $k=\lceil n\alpha\rceil$) & 250 & daily \\
+Normal & iid normal losses & $\mu$, $\sigma$ (sample, ddof 1) & 250 & daily \\
+Student-t & iid location-scale t & $\mu$, $s$, $\nu \in [2.05, 200]$ (MLE) & 250 & 50 days \\
+EWMA-t & zero mean, $\sigma^2_{t+1} = \lambda\sigma^2_t + (1-\lambda)L_t^2$ & $\lambda = 0.94$, $\nu = 6$ fixed & 250 & 50 days + daily update \\
+GARCH(1,1)-t & unit-variance t innovations & $\mu, \omega, \alpha, \beta, \nu$ (MLE, $\alpha+\beta \le 0.999$) & 250 / 1000 & 50 days + daily update \\
+Filtered HS & GARCH(1,1) filter, empirical residuals & GARCH by Gaussian QMLE; residual quantile & 250 / 1000 & 50 days + daily update \\
+10-day: $\sqrt{10}$ scaling & iid, zero mean (approximation) & one-day model & 500 & per origin \\
+10-day: GARCH Monte Carlo & GARCH(1,1)-t dynamics & 20\,000 simulated paths & 500 & per origin \\
+10-day: block bootstrap & stationary dependence & automatic block length (Politis--White) & 500 & per origin \\
+\bottomrule
+\end{tabular}
+\end{table}

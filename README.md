@@ -11,6 +11,18 @@ backends. The host application provides the shared shell (main window, design sy
 ledger, error reporting) and launches each module as its own window; modules with a backend start and stop it
 automatically on a loopback port with a per-session token.
 
+## Risk Lab
+
+**[Risk Lab](UFOS.ai/RiskLab/README.md)** is a bank-style market-risk lab:
+- VaR / ES models and regulatory backtests (Kupiec, Christoffersen, Basel traffic light, Acerbi-Szekely ES test);
+- a model-validation report;
+- an overfitting study of this project's own strategy-validation gates.
+
+Each test's size and power are measured on synthetic data with known truth, and every result is traceable to
+fingerprinted code. It is a standalone Python package (`UFOS.ai/RiskLab/`) with its own tests and hash-pinned
+dependencies. Start with its [README](UFOS.ai/RiskLab/README.md): key findings, a 3-command reproduction and the
+architecture.
+
 ## Modules
 
 | Module | Status | What it does |

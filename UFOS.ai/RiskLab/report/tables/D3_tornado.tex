@@ -1,0 +1,40 @@
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{One-way sensitivity (tornado), largest swing first; each input moved alone, all others at base. DCF: synthetic company at the reference price; the implied growth is re-solved for every input change. $\Delta$EVE: the v0.7 reference bank, non-maturity-deposit assumptions inside their caps. ECL: a 200-loan synthetic book with the v0.8 IFRS 9 model.}
+\label{tab:D3_tornado}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrr}
+\toprule
+Input & Range & Output at low & Output at high & Swing \\
+\midrule
+\textit{Value per share} &  &  &  &  \\
+growth (10 y) & 10.14--16.14\,\% & 23.26 & 38.39 & 15.13 \\
+explicit years & 7--13 & 23.56 & 37.20 & 13.63 \\
+discount rate & 8.00--10.00\,\% & 36.59 & 25.11 & 11.49 \\
+free cash flow & 90--110 & 26.65 & 33.35 & 6.70 \\
+terminal growth & 1.00--3.00\,\% & 27.17 & 33.77 & 6.59 \\
+net debt & 150--450 & 31.50 & 28.50 & 3.00 \\
+\midrule
+\textit{Implied growth (\%)} &  &  &  &  \\
+explicit years & 7--13 & 17.11 & 11.08 & 6.03 \\
+discount rate & 8.00--10.00\,\% & 10.80 & 15.31 & 4.51 \\
+free cash flow & 90--110 & 14.55 & 11.87 & 2.69 \\
+terminal growth & 1.00--3.00\,\% & 14.34 & 11.74 & 2.60 \\
+net debt & 150--450 & 12.53 & 13.73 & 1.20 \\
+\midrule
+\textit{Worst $\Delta$EVE / Tier 1 (\%)} &  &  &  &  \\
+current accounts: avg.\ maturity & 1--5 & 29.08 & 8.42 & 20.66 \\
+current accounts: core share & 50--90\,\% & 22.87 & 12.32 & 10.55 \\
+savings: avg.\ maturity & 1--4.5 & 19.06 & 14.51 & 4.55 \\
+savings: core share & 30--70\,\% & 18.85 & 16.34 & 2.51 \\
+\midrule
+\textit{ECL coverage (\%)} &  &  &  &  \\
+LGD scale & 0.8--1.2 & 0.748 & 1.122 & 0.374 \\
+current PD scale & 0.8--1.2 & 0.768 & 1.121 & 0.353 \\
+SICR multiple & 2--4 & 1.115 & 0.920 & 0.194 \\
+downside weight & 0.1--0.5 & 0.843 & 1.027 & 0.184 \\
+downside severity & 0.5--1.5 & 0.866 & 1.003 & 0.138 \\
+\bottomrule
+\end{tabular}
+\end{table}
