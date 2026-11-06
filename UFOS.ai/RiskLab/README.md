@@ -2,9 +2,10 @@
 
 A bank-style market-risk lab: VaR / ES models, regulatory backtests and a
 model-validation report — with the tests' own size and power measured on
-synthetic data with known truth.
+synthetic data with known truth. Since v0.7 also interest rate risk in the
+banking book (IRRBB).
 
-Part of UFOS.ai. **Status: v0.6.** Python ≥ 3.10, numpy and scipy (matplotlib
+Part of UFOS.ai. **Status: v0.7.** Python ≥ 3.10, numpy and scipy (matplotlib
 for the figures). Synthetic data only; no imports from or into the HedgeFund backend.
 
 ## Key findings
@@ -42,6 +43,15 @@ rates in % ± their standard error).
   preset). A rule with a true Sharpe of 1.0 passes in only 13.1 ± 0.8 % of the
   paths with 10 years of data and 35.8 ± 1.1 % with 20 years (K = 64).
   ([summary](studies/results/gate_overfitting_full_summary.md))
+- **The IRRBB outlier test depends on the deposit model.** A synthetic retail
+  bank loses 17.6 % of Tier 1 in EVE under the parallel-up shock (BCBS 2016
+  EUR sizes), above the 15 % outlier threshold.
+  - Moving only the non-maturity-deposit assumptions inside their caps
+    (core share 50–90 %, average maturity 1–5 years) moves the worst EVE
+    decline between 1.5 % and 31.1 % of Tier 1.
+  - The results are deterministic. Every regulatory parameter is cited to its
+    article; only the NMD caps are marked as an assumption.
+  ([summary](studies/results/irrbb_scenarios_full_summary.md))
 
 <p>
 <img src="report/figures/fig3_estimation_window.png" width="32%" alt="Estimation-window curve">
@@ -112,6 +122,8 @@ flowchart LR
     V["validation<br/>UFOS gates: DSR, PBO,<br/>Newey-West, grid"] --> S2["gate overfitting study"]
     S --> R["report pipeline<br/>figures, tables, LaTeX"]
     S2 --> R
+    C["rates<br/>Nelson-Siegel curves,<br/>instruments, IRRBB shocks"] --> S3["IRRBB study"]
+    S3 --> R
 ```
 
 | module | role |
@@ -121,8 +133,9 @@ flowchart LR
 | `risklab.engine`, `risklab.horizon`, `risklab.bootstrap` | walk-forward backtesting, 10-day VaR (√10, GARCH Monte Carlo, block bootstrap) |
 | `risklab.backtest` | Kupiec, exact binomial, Christoffersen ind / cc, Basel traffic light, Acerbi-Szekely Z2 |
 | `risklab.validation` | the UFOS strategy-platform gates, re-implemented, and the simulator of the gate study |
+| `risklab.rates` | IRRBB: Nelson-Siegel(-Svensson) curves and fitting, banking-book instruments and a synthetic bank, duration / DV01 / key rates, the six standardised shocks with the floor, ΔEVE / ΔNII, outlier tests |
 | `risklab.report` | deterministic export (code fingerprints), figures, LaTeX tables |
-| `studies/`, `report/`, `examples/`, `tests/` | the five studies, the report sources and build, the quickstart, the unit tests |
+| `studies/`, `report/`, `examples/`, `tests/` | the six studies, the report sources and build, the quickstart, the unit tests |
 
 The conventions (signs, confidence levels, seeds, model, engine and backtest
 details, data policy) are in [`docs/conventions.md`](docs/conventions.md).
@@ -140,16 +153,18 @@ studies running in parallel).
 | `estimation_window` | How long must the GARCH-t / FHS window be? | windows 250–1000, paired against the true VaR, M = 1000 | GARCH-t Kupiec near its size from 500 days (4.5 ± 0.7 %), Z2 still 7.4 ± 0.8 % against 5.0 at 500 days; +0.041 ± 0.007 pp excess at 1000 | 34 min | [md](studies/results/estimation_window_full_summary.md) |
 | `survivorship` | How much do survivors-only base rates overstate growth? | 2000 synthetic firms, growth-dependent exits, M = 2000 | 34.3 % naive vs 25.5 % counterfactual vs 17.8 % full cohort | 7 s | [md](studies/results/survivorship_full_summary.md) |
 | `gate_overfitting` | How often does a searched noise rule pass the UFOS gates, and with what power? | MA-crossover family, K = 1–256, 5 / 10 / 20 years, M = 2000 | false positives ≤ 0.5 %; power 13.1 ± 0.8 % (10 y) at Sharpe 1 | 30 min | [md](studies/results/gate_overfitting_full_summary.md) |
+| `irrbb_scenarios` | Does a synthetic bank breach the IRRBB outlier tests, and how much do the deposit assumptions matter? | reference bank, six BCBS shocks (2016 / 2024 EUR sizes, EU floor on both), NMD grid, 2000 variants of the bank (±30 % composition) | worst ΔEVE 17.6 % of Tier 1 (outlier); NMD grid 1.5–31.1 %; robust to ±30 % changes in the composition (65.6 ± 1.1 % of the variants breach) | 32 s | [md](studies/results/irrbb_scenarios_full_summary.md) |
 
 Every study also has a smoke mode (used by the tests and CI) and a default
 demo mode. Run a full run with `--mode full --save-results`.
 
 ## Reports
 
-Three LaTeX documents are generated from the saved results:
+Four LaTeX documents are generated from the saved results:
 
 - the validation report (`--doc validation`, the default);
 - the overfitting study of the UFOS gates (`--doc overfitting`);
+- the IRRBB report (`--doc irrbb`, 8 pages);
 - a 3–4 page project overview (`--doc overview`).
 
 Report PDFs are **not** kept in the repository. The figure PDFs in
@@ -160,6 +175,7 @@ Report PDFs are **not** kept in the repository. The figure PDFs in
 ```
 python report/build_report.py --doc validation       # -> out/report/validation_report.pdf
 python report/build_report.py --doc overfitting      # -> out/report/overfitting_study.pdf
+python report/build_report.py --doc irrbb            # -> out/report/irrbb.pdf
 python report/build_report.py --doc overview         # -> out/report/overview.pdf
 python report/build_report.py --doc overview --publish --publish-to <dir outside the repo>
 ```
@@ -169,17 +185,17 @@ How the build works:
 - It checks the toolchain first and refuses stale inputs: a results file whose
   code fingerprint does not match the current code.
 - `--publish-to` must be an existing directory outside the repository.
-- The prose slots of the two main reports are written by the author. They are
+- The prose slots of the three detailed reports are written by the author. They are
   marked as orange boxes, so a build with open slots is visibly a draft.
 
 ## Quality
 
-- **Tests:** 218 unit tests (`python -m unittest discover -s tests`), no network.
+- **Tests:** 256 unit tests (`python -m unittest discover -s tests`), no network.
   - They include golden tables, closed-form checks, smoke runs of every study
     and the quickstart, and byte-level reproducibility of the figures.
   - A parity test on the HedgeFund side compares `risklab.validation` with
     the platform's gate code on fixed inputs.
-- **Reviews:** every version from v0.1 to v0.5 had an independent review. Its
+- **Reviews:** every version from v0.1 to v0.6 had an independent review. Its
   findings were fixed in a follow-up round before the next version.
 - **Reproducibility, as tested:**
   - **Locked versions vs saved results:** the saved results in
@@ -254,6 +270,10 @@ How the build works:
 - **Monte-Carlo uncertainty:** the ± se covers Monte-Carlo noise only. The
   conclusions depend on the chosen generators and parameters, which are
   stated in each summary.
+- **IRRBB:** single currency, synthetic bank, no credit spreads (CSRBB), no
+  prepayment or early-redemption options, constant balance sheet for NII.
+  Only the NMD caps are unverified (marked ASSUMPTION); the other regulatory
+  parameters are cited to their articles.
 - **Gate study:** one rule family and one cost level. G3, the cost and
   stress parts of G6, and G8 are out of scope.
 - **Reports:** the report prose (the text slots) is open; it is written by
@@ -272,9 +292,10 @@ How the build works:
   - v0.4: the validation report pipeline, the estimation-window and
     survivorship studies;
   - v0.5: the UFOS gate re-implementation and its overfitting study;
-  - v0.6 (this version): presentation, quickstart, locks, CI file and the
-    overview document.
+  - v0.6: presentation, quickstart, locks, CI file and the overview document;
+  - v0.7 (this version): interest rate risk in the banking book (IRRBB):
+    curves, instruments, standardised shocks, ΔEVE / ΔNII, outlier tests, the
+    IRRBB study and report.
 - **Next:**
-  - v0.7: interest-rate risk in the banking book (IRRBB);
   - v0.8: credit risk;
   - v0.9: a reverse DCF.

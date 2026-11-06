@@ -556,6 +556,160 @@ def fig_architecture(out_dir, stem: str = "fig12_architecture") -> FigureSpec:
     return FigureSpec(stem, caption, paths)
 
 
+# ---- 13-17. IRRBB ---------------------------------------------------------------------------
+
+SCEN_LABELS = {"parallel_up": "parallel up", "parallel_down": "parallel down", "steepener": "steepener",
+               "flattener": "flattener", "short_up": "short up", "short_down": "short down"}
+
+
+def _irrbb(res: dict, table: str) -> List[dict]:
+    return [r for r in res["rows"] if r["table"] == table]
+
+
+def fig_irrbb_curves(res: dict, out_dir, stem: str = "fig13_irrbb_curves", preset: str = "EUR_BCBS2016") -> FigureSpec:
+    from risklab.rates import curve as C
+    from risklab.rates import irrbb as R
+
+    p = res["meta"]["curve"]
+    base = C.NelsonSiegel(p["b0"], p["b1"], p["b2"], p["tau"], p["b3"], p["tau2"])
+    sizes = res["meta"]["shock_presets"][preset]
+    t = np.linspace(0.0, 30.0, 301)
+    cols = {"parallel_up": PALETTE["vermillion"], "parallel_down": PALETTE["blue"], "steepener": PALETTE["orange"],
+            "flattener": PALETTE["green"], "short_up": PALETTE["purple"], "short_down": PALETTE["sky"]}
+    with _style():
+        fig, ax = plt.subplots(figsize=WIDE_LEGEND)
+        ax.plot(t, 100 * base.zero(t), color=PALETTE["black"], lw=2.0, label="base (Nelson-Siegel)")
+        for s in R.SCENARIOS:
+            ax.plot(t, 100 * R.shocked_curve(base, s, sizes).zero(t), color=cols[s], lw=1.1, label=SCEN_LABELS[s])
+        ax.plot(t, 100 * R.Floor()(t), color=PALETTE["grey"], ls=":", lw=1.0, label="EBA post-shock floor")
+        ax.set_xlabel("maturity (years)")
+        ax.set_ylabel("zero rate (%, continuous)")
+        ax.legend(frameon=False, fontsize=7, ncol=2)
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = (f"The synthetic base zero curve (Nelson-Siegel, parameters in the results file) and the six "
+               f"standardised shock scenarios with the EUR shock sizes {sizes['parallel']:g} / {sizes['short']:g} / "
+               f"{sizes['long']:g} bp (parallel / short / long, BCBS 2016), after the EBA post-shock floor (dotted). "
+               f"Synthetic curve, no market data.")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_irrbb_delta(res: dict, out_dir, stem: str = "fig14_irrbb_delta") -> FigureSpec:
+    rows = _irrbb(res, "scenario")
+    presets = list(dict.fromkeys(r["preset"] for r in rows))
+    scen = list(dict.fromkeys(r["scenario"] for r in rows))
+    idx = {(r["preset"], r["scenario"]): r for r in rows}
+    cfg = res["meta"]["config"]
+    with _style():
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=WIDE_LEGEND, sharey=False)
+        x = np.arange(len(scen))
+        w = 0.8 / len(presets)
+        for j, p in enumerate(presets):
+            col = (PALETTE["blue"], PALETTE["orange"])[j % 2]
+            a1.bar(x + (j - (len(presets) - 1) / 2) * w, [100 * idx[(p, s)]["delta_eve_tier1"] for s in scen], w,
+                   color=col, label=p.replace("_", " "))
+            a2.bar(x + (j - (len(presets) - 1) / 2) * w, [100 * idx[(p, s)]["delta_nii_tier1"] for s in scen], w,
+                   color=col, label=p.replace("_", " "))
+        a1.axhline(-100 * cfg["eve_threshold"], color=PALETTE["vermillion"], ls="--", lw=1.0, label="EVE outlier test")
+        a2.axhline(-100 * cfg["nii_threshold"], color=PALETTE["vermillion"], ls="--", lw=1.0, label="NII outlier test")
+        for a, t in ((a1, "Delta EVE (% of Tier 1)"), (a2, "Delta NII, 12 months (% of Tier 1)")):
+            a.axhline(0, color=PALETTE["grey"], lw=0.8)
+            a.set_xticks(x)
+            a.set_xticklabels([SCEN_LABELS[s] for s in scen], rotation=35, ha="right", fontsize=7)
+            a.set_title(t)
+        a1.legend(frameon=False, fontsize=6.5)
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = ("Delta EVE (run-off, equity excluded) and Delta NII (12 months, constant balance sheet) of the synthetic "
+               "reference bank per scenario, in \\% of Tier 1, for the BCBS 2016 and 2024 EUR shock sizes. Dashed: the "
+               f"supervisory outlier thresholds ({100 * cfg['eve_threshold']:g}\\,\\% EVE decline over the six scenarios; "
+               f"{100 * cfg['nii_threshold']:g}\\,\\% NII decline, tested on parallel up / down only).")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_key_rates(res: dict, out_dir, stem: str = "fig15_key_rates") -> FigureSpec:
+    rows = _irrbb(res, "key_rate")
+    k = [r["key_tenor"] for r in rows]
+    x = np.arange(len(k))
+    with _style():
+        fig, ax = plt.subplots(figsize=WIDE)
+        ax.bar(x - 0.2, [r["dv01_assets"] * 1000 for r in rows], 0.4, color=PALETTE["blue"], label="assets")
+        ax.bar(x + 0.2, [r["dv01_liabilities"] * 1000 for r in rows], 0.4, color=PALETTE["orange"], label="liabilities")
+        ax.plot(x, [r["dv01_net"] * 1000 for r in rows], color=PALETTE["black"], marker="o", ms=3, label="net")
+        ax.axhline(0, color=PALETTE["grey"], lw=0.8)
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{v:g}" for v in k])
+        ax.set_xlabel("key tenor (years)")
+        ax.set_ylabel("key-rate DV01 (EUR thousand per bp)")
+        ax.legend(frameon=False, fontsize=7)
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = ("Key-rate DV01 profile of the reference bank: value change for a 1 bp fall of the zero curve around each "
+               "key tenor (tent-shaped bumps; the key rates sum to the parallel DV01). Assets gain, liabilities "
+               "(negative cash flows) lose when rates fall; the net line is the bank's exposure.")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_nmd_heat(res: dict, out_dir, stem: str = "fig16_nmd_heat") -> FigureSpec:
+    rows = _irrbb(res, "nmd")
+    cs = sorted({r["core_share"] for r in rows})
+    ms = sorted({r["avg_maturity"] for r in rows})
+    idx = {(r["core_share"], r["avg_maturity"]): r for r in rows}
+    thr = res["meta"]["config"]["eve_threshold"]
+    Z = np.array([[-100 * idx[(c, m)]["worst_eve_tier1"] for m in ms] for c in cs])
+    with _style():
+        fig, ax = plt.subplots(figsize=(5.2, 3.4))
+        im = ax.imshow(Z, cmap="Greys", aspect="auto", origin="lower", vmin=0, vmax=max(1.0, float(Z.max())))
+        for i in range(len(cs)):
+            for j in range(len(ms)):
+                v = Z[i, j]
+                ax.text(j, i, f"{v:.1f}" + ("*" if v > 100 * thr else ""), ha="center", va="center", fontsize=7,
+                        color="white" if v > 0.55 * Z.max() else "black")
+        ax.set_xticks(range(len(ms)))
+        ax.set_xticklabels([f"{m:g}" for m in ms])
+        ax.set_yticks(range(len(cs)))
+        ax.set_yticklabels([f"{c:.0%}" for c in cs])
+        ax.set_xlabel("average maturity of the core deposits (years)")
+        ax.set_ylabel("core share")
+        ax.grid(False)
+        fig.colorbar(im, ax=ax, fraction=0.05, pad=0.02, label="worst EVE decline (% of Tier 1)")
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = ("Model risk of the non-maturity-deposit assumptions: the worst EVE decline over the six scenarios "
+               "(\\% of Tier 1, BCBS 2016 EUR shocks) of the reference bank when the core share and the average maturity of "
+               "the current-account deposits change (inside the caps). Only the current accounts (EUR 450\\,m of the "
+               "600\\,m non-maturity deposits) vary; the savings deposits keep their base assumptions. * = above the "
+               f"{100 * thr:g}\\,\\% outlier threshold.")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_duration_check(res: dict, out_dir, stem: str = "fig17_duration_check") -> FigureSpec:
+    rows = sorted(_irrbb(res, "duration"), key=lambda r: r["shift_bp"])
+    s = [r["shift_bp"] for r in rows]
+    with _style():
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=WIDE)
+        a1.plot(s, [r["full"] for r in rows], color=PALETTE["black"], marker="o", ms=3, label="full revaluation")
+        a1.plot(s, [r["first_order"] for r in rows], color=PALETTE["vermillion"], ls="--", label="first order (DV01)")
+        a1.plot(s, [r["second_order"] for r in rows], color=PALETTE["blue"], ls=":", label="second order (+ convexity)")
+        a1.set_xlabel("parallel shift (bp)")
+        a1.set_ylabel("Delta EVE (EUR m)")
+        a1.legend(frameon=False, fontsize=7)
+        a2.plot(s, [r["first_order"] - r["full"] for r in rows], color=PALETTE["vermillion"], marker="o", ms=3,
+                label="first order")
+        a2.plot(s, [r["second_order"] - r["full"] for r in rows], color=PALETTE["blue"], marker="s", ms=3,
+                label="second order")
+        a2.axhline(0, color=PALETTE["grey"], lw=0.8)
+        a2.set_xlabel("parallel shift (bp)")
+        a2.set_ylabel("approximation error (EUR m)")
+        a2.legend(frameon=False, fontsize=7)
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = ("Duration check on the reference bank: Delta EVE under parallel shifts (no floor) by full revaluation "
+               "against the first-order (DV01) and second-order (DV01 + convexity) approximations. The first-order "
+               "error grows with the square of the shift; the convexity term removes most of it.")
+    return FigureSpec(stem, caption, paths)
+
+
 # ---- LaTeX snippets --------------------------------------------------------------------
 
 def latex_snippet(spec: FigureSpec, width: str = "\\linewidth") -> str:

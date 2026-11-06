@@ -1,0 +1,19 @@
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{Findings register of the IRRBB study. Severities are PROPOSED and must be confirmed by the validator.}
+\label{tab:R4_findings}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.75cm}>{\raggedright\arraybackslash}p{6.6cm}>{\raggedright\arraybackslash}p{1.85cm}>{\raggedright\arraybackslash}p{2.4cm}>{\raggedright\arraybackslash}p{3.5cm}}
+\toprule
+ID & Finding & Severity & Evidence & Proposed remediation \\
+\midrule
+R-F1 & The reference bank breaches the EVE outlier test: its worst EVE decline is 17.6\,\% of Tier 1 under parallel up (threshold 15\,\%); 19.6\,\% with the 2024 EUR shock sizes. The exposure comes from long fixed-rate assets (10-year mortgages and bonds) funded by short liabilities. & PROPOSED: High & Tab.~\ref{tab:R1_scenarios}, \ref{tab:R2_outlier_test}; Fig.~\ref{fig:fig14_irrbb_delta} & Hedge the long fixed-rate assets (payer swaps at the 5--10-year key rates, Fig.~\ref{fig:fig15_key_rates}). \\
+R-F2 & The result depends on the non-maturity-deposit assumptions: with the core share and average maturity of the current accounts inside the caps, the worst EVE decline ranges from 1.5\,\% (90\,\% core, 5 years) to 31.1\,\% (50\,\% core, 1 year) of Tier 1; the base case (70\,\%, 3 years) gives 17.6\,\%. Only the current accounts (EUR 450\,m of the 600\,m non-maturity deposits) vary. The outlier test can be passed or failed by the NMD model alone. & PROPOSED: High & Fig.~\ref{fig:fig16_nmd_heat} & Treat the NMD model as a model with its own validation (deposit history, behavioural back-testing) and report the sensitivity with every EVE figure. \\
+R-F3 & The bank also breaches the NII outlier test (6.4\,\% of Tier 1 under parallel down, threshold 5\,\%): deposit rates are floored at 0\,\% and cannot follow a fall in market rates, while floating-rate loans and reserves reprice down in full. The result depends on the 0\,\% deposit floor and the pass-through betas (0.3 current accounts, 0.5 savings). The short-down scenario, which the NII test does not use, is worse (-7.4\,\%). & PROPOSED: Medium & Tab.~\ref{tab:R1_scenarios}, \ref{tab:R2_outlier_test} & Review the deposit-floor and pass-through assumptions (beta); monitor NII under short-rate scenarios as well. \\
+R-F4 & The breaches are robust to $\pm$30\,\% changes in the reference bank's composition (same NMD rates and betas, 0\,\% deposit floor, Tier 1 = 9\,\% of assets): of 2000 variants, 65.6 $\pm$ 1.1\,\% breach the EVE test and 96.7 $\pm$ 0.4\,\% the NII test (BCBS 2016 shocks). The NII breach is structural: floored deposits against fully repricing floating-rate loans and reserves. & PROPOSED: Medium & Tab.~\ref{tab:R2_outlier_test} & Treat the variants as a robustness check of the synthetic design, not as a population of real banks; for a real bank, analyse the deposit floor and pass-through instead. \\
+R-F5 & A duration (DV01) approximation misstates Delta EVE for large shocks: at +200 bp it gives -17.5 against -15.8 EUR m by full revaluation; adding convexity gives -15.7. & PROPOSED: Low & Fig.~\ref{fig:fig17_duration_check} & Compute regulatory scenarios by full revaluation; use DV01 / key rates for limits and hedging only. \\
+R-F6 & One parameter set could not be verified against a primary text: the BCBS caps on the core share and the average maturity of non-maturity deposits (marked ASSUMPTION in the register). The shock shapes and sizes, the floor and its rule for rates below it, and both outlier thresholds are cited to their articles. & PROPOSED: Low & Tab.~\ref{tab:R3_assumptions} & Verify the NMD caps against BCBS SRP31 (and the EU rules) before any use beyond this showcase. \\
+\bottomrule
+\end{tabular}
+\end{table}

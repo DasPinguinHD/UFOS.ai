@@ -199,6 +199,25 @@ class OverviewTableTests(unittest.TestCase):
             self.assertIn(study, text)
 
 
+class IRRBBTableTests(unittest.TestCase):
+    def test_irrbb_tables_from_saved_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = T.write_all(RESULTS, tmp, doc="irrbb")
+            self.assertEqual([p.stem for p in paths], list(T.IRRBB_TABLE_NAMES))
+            texts = {p.stem: p.read_text(encoding="utf-8") for p in paths}
+        for name, text in texts.items():
+            self.assertIn(f"\\label{{tab:{name}}}", text)
+            self.assertNotRegex(text, r"[^\\]%")              # every percent sign escaped
+        self.assertGreaterEqual(texts["R4_findings"].count("PROPOSED:"), 6)
+        self.assertIn("ASSUMPTION", texts["R3_assumptions"])
+        self.assertEqual(texts["R1_scenarios"].count(" \\\\\n"), 7)     # header + 6 scenarios
+
+    def test_rule_of_three_helpers(self):
+        self.assertEqual(T._pmr2(0.9995, 0.0005, 2000), "99.95 $\\pm$ 0.05")
+        self.assertEqual(T._pmr2(1.0, 0.0, 2000), "100 ($\\ge$ 99.85)")
+        self.assertEqual(T._years(1.0), "1 year")
+
+
 class WriteAllTests(unittest.TestCase):
     def test_write_all_from_saved_results(self):
         with tempfile.TemporaryDirectory() as tmp:

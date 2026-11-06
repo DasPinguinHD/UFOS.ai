@@ -260,6 +260,70 @@ answering a different question:
     assumed hazard (h0, kappa) and the growth model, not by the simulation
     error.
 
+## The IRRBB study
+
+```
+python studies/irrbb_scenarios.py                # M = 200 banks: 4 s in the cloud container
+python studies/irrbb_scenarios.py --mode full --save-results    # M = 2000: 32 s in the cloud container
+```
+
+**Design:**
+
+- **Curve:** a synthetic Nelson-Siegel zero curve with known parameters
+  (3 %, -1.5 %, 1 %, tau = 2).
+- **Reference bank:** EUR 1000 m of assets:
+  - 10-year annuity mortgages and 5-year corporate loans;
+  - 5- and 10-year government bonds;
+  - floating-rate loans and central-bank reserves.
+
+  It is funded by current accounts and savings (non-maturity deposits),
+  term deposits, a covered bond and equity. Tier 1 is 9 % of assets.
+- **Scenarios:** the six standardised shocks with the BCBS 2016 EUR sizes
+  (200 / 250 / 100 bp) and the 2024 recalibration (225 / 350 / 200 bp).
+  The EU post-shock floor is applied to both.
+- **Measures:** ΔEVE (run-off, equity excluded) and ΔNII (12 months,
+  constant balance sheet). The outlier tests are an EVE decline above 15 %
+  and an NII decline above 5 % of Tier 1 (parallel up / down).
+- **Further outputs:**
+  - the key-rate DV01 profile;
+  - an NMD grid: core share 50–90 % × average maturity 1–5 years, inside
+    the caps;
+  - a duration check: parallel ±50 to ±400 bp, full revaluation against the
+    first- and second-order approximations;
+  - M variants of the reference bank (notionals × U(0.7, 1.3), fixed rates
+    ± 50 bp; same NMD rates and betas, 0 % deposit floor, Tier 1 = 9 % of
+    assets): a robustness check of the synthetic design, not a population of
+    real banks.
+
+The full run is in
+[`studies/results/irrbb_scenarios_full_summary.md`](../studies/results/irrbb_scenarios_full_summary.md).
+
+**Results (reference bank, BCBS 2016 EUR sizes):**
+
+- **EVE:** the worst decline is 17.6 % of Tier 1 (parallel up), an outlier;
+  with the 2024 sizes it is 19.6 %.
+- **NII:** the worst decline is 6.4 % of Tier 1 (parallel down), also above
+  the 5 % threshold. Deposit rates are floored at 0 and cannot follow a fall
+  in market rates.
+- **NMD model risk:** with the deposit assumptions moved inside the caps,
+  the worst EVE decline ranges from 1.5 % (90 % core, 5 years) to 31.1 %
+  (50 % core, 1 year).
+- **Robustness:** of the 2000 variants of the bank (±30 % composition),
+  65.6 ± 1.1 % breach the EVE test and 96.7 ± 0.4 % the NII test.
+  - The NII breach is structural: floored deposits against fully repricing
+    floating-rate loans and reserves.
+  - It depends on the 0 % deposit floor and the betas (0.3 / 0.5).
+- **Synthetic-bank choices:** the composition, the NMD parameters, the
+  deposit floor and a Tier 1 of 9 % of assets. That Tier 1 is generous for a
+  retail bank.
+- **NMD variation:** only the current accounts (EUR 450 m of the 600 m
+  non-maturity deposits) vary in the NMD grid.
+- **Duration check:** at +200 bp, DV01 gives -17.5 EUR m against -15.8 by
+  full revaluation; with convexity, -15.7.
+
+The assumptions register (sources, `ASSUMPTION`, `verify`) is in the results
+file (`meta.assumptions`) and in table R3 of the IRRBB report.
+
 ## The validation report
 
 **Report PDFs are not kept in the repository** (user decision 2026-11-05):

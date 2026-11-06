@@ -159,3 +159,29 @@ so that the README stays short; the content is unchanged.
   state of the day: an oracle that no model can reach from past data alone.
 - Your own data stays in `local_data/`, which git ignores. Exports go to `out/`,
   which git also ignores. No third-party or licensed data goes into the repo.
+
+## Interest rates (`risklab.rates`, v0.7)
+
+- **Time** is in years from today, as exact year fractions; no day-count
+  calendar is modelled.
+- **Rates** are decimals, continuously compounded zero rates `z(t)`:
+  - discount factor `D(t) = exp(-z(t) t)`;
+  - conversion to m-times-a-year compounding: `r_m = m (exp(z / m) - 1)`;
+  - par yields are those of annual-coupon bonds.
+- **Signs:** assets carry positive cash flows and liabilities negative ones.
+  - `EVE` is the PV of all run-off cash flows, equity excluded.
+  - `Delta EVE = EVE(shocked) - EVE(base)`: negative is a loss.
+  - The outlier tests compare the largest decline with Tier 1.
+- **Shocks** are added to the zero curve and then floored at
+  `min(floor(t), z(t))`. The shapes, sizes, the floor and their sources are
+  in the docstring of `risklab.rates.irrbb` (`SHOCK_SOURCES`).
+- **Curves from par yields:** par yields are fitted directly with Nelson-Siegel
+  or Nelson-Siegel-Svensson (least squares on the par yields of the fitted
+  curve). There is no bootstrapping.
+- **Non-maturity deposits:** the replicating portfolio's core tranches run off
+  monthly over `2 x avg_maturity` years. Their mean maturity is therefore
+  `≈ avg_maturity + 1/24` years.
+- **Unverified parameters** are not guessed. A parameter that could not be
+  checked against a primary text is marked `ASSUMPTION` or `verify` in the
+  results' assumptions register.
+

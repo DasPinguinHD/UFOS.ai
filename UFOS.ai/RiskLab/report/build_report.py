@@ -1,9 +1,10 @@
 """Build a report document: figures, tables, then pdflatex twice.
 
-Three documents (``--doc``): ``validation`` (the VaR / ES validation report,
+Four documents (``--doc``): ``validation`` (the VaR / ES validation report,
 ``validation_report.tex``, the default), ``overfitting`` (the overfitting study of the
-UFOS validation gates, ``overfitting_study.tex``) and ``overview`` (the 3-4 page project
-overview, ``overview.tex``; published as ``overview.pdf``). Each has its own study results, figures,
+UFOS validation gates, ``overfitting_study.tex``), ``irrbb`` (interest rate risk in the
+banking book, ``irrbb.tex``) and ``overview`` (the 3-4 page project overview,
+``overview.tex``; published as ``overview.pdf``). Each has its own study results, figures,
 tables and draft PDF (:data:`DOCS`).
 
 Steps:
@@ -31,7 +32,7 @@ Steps:
 
 Run from ``UFOS.ai/RiskLab/``::
 
-    python report/build_report.py [--doc validation|overfitting|overview] [--publish --publish-to DIR] [--skip-figures]
+    python report/build_report.py [--doc validation|overfitting|irrbb|overview] [--publish --publish-to DIR] [--skip-figures]
 """
 from __future__ import annotations
 
@@ -58,6 +59,7 @@ DOCS = {
                                "estimation_window_full_results.json", "survivorship_full_results.json")},
     "overfitting": {"tex": "overfitting_study.tex", "draft": "overfitting_study_draft.pdf",
                     "results": ("gate_overfitting_full_results.json",)},
+    "irrbb": {"tex": "irrbb.tex", "draft": "irrbb_draft.pdf", "results": ("irrbb_scenarios_full_results.json",)},
     "overview": {"tex": "overview.tex", "draft": "overview.pdf",
                  "results": ("var_backtest_power_full_results.json", "horizon_10d_full_results.json",
                              "estimation_window_full_results.json", "survivorship_full_results.json",
@@ -217,8 +219,8 @@ def build(publish: bool = False, skip_figures: bool = False, allow_stale: bool =
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--doc", choices=sorted(DOCS), default="validation",
-                    help="validation (the VaR / ES validation report, default), overfitting (the gate study) or "
-                         "overview (the project overview)")
+                    help="validation (the VaR / ES validation report, default), overfitting (the gate study), "
+                         "irrbb (interest rate risk in the banking book) or overview (the project overview)")
     ap.add_argument("--publish", action="store_true",
                     help="copy the PDF to <--publish-to>/<document>_draft.pdf (outside the repository)")
     ap.add_argument("--publish-to", default=None, metavar="DIR",

@@ -97,6 +97,34 @@ class OverfitFigureTests(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_MPL, SKIP_MSG)
+class IRRBBFigureTests(unittest.TestCase):
+    def test_five_figures_from_a_smoke_run(self):
+        import importlib.util
+        import json
+
+        from risklab.report import figures as F
+
+        study = Path(__file__).resolve().parents[1] / "studies" / "irrbb_scenarios.py"
+        spec = importlib.util.spec_from_file_location("irrbb_scenarios_fig", study)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        with tempfile.TemporaryDirectory() as tmp:
+            mod.main(["--mode", "smoke", "--out-dir", tmp, "--quiet"])
+            res = json.loads(Path(tmp, "results.json").read_text(encoding="utf-8"))
+            out = []
+            for d in ("a", "b"):
+                out.append([F.fig_irrbb_curves(res, Path(tmp, d)), F.fig_irrbb_delta(res, Path(tmp, d)),
+                            F.fig_key_rates(res, Path(tmp, d)), F.fig_nmd_heat(res, Path(tmp, d)),
+                            F.fig_duration_check(res, Path(tmp, d))])
+            for x, y in zip(*out):
+                self.assertNotIn("%", x.caption.replace("\\%", ""))     # LaTeX-safe captions
+                for p, q in zip(x.paths, y.paths):
+                    self.assertGreater(p.stat().st_size, 1000)
+                    self.assertEqual(p.read_bytes(), q.read_bytes())
+
+
+@unittest.skipUnless(HAVE_MPL, SKIP_MSG)
 class ArchitectureFigureTests(unittest.TestCase):
     def test_architecture_reproducible(self):
         from risklab.report import figures as F

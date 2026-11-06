@@ -17,6 +17,8 @@ TABLE_NAMES = ("T1_model_inventory", "T2_size", "T3_power", "T4_estimation_windo
 OVERFIT_TABLE_NAMES = ("O1_gates_scope", "O2_fpr", "O3_power", "O4_holdout", "O5_calibration", "O6_findings")
 #: table of the project overview
 OVERVIEW_TABLE_NAMES = ("V1_key_results",)
+#: tables of the IRRBB report
+IRRBB_TABLE_NAMES = ("R1_scenarios", "R2_outlier_test", "R3_assumptions", "R4_findings")
 
 _LATEX_SPECIAL = {"\\": "\\textbackslash{}", "&": "\\&", "%": "\\%", "$": "\\$", "#": "\\#", "_": "\\_",
                   "{": "\\{", "}": "\\}", "~": "\\textasciitilde{}", "^": "\\textasciicircum{}"}
@@ -617,6 +619,167 @@ def table_key_results(power: dict, horizon: dict, ew: dict, surv: dict, go: dict
                   size="\\footnotesize", colsep="4pt")
 
 
+# ---- R1..R4: IRRBB -------------------------------------------------------------------------
+
+IRRBB_SCEN = {"parallel_up": "parallel up", "parallel_down": "parallel down", "steepener": "steepener",
+              "flattener": "flattener", "short_up": "short up", "short_down": "short down"}
+
+
+def _ir(res: dict, table: str) -> List[dict]:
+    return [r for r in res["rows"] if r["table"] == table]
+
+
+def _pmr2(x: float, se: float, n: int) -> str:
+    """:func:`pmr`, with one more digit when the se would round to 0.0 (e.g. 99.95 $\\pm$ 0.05)."""
+    if x not in (0.0, 1.0) and se is not None and 100 * se < 0.1:
+        return pm(x, se, 2)
+    return pmr(x, se, n)
+
+
+def _pct0(x: float) -> str:
+    return f"{100 * x:.0f}\\,\\%"
+
+
+def _years(m: float) -> str:
+    return f"{m:g} year" + ("" if m == 1 else "s")
+
+
+def _signed(x: float, d: int = 1) -> str:
+    return f"{100 * x:+.{d}f}"
+
+
+def table_irrbb_scenarios(res: dict) -> str:
+    rows = _ir(res, "scenario")
+    presets = list(dict.fromkeys(r["preset"] for r in rows))
+    idx = {(r["preset"], r["scenario"]): r for r in rows}
+    bs = res["meta"]["balance_sheet"]
+    body = []
+    for s in IRRBB_SCEN:
+        line = [IRRBB_SCEN[s]]
+        for p in presets:
+            r = idx[(p, s)]
+            line += [f"{r['delta_eve']:+.1f}", _signed(r["delta_eve_tier1"]), f"{r['delta_nii']:+.2f}",
+                     _signed(r["delta_nii_tier1"])]
+        body.append(line)
+    head = ["Scenario"] + [f"{h}$_{{{p.split('_')[-1][-4:]}}}$" for p in presets
+                           for h in ("$\\Delta$EVE", "\\%T1", "$\\Delta$NII", "\\%T1")]
+    sz = res["meta"]["shock_presets"]
+    return _table("R1_scenarios", "Delta EVE (run-off, equity excluded) and Delta NII (12 months, constant balance "
+                  "sheet) of the synthetic reference bank per standardised scenario, in EUR m and in \\% of Tier 1 "
+                  f"({bs['tier1']:.0f}); EUR shock sizes (parallel / short / long, bp): "
+                  + "; ".join(f"{p.replace('_', ' ')} {v['parallel']:g} / {v['short']:g} / {v['long']:g}"
+                              for p, v in sz.items()) + ". Deterministic (no Monte-Carlo error).",
+                  "l" + "rrrr" * len(presets), head, body, size="\\scriptsize", colsep="3pt")
+
+
+def table_irrbb_outlier(res: dict) -> str:
+    cfg = res["meta"]["config"]
+    pop = {r["preset"]: r for r in _ir(res, "population")}
+    body = []
+    for p, o in res["meta"]["outlier_tests"].items():
+        q = pop[p]
+        body.append([esc(p.replace("_", " ")), IRRBB_SCEN[o["eve_worst_scenario"]], pct(o["eve_ratio"]),
+                     "yes" if o["eve_outlier"] else "no", IRRBB_SCEN[o["nii_worst_scenario"]], pct(o["nii_ratio"]),
+                     "yes" if o["nii_outlier"] else "no", _pmr2(q["outlier_share"], q["outlier_share_se"], q["m"]),
+                     _pmr2(q["nii_outlier_share"], q["nii_outlier_share_se"], q["m"])])
+    return _table("R2_outlier_test", "Supervisory outlier tests of the reference bank: the largest EVE decline over "
+                  f"the six scenarios against {100 * cfg['eve_threshold']:g}\\,\\% of Tier 1, and the largest NII decline "
+                  f"over parallel up / down against {100 * cfg['nii_threshold']:g}\\,\\% of Tier 1 (both thresholds are "
+                  f"parameters). Last two columns: share of outliers among {cfg['m']} variants of the reference bank "
+                  "(notionals $\\times$ U(0.7, 1.3), fixed rates $\\pm$ 50 bp; same NMD rates, betas and deposit floor, "
+                  "Tier 1 = 9\\,\\% of assets), \\% $\\pm$ Monte-Carlo se; a rate of 0 or "
+                  "100 shows the 95\\,\\% bound of the rule of three in brackets.",
+                  "lllllllrr", ["Shocks", "Worst EVE", "\\% T1", "Outlier", "Worst NII", "\\% T1", "Outlier",
+                                "Pop.\\ EVE", "Pop.\\ NII"], body, size="\\scriptsize", colsep="3pt")
+
+
+def table_irrbb_assumptions(res: dict) -> str:
+    body = []
+    for k, v in sorted(res["meta"]["assumptions"].items()):
+        flag = "ASSUMPTION" if "ASSUMPTION" in v else ("verify" if ("verify" in v or "secondary" in v) else "sourced")
+        body.append([esc(k), esc(v), flag])
+    return _table("R3_assumptions", "Assumptions register: every modelling choice and parameter source the results "
+                  "carry (``ASSUMPTION'' = not verified against a primary source in this work; ``verify'' = taken from "
+                  "a secondary source).", _rag("3.0cm", "10.6cm", "2.1cm"), ["Item", "Statement and source", "Status"],
+                  body, size="\\scriptsize", colsep="3pt")
+
+
+def irrbb_findings(res: dict) -> List[Dict[str, str]]:
+    sc = {(r["preset"], r["scenario"]): r for r in _ir(res, "scenario")}
+    o16 = res["meta"]["outlier_tests"]["EUR_BCBS2016"]
+    o24 = res["meta"]["outlier_tests"].get("EUR_BCBS2024")
+    nm = _ir(res, "nmd")
+    lo, hi = min(nm, key=lambda r: -r["worst_eve_tier1"]), max(nm, key=lambda r: -r["worst_eve_tier1"])
+    ref = next(r for r in nm if abs(r["core_share"] - 0.7) < 1e-9 and abs(r["avg_maturity"] - 3.0) < 1e-9)
+    du = {r["shift_bp"]: r for r in _ir(res, "duration")}
+    d200 = du[200.0]
+    pop = {r["preset"]: r for r in _ir(res, "population")}
+    p16 = pop["EUR_BCBS2016"]
+    out = [
+        {"id": "R-F1", "severity": "High",
+         "finding": f"The reference bank breaches the EVE outlier test: its worst EVE decline is {pct(o16['eve_ratio'])}\\,\\% of "
+                    f"Tier 1 under {IRRBB_SCEN[o16['eve_worst_scenario']]} (threshold 15\\,\\%)"
+                    + (f"; {pct(o24['eve_ratio'])}\\,\\% with the 2024 EUR shock sizes" if o24 else "")
+                    + ". The exposure comes from long fixed-rate assets (10-year mortgages and bonds) funded by short "
+                      "liabilities.",
+         "evidence": "Tab.~\\ref{tab:R1_scenarios}, \\ref{tab:R2_outlier_test}; Fig.~\\ref{fig:fig14_irrbb_delta}",
+         "remediation": "Hedge the long fixed-rate assets (payer swaps at the 5--10-year key rates, Fig.~\\ref{fig:fig15_key_rates})."},
+        {"id": "R-F2", "severity": "High",
+         "finding": f"The result depends on the non-maturity-deposit assumptions: with the core share and average maturity "
+                    f"of the current accounts inside the caps, the worst EVE decline ranges from {pct(-lo['worst_eve_tier1'])}\\,\\% "
+                    f"({_pct0(lo['core_share'])} core, {_years(lo['avg_maturity'])}) to {pct(-hi['worst_eve_tier1'])}\\,\\% "
+                    f"({_pct0(hi['core_share'])} core, {_years(hi['avg_maturity'])}) of Tier 1; the base case (70\\,\\%, 3 years) "
+                    f"gives {pct(-ref['worst_eve_tier1'])}\\,\\%. Only the current accounts (EUR 450\\,m of the 600\\,m non-maturity "
+                    f"deposits) vary. The outlier test can be passed or failed by the NMD model alone.",
+         "evidence": "Fig.~\\ref{fig:fig16_nmd_heat}",
+         "remediation": "Treat the NMD model as a model with its own validation (deposit history, behavioural "
+                        "back-testing) and report the sensitivity with every EVE figure."},
+        {"id": "R-F3", "severity": "Medium",
+         "finding": f"The bank also breaches the NII outlier test ({pct(o16['nii_ratio'])}\\,\\% of Tier 1 under "
+                    f"{IRRBB_SCEN[o16['nii_worst_scenario']]}, threshold 5\\,\\%): deposit rates are floored at 0\\,\\% and cannot follow "
+                    f"a fall in market rates, while floating-rate loans and reserves reprice down in full. The result "
+                    f"depends on the 0\\,\\% deposit floor and the pass-through betas (0.3 current accounts, 0.5 savings). "
+                    f"The short-down scenario, which the NII test does not use, is worse "
+                    f"({_signed(sc[('EUR_BCBS2016', 'short_down')]['delta_nii_tier1'])}\\,\\%).",
+         "evidence": "Tab.~\\ref{tab:R1_scenarios}, \\ref{tab:R2_outlier_test}",
+         "remediation": "Review the deposit-floor and pass-through assumptions (beta); monitor NII under short-rate "
+                        "scenarios as well."},
+        {"id": "R-F4", "severity": "Medium",
+         "finding": f"The breaches are robust to $\\pm$30\\,\\% changes in the reference bank's composition (same NMD "
+                    f"rates and betas, 0\\,\\% deposit floor, Tier 1 = 9\\,\\% of assets): of {p16['m']} variants, "
+                    f"{_pmr2(p16['outlier_share'], p16['outlier_share_se'], p16['m'])}\\,\\% breach the EVE test and "
+                    f"{_pmr2(p16['nii_outlier_share'], p16['nii_outlier_share_se'], p16['m'])}\\,\\% the NII test (BCBS 2016 "
+                    f"shocks). The NII breach is structural: floored deposits against fully repricing floating-rate loans "
+                    f"and reserves.",
+         "evidence": "Tab.~\\ref{tab:R2_outlier_test}",
+         "remediation": "Treat the variants as a robustness check of the synthetic design, not as a population of "
+                        "real banks; for a real bank, analyse the deposit floor and pass-through instead."},
+        {"id": "R-F5", "severity": "Low",
+         "finding": f"A duration (DV01) approximation misstates Delta EVE for large shocks: at +200 bp it gives "
+                    f"{d200['first_order']:.1f} against {d200['full']:.1f} EUR m by full revaluation; adding convexity gives "
+                    f"{d200['second_order']:.1f}.",
+         "evidence": "Fig.~\\ref{fig:fig17_duration_check}",
+         "remediation": "Compute regulatory scenarios by full revaluation; use DV01 / key rates for limits and hedging only."},
+        {"id": "R-F6", "severity": "Low",
+         "finding": "One parameter set could not be verified against a primary text: the BCBS caps on the core share and "
+                    "the average maturity of non-maturity deposits (marked ASSUMPTION in the register). The shock shapes "
+                    "and sizes, the floor and its rule for rates below it, and both outlier thresholds are cited to their "
+                    "articles.",
+         "evidence": "Tab.~\\ref{tab:R3_assumptions}",
+         "remediation": "Verify the NMD caps against BCBS SRP31 (and the EU rules) before any use beyond this showcase."},
+    ]
+    return out
+
+
+def table_irrbb_findings(res: dict) -> str:
+    rows = [[f["id"], f["finding"], f"PROPOSED: {f['severity']}", f["evidence"], f["remediation"]]
+            for f in irrbb_findings(res)]
+    return _table("R4_findings", "Findings register of the IRRBB study. Severities are PROPOSED and must be confirmed "
+                  "by the validator.", _rag("0.75cm", "6.6cm", "1.85cm", "2.4cm", "3.5cm"),
+                  ["ID", "Finding", "Severity", "Evidence", "Proposed remediation"], rows, size="\\scriptsize",
+                  colsep="3pt")
+
+
 # ---- write all --------------------------------------------------------------------------
 
 def load(path) -> dict:
@@ -625,7 +788,7 @@ def load(path) -> dict:
 
 
 def write_all(results_dir, out_dir, doc: str = "validation") -> List[Path]:
-    """Write the tables of ``doc`` (``validation``: T1..T7; ``overfitting``: O1..O6; ``overview``: V1) from
+    """Write the tables of ``doc`` (``validation``: T1..T7; ``overfitting``: O1..O6; ``overview``: V1; ``irrbb``: R1..R4) from
     ``<results_dir>/<study>_full_results.json`` into ``out_dir``."""
     r = Path(results_dir)
     out = Path(out_dir)
@@ -636,6 +799,11 @@ def write_all(results_dir, out_dir, doc: str = "validation") -> List[Path]:
                  "O3_power": table_go_power(go), "O4_holdout": table_go_holdout(go),
                  "O5_calibration": table_go_calibration(go), "O6_findings": table_overfitting_findings(go)}
         return _write_tables(out, OVERFIT_TABLE_NAMES, texts)
+    if doc == "irrbb":
+        res = load(r / "irrbb_scenarios_full_results.json")
+        texts = {"R1_scenarios": table_irrbb_scenarios(res), "R2_outlier_test": table_irrbb_outlier(res),
+                 "R3_assumptions": table_irrbb_assumptions(res), "R4_findings": table_irrbb_findings(res)}
+        return _write_tables(out, IRRBB_TABLE_NAMES, texts)
     if doc == "overview":
         loaded = [load(r / f"{x}_full_results.json") for x in
                   ("var_backtest_power", "horizon_10d", "estimation_window", "survivorship", "gate_overfitting")]
