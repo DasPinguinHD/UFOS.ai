@@ -21,7 +21,7 @@ namespace UFOS.ai.HedgeFund
             if (_monitoringView != null) return;
             _monitoringView = new MonitoringView();
             _monitoringView.BrokersRequested += () => OpenKeysWindow(brokers: true);
-            // S10-C: a Council alert → the Council view at the top of the Overview
+            // S10-C: a Council alert → the Council view at the top of the former Overview (stage 11: Trading › Legacy)
             _monitoringView.CouncilRequested += () => { if (NavOverviewButton.IsChecked != true) NavOverviewButton.IsChecked = true; OverviewScroll.ScrollToTop(); };
             MonitoringHost.Child = _monitoringView;
         }
@@ -79,17 +79,23 @@ namespace UFOS.ai.HedgeFund
 
         private void UpdateMonitoringBadge(int? unacked)
         {
-            if (NavMonitoringBadge == null) return;
+            if (NavMonitoringBadge == null || RailTradingBadge == null) return;
+            // stage 11: the same count on the Monitoring sub-tab and on the rail's Trading item
             if (unacked is int n && n > 0)
             {
                 NavMonitoringBadge.Text = "● " + (n > 99 ? "99+" : n.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 NavMonitoringBadge.Visibility = Visibility.Visible;
+                RailTradingBadge.Text = NavMonitoringBadge.Text;
+                RailTradingBadge.Visibility = Visibility.Visible;
                 System.Windows.Automation.AutomationProperties.SetItemStatus(NavMonitoringButton, n.ToString(System.Globalization.CultureInfo.InvariantCulture) + " alerts not yet seen");
+                System.Windows.Automation.AutomationProperties.SetItemStatus(RailTradingButton, n.ToString(System.Globalization.CultureInfo.InvariantCulture) + " alerts not yet seen");
             }
             else
             {
                 NavMonitoringBadge.Visibility = Visibility.Collapsed;
+                RailTradingBadge.Visibility = Visibility.Collapsed;
                 System.Windows.Automation.AutomationProperties.SetItemStatus(NavMonitoringButton, "");
+                System.Windows.Automation.AutomationProperties.SetItemStatus(RailTradingButton, "");
             }
         }
     }

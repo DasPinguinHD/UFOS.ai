@@ -8,7 +8,7 @@ in `todo-archive/2026-10.md` section B. Open task / contract files for agents: `
 `HedgeFund/backend/strategy_platform/SPEC.md` (SP), `HedgeFund/backend/market_research/SPEC.md` (MR),
 `HedgeFund/backend/fund/SPEC.md` (old engine); file map `HedgeFund/docs/CODEMAP.md`; rules `CLAUDE.md`.
 
-Last updated: 2026-11-06 (Risk Lab complete; back to the standard plan, stage 11 next)
+Last updated: 2026-11-06 (stage 11: new Overview D3 built — backend committed b0f97c6, WPF awaits the user build)
 
 ## 0. Current focus (2026-11-06)
 
@@ -21,8 +21,6 @@ Plan / history: Claude Project `claude/career-plan-bank-risk.md`; reports in the
 Open user items:
 - [ ] Decide the grey tile strip (MainWindow tiles).
 - [ ] Build + click-test the Disclosures section incl. the Congress tab (Newsroom → Disclosures).
-- [ ] **Status unknown — ask the user:** did the Monday 2026-10-26 options RTH check run, and were the §17.9 migration and
-  the Council switch-over done? (items in §1 below).
 - [ ] Prose slots (`\usertext`) in the Risk Lab reports (user, outside the coding chat).
 
 Stage 11 interview 2026-11-06 (user): order as planned (shared styles → Hedge Fund Overview → other HF views → Newsroom →
@@ -30,26 +28,28 @@ GM → LSA → Logs; MainWindow stays); **Options Structure is unparked first** 
 its market section can show the gamma regime etc.; a **Risk Lab view** in the app comes after the Overview (Risk Lab stays
 a standalone package); screenshot inventory of the current UI runs now (lead, remote).
 
+Done 2026-11-06 (user): the 2 old-engine orders filled at the open (16:34 UTC); RTH check `verify_alpaca_options`
+20261106T163343Z = OK (no FAIL); options archive re-registered (DTB3); §17.9 migration to `paper-council` (19:14 UTC) and
+the Council switch-over (state `done`, 19:15 UTC; Council orders OFF until the user turns them on). New build with the
+stage-11 UI built by the user.
+- [ ] Lead proposal pending the user's OK: mark the archive keys quote staleness 5 min / coverage 80 % CONFIRMED (RTH run
+  20261106T163343Z: greeks / IV 90.5 % SPY, 91 % QQQ).
+
+Stage 11 Overview (contract `UFOS.ai/docs/tasks/STAGE11_OVERVIEW_TASK.md`, design D3 "Markets + risk", user
+2026-11-06): backend `/v2/overview/{markets,risk,activity}` committed (b0f97c6, 2381 tests OK); WPF (5-group rail,
+`HedgeFund/Ui/` components, `Platform/OverviewView*`, Legacy tab) reviewed twice, static checks OK, **not built yet**.
+- [ ] **User: click-test the Overview** (build done 2026-11-06) (list in the contract §5 and the
+  report `2026-11-06_Stage11_Overview.pdf`); report build errors → then the lead commits the WPF part.
+- [ ] User decision: broker mirror accounts (alpaca-paper, binance-demo, kraken-demo) stay OUT of the Overview account
+  set after migration (lead assumption, SP §26.2)?
+- [ ] After migration + switch-over (user decision 2026-11-06): retire Council / old engine (now under Trading › Legacy) — interview on how, then contract.
+- [ ] Next in stage 11: Risk Lab view (replaces the placeholder), then the other HF views with the `Ui/` components.
+
 **Parked** (kept, not deleted): LSA-SRC, Depth & Range. R4 / R5 stay scheduled after the
 Council switch-over.
 
 ## 1. Now — in this order
 
-- [ ] **Monday 2026-10-26 — Options Structure RTH run (user; status unknown — ask).** During US hours (14:30–21:00 Berlin):
-  `.\.venv\Scripts\python.exe tools\verify_alpaca_options.py` in `HedgeFund\backend`. Until then quote staleness
-  (5 min) and coverage (80 %) stay PROVISIONAL (SP §21.10). Same day: the options archive's first slot (OI 08:30 New
-  York = 13:30 Berlin) — check ⚙ Keys & data → Data sources or `tools\options_archive.py status` / `gaps`. The running
-  archive picks up code changes only after a restart (next logon or Unregister… + Register…).
-- [ ] **Council switch-over sequence (status unknown — ask) — waits until after Monday 2026-10-26's open** (user decision 2026-10-24). The old
-  engine's 2 queued orders (SELL 5 QQQ, COVER 50 TLT) fill at the open → the old account is flat → the user runs the
-  §17.9 migration to `paper-council` (Portfolio & Trading → Migration: dry run, then migrate) → then the switch-over
-  (Council view → "Switch over…", SP §22.8). **Nothing is cancelled by hand.** Click-test 2026-10-24 21:00: the
-  switch-over dry run works and is correctly blocked (`not_migrated`, `no_account`); the migration dry run is blocked
-  by `pending_orders=2`.
-  - **Is the migration reversible? No.** There is no undo route or function. Once its `pf_migrations` record is
-    committed the old account stays frozen for good (`execution/migration.py`: "never un-freeze once one exists"; the
-    old tables stay as read-only history; SP §17.14). Only an interrupted migration without a record is undone at
-    startup. The switch-over's own revert (SP §22.8) does not undo the migration.
 - [ ] **Click-test of the R2 + R3 build (S10-C, user)** after the switch-over: (1) Council view → "Switch over…" shows
   the dry run (params, heartbeat, AI spend seed, legacy runs), no blockers; confirm → state "done", Council orders
   OFF, no old-engine data any more; (2) restart app / backend → still switched over, the Council task runs (first run

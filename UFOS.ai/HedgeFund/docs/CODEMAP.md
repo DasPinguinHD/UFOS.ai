@@ -53,11 +53,12 @@ Scope rule:
 
 | File | ≈Lines | Responsibility |
 |---|---|---|
-| `HedgeFundWindow.xaml` | 1400 | Window layout: title bar, sandbox strip, toolbar (Newsroom, Keys & data, Run now, Kill switch), nav rail, Overview dashboard |
-| `HedgeFundWindow.xaml.cs` | 3280 | Old-engine dashboard (`/fund/*`, FUND §11/§13): polls `/fund/state` 5 s, chips, agents, verdict, orders, kill / resume, sandbox strip, nav switching |
+| `HedgeFundWindow.xaml` | 1540 | Window layout: title bar, sandbox strip, toolbar (Newsroom, Keys & data, Run now, Kill switch), 5-group rail + sub-tab strip (stage 11), hosts; `OverviewScroll` = the old-engine / Council dashboard, now shown under Trading › Legacy |
+| `HedgeFundWindow.xaml.cs` | 3370 | Old-engine dashboard (`/fund/*`, FUND §11/§13): polls `/fund/state` 5 s, chips, agents, verdict, orders, kill / resume, sandbox strip, nav switching |
 | `HedgeFundWindow.{Studio,Loop,Trading,Monitoring}.cs` | 20–95 | Nav-rail entries: create Platform views on first use |
 | `HedgeFundWindow.{ExplainBudget,IdeationBudget,CommitteeSettings}.cs` | 100–150 | Engine-settings rows for the AI budgets (SP §11.2, §13.1, §14.3) |
 | `HedgeFundWindow.Council.cs` | 80 | Hosts the Council view (`CouncilHost`), hides the old-engine sections (`Legacy*`) and stops `/fund/state` polling once `council.switchover` is done / pending; "Resume…" dialog (halted accounts + old engine only before the switch-over) |
+| `HedgeFundWindow.Navigation.cs` | 140 | Stage 11 (SP §26): 5-group rail (Overview · Strategies · Trading · Research · Risk Lab), sub-tabs, last sub-tab per group, `SyncRailWithView`; loads the Council state once at start (the Council view now polls only while Trading › Legacy is shown) |
 | `HedgeFundBackendHost.cs` | 46 | Public facade over `NewsroomBackend` for the main app (start / IsRunning) |
 | "⛶" places (SP §25.1) | — | `HedgeFundWindow.xaml` `EquityFullScreenButton` (target `EquityChartHost`, bar: equity / day P&L / total P&L); `Platform/BacktestReportView.cs` section headings (equity, drawdown, IC decay — `Section(title, button)` / `ReplaceSection`); `Platform/LoopView.cs` generation × slot grid (`_gridHost`, refreshes in place; a cell click exits + opens the variant); `Platform/TradingView.Sections.cs` Orders blotter (focus mode); `Newsroom/MacroIndicatorsView` whole view (`MacroListContent` zoomed 1–2 at ≥ 1500 px); `MarketResearch/ResearchView.xaml` `ChartFullScreenButton` (`ChartCard`). Outside HedgeFund (label fullscreen0): GM `MainWindow.xaml` `FullScreenButton` → `GlobeArea` + `globe.html` `{type:"fullscreen", on}`; `TransactionLogWindow` → `EntriesPanel`; `LiveStreamAgent/BackendLogsWindow.cs` log text |
 | `App.xaml(.cs)`, `HedgeFundApp/` | — | Standalone start (HedgeFundApp.exe) |
@@ -73,6 +74,15 @@ Scope rule:
 | `FundNotifications.cs` | 400 | App-wide toasts for `/fund/events` until the switch-over (410 "replaced" / Council view → stops; the Council's events come as monitoring alerts via `MonitoringNotifier`); `SourceProblem` shown, never silent |
 | `FundSettings.cs` | 166 | Per-user JSON settings in `%LOCALAPPDATA%\UFOS.ai` (start-with-app, mute, toasts) |
 | `EquityChart.cs` | 162 | Equity vs benchmark line chart (OnRender) |
+
+### 2.2b `Ui/` — stage-11 shared components (code-built, SP §26)
+
+| File | ≈Lines | Responsibility |
+|---|---|---|
+| `Ui/HfTokens.cs` | 275 | D3 tokens (colour rules SP §26), `HfUi` helpers (not-available text, plain text, ages, links, flat buttons) |
+| `Ui/HfLayout.cs` | 270 | `Card`, `SectionHeader`, `KeyValueRow`, `StatChip`, `AttentionStrip` |
+| `Ui/HfCharts.cs` | 325 | `Sparkline`, `GexBarChart`, `MoveRangeBar`, `TermCurve` (native OnRender, ⛶ via FullScreenHost) |
+| `Ui/TickerCell.cs` | 90 | Market tile (value, grey change, sparkline, source · age) |
 
 ### 2.3 `Platform/` — Strategy Platform views (all built in code)
 
@@ -97,6 +107,10 @@ Clients (one partial `PlatformClient` per SP stage). All go through `PlatformCli
 | `PlatformClient.Shadow.cs` | §19.6–8, §20.10–11 | `/v2/shadow/*` |
 | `PlatformClient.Insights.cs` | §20 | `/v2/insights/*` |
 | `PlatformClient.OptionsArchive.cs` | §21 (OS1) | `/v2/options-archive/{status,gaps,runs,registration,audit}` (read-only data + audit; registration = data only) |
+| `PlatformClient.OptionsStructure.cs` | §21.12 | `/v2/options-structure/{state,gex,surface,calendar}` (read-only, tolerant DTOs) |
+| `PlatformClient.Overview.cs` | §26 | `/v2/overview/{markets,risk,activity}` incl. `account_summary` |
+| `OverviewView{,.Layout,.Sections}.cs` | §26 | Stage-11 Overview (design D3): attention strip, market band + options structure, strategies card (account, risk row, equity vs SPY, tiles), system + recent activity; polls only while visible |
+| `RiskLabPlaceholderView.cs` | stage 11 | Risk Lab rail target (placeholder until the Risk Lab view) |
 
 Views and dialogs:
 

@@ -234,6 +234,7 @@ namespace UFOS.ai.HedgeFund
                 if (args.NewValue is true) await PollTickAsync();
             };
             _ = PollTickAsync();
+            InitNavigation();   // stage 11: 5-group rail, the new Overview as start view (HedgeFundWindow.Navigation.cs)
         }
 
         private void Window_Closing(object? sender, CancelEventArgs e)
@@ -262,6 +263,7 @@ namespace UFOS.ai.HedgeFund
             _studioView?.Shutdown();   // Strategy Studio: stops its run-status poll
             _loopView?.Shutdown();     // Discovery loop (stage 6): stops its 2 s poll
             _tradingView?.Shutdown();  // Portfolio & Trading (stage 7): stops its 5 s poll
+            _overviewView?.Shutdown();   // stage 11 Overview: stops its polling
             _monitoringView?.Shutdown(); // Monitoring (stage 9): stops its 10 s poll (the app-wide toast notifier keeps running)
             _shadowView?.Shutdown();     // Shadow Account (stage 9): no poll; ignores late answers
             // Market Research: stop its polling for good, then close the pop-out (its Closed handler sees _closed
@@ -447,7 +449,12 @@ namespace UFOS.ai.HedgeFund
         private async void NavButton_Checked(object sender, RoutedEventArgs e)
         {
             if (OverviewScroll == null || LibraryHost == null || ResearchHost == null || StudioHost == null || LoopHost == null || TradingHost == null
-                || MonitoringHost == null || ShadowHost == null) return; // raised during InitializeComponent
+                || MonitoringHost == null || ShadowHost == null || OverviewHost == null || RiskLabHost == null) return; // raised during InitializeComponent
+            // Stage 11: the rail shows the selected view's group (+ its sub-tabs); the new Overview and the Risk Lab placeholder have own hosts.
+            // NavOverviewButton is now the sub-tab "Legacy: Council & old engine" — it still shows OverviewScroll (final else, unchanged).
+            SyncRailWithView(sender);
+            if (!ReferenceEquals(sender, NavHomeButton)) OverviewHost.Visibility = Visibility.Collapsed;
+            if (!ReferenceEquals(sender, NavRiskLabButton)) RiskLabHost.Visibility = Visibility.Collapsed;
             if (!ReferenceEquals(sender, NavTradingButton)) TradingHost.Visibility = Visibility.Collapsed;
             // Strategy Platform stage 9 (SPEC §19.13): Monitoring + Shadow Account (HedgeFundWindow.Monitoring.cs)
             if (!ReferenceEquals(sender, NavMonitoringButton)) MonitoringHost.Visibility = Visibility.Collapsed;
@@ -530,6 +537,27 @@ namespace UFOS.ai.HedgeFund
                 StudioHost.Visibility = Visibility.Collapsed;
                 LoopHost.Visibility = Visibility.Collapsed;
                 ResearchHost.Visibility = Visibility.Visible;
+            }
+            else if (ReferenceEquals(sender, NavHomeButton))
+            {
+                EnsureOverviewView();
+                OverviewScroll.Visibility = Visibility.Collapsed;
+                LibraryHost.Visibility = Visibility.Collapsed;
+                ResearchHost.Visibility = Visibility.Collapsed;
+                StudioHost.Visibility = Visibility.Collapsed;
+                LoopHost.Visibility = Visibility.Collapsed;
+                OverviewHost.Visibility = Visibility.Visible;
+                await _overviewView!.ActivateAsync();
+            }
+            else if (ReferenceEquals(sender, NavRiskLabButton))
+            {
+                EnsureRiskLabView();
+                OverviewScroll.Visibility = Visibility.Collapsed;
+                LibraryHost.Visibility = Visibility.Collapsed;
+                ResearchHost.Visibility = Visibility.Collapsed;
+                StudioHost.Visibility = Visibility.Collapsed;
+                LoopHost.Visibility = Visibility.Collapsed;
+                RiskLabHost.Visibility = Visibility.Visible;
             }
             else
             {
@@ -640,7 +668,7 @@ namespace UFOS.ai.HedgeFund
             _researchPopout?.Close();
         }
 
-        /// <summary>Switches the rail to Overview (e.g. before scrolling to a dashboard control).</summary>
+        /// <summary>Shows the former Overview dashboard — since stage 11 the sub-tab Trading › "Legacy: Council &amp; old engine" (e.g. before scrolling to a dashboard control).</summary>
         private void ShowOverview()
         {
             if (NavOverviewButton.IsChecked != true) NavOverviewButton.IsChecked = true; // raises NavButton_Checked
@@ -695,6 +723,7 @@ namespace UFOS.ai.HedgeFund
             try
             {
                 await RefreshStateAsync();
+                _overviewView?.SetFundState(_state, _connected, _councilReplaced);   // stage 11: the Overview's account (same 5 s poll)
                 if (_state == null || !_connected) return;
 
                 if (_params == null ||

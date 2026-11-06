@@ -317,6 +317,72 @@
                     </Setter>
                 </Style>
 
+                <!-- Stage 11 (UFOS.ai/docs/tasks/STAGE11_OVERVIEW_TASK.md §3): the 5-group rail (Overview · Strategies · Trading ·
+                     Research · Risk Lab) — icon + short label, the active group with a blue edge bar (design D3). -->
+                <Style x:Key="RailGroupButtonStyle" TargetType="RadioButton">
+                    <Setter Property="Foreground" Value="#FF8F8F8F" />
+                    <Setter Property="FontSize" Value="11" />
+                    <Setter Property="Cursor" Value="Hand" />
+                    <Setter Property="Margin" Value="0,0,0,4" />
+                    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="RadioButton">
+                                <Grid>
+                                    <Border x:Name="bd" CornerRadius="10" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Padding="2,9,2,8">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                    <Border x:Name="accent" Width="3" HorizontalAlignment="Left" Margin="-6,11,0,11" CornerRadius="2" Background="#FF7CC4F2" Visibility="Collapsed" />
+                                </Grid>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="bd" Property="Background" Value="#FF18202B" />
+                                        <Setter TargetName="accent" Property="Visibility" Value="Visible" />
+                                        <Setter Property="Foreground" Value="#FFE6F1FF" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Foreground" Value="#FFD6D6D6" />
+                                    </Trigger>
+                                    <Trigger Property="IsKeyboardFocused" Value="True">
+                                        <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+                <!-- Stage 11 §3: sub-tab strip of a group with several views (Strategies, Trading). -->
+                <Style x:Key="SubTabStyle" TargetType="RadioButton">
+                    <Setter Property="Foreground" Value="#FF9A9A9A" />
+                    <Setter Property="FontSize" Value="12" />
+                    <Setter Property="Cursor" Value="Hand" />
+                    <Setter Property="Margin" Value="0,0,4,0" />
+                    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="RadioButton">
+                                <Border x:Name="bd" CornerRadius="8" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" Padding="12,6,12,6">
+                                    <ContentPresenter VerticalAlignment="Center" />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsChecked" Value="True">
+                                        <Setter TargetName="bd" Property="Background" Value="#FF242424" />
+                                        <Setter TargetName="bd" Property="BorderBrush" Value="#FF333333" />
+                                        <Setter Property="Foreground" Value="#FFEDEDED" />
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Foreground" Value="#FFD6D6D6" />
+                                    </Trigger>
+                                    <Trigger Property="IsKeyboardFocused" Value="True">
+                                        <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource FocusBrush}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+
             </Grid.Resources>
 
             <Grid.RowDefinitions>
@@ -417,88 +483,140 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Border x:Name="NavRail" Grid.Column="0" Width="74" Margin="12,0,0,20" Padding="0,0,8,0"
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <!-- Stage 11 (STAGE11_OVERVIEW_TASK.md §3): the rail holds the 5 GROUPS (GroupName HedgeFundRail, RailButton_Checked in
+                     HedgeFundWindow.Navigation.cs). The views are still selected by the Nav* radio buttons of the group "HedgeFundNav"
+                     (NavButton_Checked, unchanged names): the ones of Strategies and Trading are the sub-tabs above the content, the
+                     ones of Overview / Research / Risk Lab are hidden selectors. NavOverviewButton = the sub-tab
+                     "Legacy: Council & old engine" (it still shows OverviewScroll, unchanged). -->
+                <Border x:Name="NavRail" Grid.Column="0" Grid.RowSpan="2" Width="84" Margin="12,0,0,20" Padding="8,0,8,0"
                         BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,0,1,0">
                     <StackPanel KeyboardNavigation.DirectionalNavigation="Cycle" KeyboardNavigation.TabNavigation="Once"
-                                AutomationProperties.Name="Hedge Fund navigation">
-                        <RadioButton x:Name="NavOverviewButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}" IsChecked="True"
-                                     Checked="NavButton_Checked" AutomationProperties.Name="Overview: live paper-trading dashboard"
-                                     ToolTip="Overview — the live paper-trading dashboard">
+                                AutomationProperties.Name="Hedge Fund sections">
+                        <RadioButton x:Name="RailOverviewButton" GroupName="HedgeFundRail" Style="{StaticResource RailGroupButtonStyle}" IsChecked="True"
+                                     Checked="RailButton_Checked" AutomationProperties.Name="Overview: markets, risk, strategies and system at a glance"
+                                     ToolTip="Overview — markets, options structure, the active paper account, risk, system and recent activity">
                             <StackPanel>
-                                <TextBlock Text="◫" FontSize="16" HorizontalAlignment="Center" />
-                                <TextBlock Text="Overview" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                                <TextBlock Text="◫" FontSize="17" HorizontalAlignment="Center" />
+                                <TextBlock Text="Overview" FontSize="11" HorizontalAlignment="Center" Margin="0,3,0,0" />
                             </StackPanel>
                         </RadioButton>
-                        <RadioButton x:Name="NavLibraryButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
-                                     Checked="NavButton_Checked" AutomationProperties.Name="Library: strategies and the alpha library"
-                                     ToolTip="Library — strategies by lifecycle state, the alpha library, editor and import/export">
+                        <RadioButton x:Name="RailStrategiesButton" GroupName="HedgeFundRail" Style="{StaticResource RailGroupButtonStyle}"
+                                     Checked="RailButton_Checked" AutomationProperties.Name="Strategies: Library, Studio and Loop"
+                                     ToolTip="Strategies — Library, Strategy Studio and the discovery loop">
                             <StackPanel>
-                                <TextBlock Text="▤" FontSize="16" HorizontalAlignment="Center" />
-                                <TextBlock Text="Library" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                                <TextBlock Text="↗" FontSize="17" HorizontalAlignment="Center" />
+                                <TextBlock Text="Strategies" FontSize="11" HorizontalAlignment="Center" Margin="0,3,0,0" />
                             </StackPanel>
                         </RadioButton>
-                        <!-- Strategy Platform stage 5a (SPEC §13.3): Platform/StudioView (Strategy Studio), created on first use. -->
-                        <RadioButton x:Name="NavStudioButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
-                                     Checked="NavButton_Checked" AutomationProperties.Name="Studio: Strategy Studio — AI-assisted strategy drafts"
-                                     ToolTip="Strategy Studio — describe an idea, an AI drafts a strategy in the DSL; every valid draft is backtested">
+                        <RadioButton x:Name="RailTradingButton" GroupName="HedgeFundRail" Style="{StaticResource RailGroupButtonStyle}"
+                                     Checked="RailButton_Checked" AutomationProperties.Name="Trading: Portfolio and Trading, Monitoring, Shadow Account, Legacy Council and old engine"
+                                     ToolTip="Trading — Portfolio &amp; Trading, Monitoring, Shadow Account and the legacy Council / old engine view (paper only)">
                             <StackPanel>
-                                <TextBlock Text="✎" FontSize="16" HorizontalAlignment="Center" />
-                                <TextBlock Text="Studio" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
-                            </StackPanel>
-                        </RadioButton>
-                        <!-- Strategy Platform stage 6 (SPEC §16, WPF notes §16.13): Platform/LoopView (discovery loop), created on first use. -->
-                        <RadioButton x:Name="NavLoopButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
-                                     Checked="NavButton_Checked" AutomationProperties.Name="Loop: discovery loop — AI-assisted variants, generations and finalists"
-                                     ToolTip="Discovery loop — variants × generations: backtest, score, AI diagnosis and refinement, selection; finalists for your approval">
-                            <StackPanel>
-                                <TextBlock Text="↻" FontSize="16" HorizontalAlignment="Center" />
-                                <TextBlock Text="Loop" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
-                            </StackPanel>
-                        </RadioButton>
-                        <!-- Strategy Platform stage 7 (SPEC §17, WPF notes §17.13): Platform/TradingView (portfolio, risk, OMS — paper only), created on first use. -->
-                        <RadioButton x:Name="NavTradingButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
-                                     Checked="NavButton_Checked" AutomationProperties.Name="Portfolio and Trading: platform paper accounts, strategy sub-ledgers, orders, incubation, risk limits"
-                                     ToolTip="Portfolio &amp; Trading — platform paper accounts, allocation, netting, OMS orders, incubation, migration and risk limits (paper only)">
-                            <StackPanel>
-                                <TextBlock Text="⇄" FontSize="16" HorizontalAlignment="Center" />
-                                <TextBlock Text="Portfolio &amp; Trading" FontSize="10" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="58" Margin="0,2,0,0" />
-                            </StackPanel>
-                        </RadioButton>
-                        <!-- Strategy Platform stage 9 (SPEC §19, WPF notes §19.13): Platform/MonitoringView (realised vs expected band, decay pause +
-                             your decision, accounts / brokers, alerts, reports, tax-statement notice) and Platform/ShadowAccountView (your own broker
-                             statements, analysed locally), created on first use. NavMonitoringBadge = alerts not yet seen (MonitoringNotifier). -->
-                        <RadioButton x:Name="NavMonitoringButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
-                                     Checked="NavButton_Checked" AutomationProperties.Name="Monitoring: realised versus expected, decay pauses and decisions, alerts, reports, portfolio insights"
-                                     ToolTip="Monitoring — realised vs expected band, decay monitor (pause + your decision), accounts and brokers, alerts, daily/weekly reports, portfolio insights (paper / demo)">
-                            <StackPanel>
-                                <TextBlock Text="◉" FontSize="16" HorizontalAlignment="Center" />
-                                <TextBlock Text="Monitoring" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
-                                <TextBlock x:Name="NavMonitoringBadge" Text="" FontSize="9.5" FontWeight="SemiBold" Foreground="{StaticResource RiskBrush}"
+                                <TextBlock Text="⇄" FontSize="17" HorizontalAlignment="Center" />
+                                <TextBlock Text="Trading" FontSize="11" HorizontalAlignment="Center" Margin="0,3,0,0" />
+                                <!-- Monitoring alerts not yet seen (MonitoringNotifier) — the same count as NavMonitoringBadge on the sub-tab. -->
+                                <TextBlock x:Name="RailTradingBadge" Text="" FontSize="9.5" FontWeight="SemiBold" Foreground="{StaticResource RiskBrush}"
                                            HorizontalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="Alerts not yet seen" />
                             </StackPanel>
                         </RadioButton>
-                        <RadioButton x:Name="NavShadowButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
-                                     Checked="NavButton_Checked" AutomationProperties.Name="Shadow Account: your own broker statements, behaviour diagnostics, shadow portfolios — data stays on this PC"
-                                     ToolTip="Shadow Account — import your own broker statements (Trade Republic, Scalable, IBKR Flex, any CSV), behaviour diagnostics, rule-based shadow portfolios, audit report. Data stays on this PC.">
-                            <StackPanel>
-                                <TextBlock Text="◐" FontSize="16" HorizontalAlignment="Center" />
-                                <TextBlock Text="Shadow Account" FontSize="10" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="58" Margin="0,2,0,0" />
-                            </StackPanel>
-                        </RadioButton>
-                        <!-- Market Research MR1 (backend/market_research/SPEC.md §1): MarketResearch/ResearchView, created on first use. -->
-                        <RadioButton x:Name="NavResearchButton" GroupName="HedgeFundNav" Style="{StaticResource NavRailButtonStyle}"
-                                     Checked="NavButton_Checked" AutomationProperties.Name="Research: Market Research — charts, watchlists, news"
+                        <RadioButton x:Name="RailResearchButton" GroupName="HedgeFundRail" Style="{StaticResource RailGroupButtonStyle}"
+                                     Checked="RailButton_Checked" AutomationProperties.Name="Research: Market Research — charts, watchlists, news"
                                      ToolTip="Market Research — charts, watchlists, news">
                             <StackPanel>
-                                <TextBlock Text="◈" FontSize="16" HorizontalAlignment="Center" />
-                                <TextBlock Text="Research" FontSize="10.5" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                                <TextBlock Text="◈" FontSize="17" HorizontalAlignment="Center" />
+                                <TextBlock Text="Research" FontSize="11" HorizontalAlignment="Center" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </RadioButton>
+                        <Border Height="1" Background="#FF1F1F1F" Margin="8,4,8,8" />
+                        <RadioButton x:Name="RailRiskLabButton" GroupName="HedgeFundRail" Style="{StaticResource RailGroupButtonStyle}"
+                                     Checked="RailButton_Checked" AutomationProperties.Name="Risk Lab: placeholder — the view follows in the next step of stage 11"
+                                     ToolTip="Risk Lab — the view follows in the next step of stage 11">
+                            <StackPanel>
+                                <TextBlock Text="◇" FontSize="17" HorizontalAlignment="Center" />
+                                <TextBlock Text="Risk Lab" FontSize="11" HorizontalAlignment="Center" Margin="0,3,0,0" />
                             </StackPanel>
                         </RadioButton>
                     </StackPanel>
                 </Border>
 
-            <!-- ===================== Content (Overview) ===================== -->
-            <ScrollViewer x:Name="OverviewScroll" Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                <!-- ===================== Sub-tabs of the selected group (stage 11 §3) =====================
+                     The view selectors (GroupName HedgeFundNav, NavButton_Checked) — names and handlers unchanged. -->
+                <Border x:Name="SubTabStrip" Grid.Column="1" Grid.Row="0" Margin="16,0,20,12" Visibility="Collapsed"
+                        BorderBrush="{StaticResource HairlineBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,8">
+                    <Grid>
+                        <StackPanel x:Name="StrategiesTabs" Orientation="Horizontal" Visibility="Collapsed"
+                                    KeyboardNavigation.DirectionalNavigation="Cycle" KeyboardNavigation.TabNavigation="Once"
+                                    AutomationProperties.Name="Strategies views">
+                            <RadioButton x:Name="NavLibraryButton" GroupName="HedgeFundNav" Style="{StaticResource SubTabStyle}"
+                                         Checked="NavButton_Checked" AutomationProperties.Name="Library: strategies and the alpha library"
+                                         ToolTip="Library — strategies by lifecycle state, the alpha library, editor and import/export"
+                                         Content="Library" />
+                            <!-- Strategy Platform stage 5a (SPEC §13.3): Platform/StudioView (Strategy Studio), created on first use. -->
+                            <RadioButton x:Name="NavStudioButton" GroupName="HedgeFundNav" Style="{StaticResource SubTabStyle}"
+                                         Checked="NavButton_Checked" AutomationProperties.Name="Studio: Strategy Studio — AI-assisted strategy drafts"
+                                         ToolTip="Strategy Studio — describe an idea, an AI drafts a strategy in the DSL; every valid draft is backtested"
+                                         Content="Studio" />
+                            <!-- Strategy Platform stage 6 (SPEC §16, WPF notes §16.13): Platform/LoopView (discovery loop), created on first use. -->
+                            <RadioButton x:Name="NavLoopButton" GroupName="HedgeFundNav" Style="{StaticResource SubTabStyle}"
+                                         Checked="NavButton_Checked" AutomationProperties.Name="Loop: discovery loop — AI-assisted variants, generations and finalists"
+                                         ToolTip="Discovery loop — variants × generations: backtest, score, AI diagnosis and refinement, selection; finalists for your approval"
+                                         Content="Loop" />
+                        </StackPanel>
+                        <StackPanel x:Name="TradingTabs" Orientation="Horizontal" Visibility="Collapsed"
+                                    KeyboardNavigation.DirectionalNavigation="Cycle" KeyboardNavigation.TabNavigation="Once"
+                                    AutomationProperties.Name="Trading views">
+                            <!-- Strategy Platform stage 7 (SPEC §17, WPF notes §17.13): Platform/TradingView (portfolio, risk, OMS — paper only), created on first use. -->
+                            <RadioButton x:Name="NavTradingButton" GroupName="HedgeFundNav" Style="{StaticResource SubTabStyle}"
+                                         Checked="NavButton_Checked" AutomationProperties.Name="Portfolio and Trading: platform paper accounts, strategy sub-ledgers, orders, incubation, risk limits"
+                                         ToolTip="Portfolio &amp; Trading — platform paper accounts, allocation, netting, OMS orders, incubation, migration and risk limits (paper only)"
+                                         Content="Portfolio &amp; Trading" />
+                            <!-- Strategy Platform stage 9 (SPEC §19, WPF notes §19.13): Platform/MonitoringView and Platform/ShadowAccountView, created on
+                                 first use. NavMonitoringBadge = alerts not yet seen (MonitoringNotifier); the rail's Trading item shows the same count. -->
+                            <RadioButton x:Name="NavMonitoringButton" GroupName="HedgeFundNav" Style="{StaticResource SubTabStyle}"
+                                         Checked="NavButton_Checked" AutomationProperties.Name="Monitoring: realised versus expected, decay pauses and decisions, alerts, reports, portfolio insights"
+                                         ToolTip="Monitoring — realised vs expected band, decay monitor (pause + your decision), accounts and brokers, alerts, daily/weekly reports, portfolio insights (paper / demo)">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Monitoring" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="NavMonitoringBadge" Text="" FontSize="10.5" FontWeight="SemiBold" Foreground="{StaticResource RiskBrush}"
+                                               Margin="6,0,0,0" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="Alerts not yet seen" />
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="NavShadowButton" GroupName="HedgeFundNav" Style="{StaticResource SubTabStyle}"
+                                         Checked="NavButton_Checked" AutomationProperties.Name="Shadow Account: your own broker statements, behaviour diagnostics, shadow portfolios — data stays on this PC"
+                                         ToolTip="Shadow Account — import your own broker statements (Trade Republic, Scalable, IBKR Flex, any CSV), behaviour diagnostics, rule-based shadow portfolios, audit report. Data stays on this PC."
+                                         Content="Shadow Account" />
+                            <!-- The former Overview (OverviewScroll: Council of AIs + every Legacy* section of the old engine), unchanged. -->
+                            <RadioButton x:Name="NavOverviewButton" GroupName="HedgeFundNav" Style="{StaticResource SubTabStyle}"
+                                         Checked="NavButton_Checked" AutomationProperties.Name="Legacy: Council of AIs and the old engine — the former Overview, unchanged"
+                                         ToolTip="The former Overview, unchanged: the Council of AIs and the old paper-trading engine (watchlist, account, positions, execution, settings, history)"
+                                         Content="Legacy: Council &amp; old engine" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Hidden view selectors of the single-view groups (same radio group as the sub-tabs; checked from code only). -->
+                <StackPanel x:Name="HiddenNavSelectors" Visibility="Collapsed">
+                    <RadioButton x:Name="NavHomeButton" GroupName="HedgeFundNav" IsChecked="True" Checked="NavButton_Checked"
+                                 Focusable="False" IsTabStop="False" AutomationProperties.Name="Overview" />
+                    <!-- Market Research MR1 (backend/market_research/SPEC.md §1): MarketResearch/ResearchView, created on first use. -->
+                    <RadioButton x:Name="NavResearchButton" GroupName="HedgeFundNav" Checked="NavButton_Checked"
+                                 Focusable="False" IsTabStop="False" AutomationProperties.Name="Research" />
+                    <RadioButton x:Name="NavRiskLabButton" GroupName="HedgeFundNav" Checked="NavButton_Checked"
+                                 Focusable="False" IsTabStop="False" AutomationProperties.Name="Risk Lab" />
+                </StackPanel>
+
+            <!-- ===================== Stage 11 Overview (design D3; Platform/OverviewView, created at window load) ===================== -->
+            <Border x:Name="OverviewHost" Grid.Column="1" Grid.Row="1" Margin="16,0,20,20" />
+
+            <!-- ===================== Risk Lab (stage 11: placeholder, Platform/RiskLabPlaceholderView) ===================== -->
+            <Border x:Name="RiskLabHost" Grid.Column="1" Grid.Row="1" Visibility="Collapsed" Margin="16,0,20,20" />
+
+            <!-- ===================== Legacy: Council & old engine (the former Overview, content unchanged; Trading › Legacy) ===================== -->
+            <ScrollViewer x:Name="OverviewScroll" Grid.Column="1" Grid.Row="1" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="20,0,20,20">
 
                     <!-- ===== S10-C R3: the Council of AIs as a platform strategy (Platform/CouncilView.cs; SPEC §22.11) ===== -->
@@ -1383,26 +1501,26 @@
             </ScrollViewer>
 
             <!-- ===================== Library (created on first use, Platform/LibraryView) ===================== -->
-            <Border x:Name="LibraryHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
+            <Border x:Name="LibraryHost" Grid.Column="1" Grid.Row="1" Visibility="Collapsed" Margin="16,0,20,20" />
 
             <!-- ===================== Studio (Strategy Platform stage 5a, created on first use, Platform/StudioView) ===================== -->
-            <Border x:Name="StudioHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
+            <Border x:Name="StudioHost" Grid.Column="1" Grid.Row="1" Visibility="Collapsed" Margin="16,0,20,20" />
 
             <!-- ===================== Loop (Strategy Platform stage 6, created on first use, Platform/LoopView) ===================== -->
-            <Border x:Name="LoopHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
+            <Border x:Name="LoopHost" Grid.Column="1" Grid.Row="1" Visibility="Collapsed" Margin="16,0,20,20" />
 
             <!-- ===================== Portfolio & Trading (Strategy Platform stage 7, created on first use, Platform/TradingView) ===================== -->
-            <Border x:Name="TradingHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
+            <Border x:Name="TradingHost" Grid.Column="1" Grid.Row="1" Visibility="Collapsed" Margin="16,0,20,20" />
 
             <!-- ===================== Monitoring + Shadow Account (Strategy Platform stage 9, created on first use) ===================== -->
-            <Border x:Name="MonitoringHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
-            <Border x:Name="ShadowHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20" />
+            <Border x:Name="MonitoringHost" Grid.Column="1" Grid.Row="1" Visibility="Collapsed" Margin="16,0,20,20" />
+            <Border x:Name="ShadowHost" Grid.Column="1" Grid.Row="1" Visibility="Collapsed" Margin="16,0,20,20" />
 
             <!-- ===================== Research (Market Research MR1, created on first use, MarketResearch/ResearchView) =====================
                  ONE ResearchView per window: it lives in ResearchViewHost, or — after "⧉ Pop out" — in
                  MarketResearch/ResearchPopoutWindow; closing the pop-out moves it back here. While it is popped out,
                  this area only says so (ResearchPoppedOutPanel). -->
-            <Grid x:Name="ResearchHost" Grid.Column="1" Visibility="Collapsed" Margin="16,0,20,20">
+            <Grid x:Name="ResearchHost" Grid.Column="1" Grid.Row="1" Visibility="Collapsed" Margin="16,0,20,20">
                 <Border x:Name="ResearchViewHost" />
                 <StackPanel x:Name="ResearchPoppedOutPanel" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
                     <TextBlock Text="Market Research is open in its own window." FontSize="12.5" Foreground="#FF9A9A9A" HorizontalAlignment="Center" />

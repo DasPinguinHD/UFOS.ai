@@ -1,0 +1,5 @@
+{
+  "label": "stage11ov-ui",
+  "approved": "lead, 2026-11-06: stage 11 Overview WPF part (shared HedgeFund/Ui components, 5-group navigation + Legacy tab + Risk Lab placeholder, new Overview, C# clients PlatformClient.Overview.cs / PlatformClient.OptionsStructure.cs) per UFOS.ai/docs/tasks/STAGE11_OVERVIEW_TASK.md §2-§5 (scope UFOS.ai/HedgeFund/**; nothing outside the module) (Agent H-W)",
+  "files": []
+}
