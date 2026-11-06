@@ -240,6 +240,18 @@ class EventsAuditBacktestMetaTest(FundStoreCase):
         self.assertAlmostEqual(store.ai_spend_today(d2), 0.005)
 
 
+class EventsLatestTest(FundStoreCase):
+    def test_newest_first_and_disabled(self):
+        """``events_latest`` (read-only, for the Overview activity feed, SP §26.3): newest first, capped; a disabled
+        store → None (unknown, never an empty "no events")."""
+        for i in range(5):
+            store.add_event("order", f"e{i}", "SPY", None, datetime(2026, 11, 5, 10, i, tzinfo=timezone.utc))
+        self.assertEqual([e["title"] for e in store.events_latest(3)], ["e4", "e3", "e2"])
+        self.assertEqual(len(store.events_latest(500)), 5)
+        db.close()
+        self.assertIsNone(store.events_latest(3))
+
+
 class RetentionTest(FundStoreCase):
     def test_fund_runs_scores_events_pruned(self):
         """Old runs without recommendations/orders are pruned with their

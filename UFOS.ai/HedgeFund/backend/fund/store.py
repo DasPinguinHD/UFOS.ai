@@ -714,6 +714,15 @@ def events_after(after_id: int = 0, limit: int = 50) -> List[dict]:
 
 
 @_guard(None)
+def events_latest(limit: int = 50) -> List[dict]:
+    """The newest ``limit`` events (max 500), newest first — read-only, for the Overview activity feed (SP §26.3)."""
+    limit = max(1, min(int(limit), 500))
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM fund_events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+@_guard(None)
 def add_audit(actor: str, action: str, detail=None, ts=None) -> Optional[int]:
     """actor user|engine|system; detail any JSON-able value. Returns the new
     row id (int > 0), or None when the row could NOT be written (store

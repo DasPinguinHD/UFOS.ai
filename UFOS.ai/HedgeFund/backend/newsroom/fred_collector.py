@@ -109,6 +109,10 @@ CURVE_MONTHLY_POINTS = 36
 REGIME_AUX_SERIES = ("PAYEMS", "INDPRO")
 # Official real-time Sahm indicator (preferred over our own reconstruction).
 SAHM_SERIES = "SAHMREALTIME"
+# Stored for other readers only (no card, no derived indicator): the Hedge Fund Overview's market band reads the
+# newest stored observations via ``stored_points`` (SP §26.1, stage 11, 2026-11-06). DEXUSEU = U.S. dollars per euro,
+# daily (noon buying rate in New York). Fetched in levels like the cards; one more small request per poll.
+OVERVIEW_SERIES = ("DEXUSEU",)
 # Long monthly history (range switcher "5Y" / "Since 2000", percentile context).
 LONG_HISTORY_START = "2000-01-01"
 
@@ -154,6 +158,7 @@ def fetch_specs() -> list:
     """Every (series_id, FRED units) one poll fetches."""
     specs = [(sid, units) for sid, _l, _u, units, _n in SERIES]
     specs += [(SAHM_SERIES, None)] + [(sid, "pc1") for sid in REGIME_AUX_SERIES] + [(RECESSION_SERIES, None)]
+    specs += [(sid, None) for sid in OVERVIEW_SERIES]
     return specs
 
 
@@ -300,6 +305,29 @@ def monthly_average(points: list) -> list:
 
 def _points(series_id: str, units) -> list:
     obs = _OBS.get((series_id, _ukey(units))) or {}
+    pts = [{"date": d, "value": v} for d, v in sorted(obs.items())]
+    if series_id in SCALE:
+        pts = [{"date": p["date"], "value": round(p["value"] * SCALE[series_id], 4)} for p in pts]
+    return pts
+
+
+def stored_points(series_id: str) -> list:
+    """The stored native observations of one levels series (``units`` = None), oldest first, as
+    [{"date", "value"}] — the in-memory cache that ``load_state`` fills from the SQLite store and every poll
+    updates. No I/O, no network; [] when nothing is stored (SP §26.1).
+
+    Called from another thread than the collector's event loop and the cache has no lock: it takes a snapshot copy
+    of the series dict (``dict(...)``, retried when a concurrent poll resized it meanwhile) and never iterates the
+    live dict."""
+    key = (series_id, _ukey(None))
+    for _attempt in range(5):
+        try:
+            obs = dict(_OBS.get(key) or {})
+            break
+        except RuntimeError:          # "dictionary changed size during iteration" — a poll is merging right now
+            time.sleep(0.01)
+    else:
+        raise RuntimeError(f"the stored {series_id} observations kept changing while being read")
     pts = [{"date": d, "value": v} for d, v in sorted(obs.items())]
     if series_id in SCALE:
         pts = [{"date": p["date"], "value": round(p["value"] * SCALE[series_id], 4)} for p in pts]

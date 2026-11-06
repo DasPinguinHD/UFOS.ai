@@ -199,6 +199,7 @@ API routes (all `(query, body, match) -> (status, payload)`, behind api_auth):
 | `api/monitoring_routes.py` | 741 | `/v2/monitoring/*`, `/v2/shadow/*`, `/v2/insights/*` (SP §19.10, §20) |
 | `api/options_archive_routes.py` | 172 | `/v2/options-archive/{status,gaps,runs,registration}` read-only + `POST …/audit` (SP §21.11; sandbox → 409) |
 | `api/options_structure_routes.py` | 330 | `/v2/options-structure/{state,gex,surface,history,calendar,quality,progress}` read-only (SP §21.12; provisional flag, no H1/H2) |
+| `api/overview_routes.py` | 640 | `/v2/overview/{markets,risk,activity}` read-only (SP §26; markets cache 60 s, per-item / per-source `available` + reason, active paper account rule) |
 | `api/council_routes.py` | 380 | `/v2/council/{state,runs,runs/{id},run,params,broker-params,orders}` + `GET/POST /v2/council/switchover`, `POST …/switchover/{revert,retry,abort}` (SP §22.11, §22.14) |
 
 Subpackages:
@@ -242,6 +243,7 @@ Subpackages:
 | `portfolio/allocator.py`, `allocation.py` | 150–180 | §17.4 | Inverse-vol allocator + capital transfers |
 | `portfolio/checks.py`, `risk.py`, `settings.py` | 85–220 | §17.6 | Pre-trade checks, daily loss / drawdown kill, per-account settings (`pf_settings`) |
 | `portfolio/ledger.py`, `netting.py`, `decision.py`, `views.py` | 97–350 | §17.3, §17.5, §17.11 | Sub-ledgers, netting, shared decision block, read models |
+| `portfolio/overview_risk.py` | 200 | §26.2 | Overview risk maths (pure): end-of-day returns, HS VaR 99 % / ES 97.5 % (RiskLab `hs_var_es` convention, re-implemented), vol 20 d, max drawdown, exposure |
 | `portfolio/summary.py` | 170 | §17.15 | `GET /v2/portfolio/summary`: stored values only (snapshots, positions, halts, auto trading, Council switch) — no account / broker object, no quote |
 | `execution/oms.py` | 721 | §17.7 | OMS state machine (`oms_orders` + events), idempotent client order id |
 | `execution/paper_broker.py` | 1345 | §22.7 (FUND §6) | `PaperBroker` long/short simulation (backtest, platform paper accounts, mirror valuation, the old engine) |
@@ -303,7 +305,7 @@ Subpackages:
 |---|---|---|---|
 | `api.py` | 321 | §11 | `/fund/*` routes (+ `mode` stamping) |
 | `engine.py` | 2070 | §10 | Scheduling, cycles, halt / kill / drawdown stop, `/fund/state` |
-| `store.py` | 958 | §2 | SQLite access (newsroom.db schema v3) |
+| `store.py` | 968 | §2 | SQLite access (newsroom.db schema v3); `events_latest()` read-only for the Overview activity feed (SP §26.3) |
 | `indicators.py`, `sizing.py` | 130–190 | §9 | Indicators, sizing |
 | `params.py`, `types.py`, `llm.py`, `market.py`, `broker.py`, `agents/macro.py` | 8 | SP §22.7 | TEMPORARY shims → `core/{params,types,llm}.py`, `data/market_feed.py`, `execution/paper_broker.py`, `strategy/features/macro_agent.py` (same module object), removed at R4 |
 | `judge.py` | 600 | §8 | Rule score + LLM judge (budget `fund`) |
@@ -316,7 +318,7 @@ Subpackages:
 |---|---|
 | `db.py` | **newsroom.db** (newsroom tables + fund schema v3), migrate / prune |
 | `sec_edgar_collector.py`, `insider_summary.py` | SEC Form 4 insider trades + AI summary table |
-| `fred_collector.py`, `macro_derived.py`, `macro_rules.py` | FRED macro series, derived indicators, stability signal |
+| `fred_collector.py`, `macro_derived.py`, `macro_rules.py` | FRED macro series, derived indicators, stability signal; `OVERVIEW_SERIES` (DEXUSEU, stored only) + `stored_points()` for the Overview market band (SP §26.1) |
 | `calendar_collector.py` | FRED release calendar + FOMC |
 | `overview.py`, `ai.py`, `cost_ledger.py` | "Analysis & Reasoning", OpenRouter helpers, shared AI cost ledger |
 | `keys.py`, `store.py` | Keys from CredMan; in-memory event store |

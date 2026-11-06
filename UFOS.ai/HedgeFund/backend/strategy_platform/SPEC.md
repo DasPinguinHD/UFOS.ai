@@ -115,7 +115,7 @@ unknown fields → 400 `{error, errors}`; `UserFacingError` → 503 `{error: use
 - `POST /v2/settings/keys/changed {name, action: set|removed|imported}` → audit `key_set|key_removed|key_imported`
   (a `value` field → 400).
 - `GET /v2/data/sources`, `POST /v2/data/test {source: "alpaca"}` → `{ok, checks: [{name, ok, message}]}`.
-- Stage routes: §7.11, §8.5, §9, §10, §11, §13–§14, §16, §17.10, §18.9, §19.10, §20, §21.11, §22.11; the main state
+- Stage routes: §7.11, §8.5, §9, §10, §11, §13–§14, §16, §17.10, §18.9, §19.10, §20, §21.11, §22.11, §26; the main state
   payloads carry `"mode": "normal" | "sandbox"` (`MODE_PATHS`, Sandbox profile).
 
 ## 5. Storage — hedgefund.db
@@ -1427,3 +1427,91 @@ As-delivered notes (W, 2026-10-24): → spec-archive/pending-docs-2026-10-24-25.
   `check_no_env_cs.py` and `check_cs_ambiguity.py` (CS0104-style type names provided by two imported namespaces — our
   types plus a curated WPF / IO / Drawing table; generic vs non-generic names told apart; test
   `tests/test_s10_cs_ambiguity.py`).
+
+## 26. Stage 11 — Overview API (backend built 2026-11-06)
+
+Contract `UFOS.ai/docs/tasks/STAGE11_OVERVIEW_TASK.md` §1 (design D3 "Markets + risk"). Code
+`api/overview_routes.py` (routes, sources), `portfolio/overview_risk.py` (risk maths, pure); tests
+`tests/test_s11_overview_api.py`, `tests/test_s11_overview_risk.py`. Three READ-ONLY `GET` routes behind the token
+check; nothing trades, writes or touches the client heartbeat (dead-man switch). Reasons never carry raw exception
+text: a `UserFacingError`'s message or a reader's own safe text, else only the exception type + "(details in
+backend.log)". Every value has exactly ONE source; a
+value that cannot be read is `available: false` / `null` WITH the reason (no fallback, no stand-in, no second source,
+no interpolation); one failing item / source never fails the others. Untrusted text (titles, bodies, symbols) is
+returned as plain text (whitespace collapsed, length-capped) — the UI shows it as plain text. Unknown query
+parameters → 400.
+
+- **§26.1 `GET /v2/overview/markets`** → `{generated_at, cache_seconds: 60, cached, items: [Item…]}`, items in this
+  order: SPY, QQQ, IWM, GLD ("Gold (GLD)"), BTC, US10Y ("US 10Y"), EURUSD ("EUR/USD"), VIX. `Item = {key, label,
+  available, reason, value, change, change_unit ("pct"|"bp"|"pt"), series: [{t, v}], series_reason, source
+  ("Alpaca"|"FRED"|"Archive"), as_of, age_minutes, session ("open"|"closed"|"daily"), note}` (+ `provisional` and
+  `slot_age_minutes` on VIX).
+  - ETFs: Market Research data layer (`market_research.service().data`, on the Research pool inside
+    `http_gate.research_priority()` — the shared Alpaca budget, Research ≤ 60/min; no own Alpaca client). value =
+    snapshot `last` (IEX last trade), change = snapshot `change_pct` (vs the SIP previous close; null → `note` says
+    why), series = 5-min regular-session closes of the newest session in the bars (today, or the last session when
+    closed), session = NYSE regular session open / closed.
+  - BTC: same layer, `BTC-USD`: value = last crypto trade; change = **24 h**: last vs the 15-min close ending within
+    the 15 min before now − 24 h (no such bar → `change: null`, the note says why); series = 15-min closes of the last
+    24 h.
+  - US10Y / EURUSD: the Newsroom FRED store (`newsroom/fred_collector.stored_points` = the observation cache that
+    `load_state` fills from `newsroom.db` `macro_observations` and every FRED poll updates; no new network path).
+    US10Y = DGS10 in %, change in **bp** vs the previous observation; EURUSD = **DEXUSEU** (USD per EUR), change in %
+    vs the previous observation; series = last 30 observations; session `daily`, `as_of` = observation date (UI:
+    "close <date>"); nothing stored → `available: false` "no stored FRED observations of <id> yet (FRED key missing,
+    first poll pending or the fetch failed)". `stored_points` reads a snapshot copy of the cache (no lock exists; the
+    copy is retried when a poll resizes it meanwhile). DEXUSEU is fetched by the Newsroom FRED collector since 2026-11-06 (`OVERVIEW_SERIES`, stored only
+    — no Newsroom card, no derived indicator; one more small request per FRED poll).
+  - VIX (lead decision 2026-11-06: a DAILY series): the OS2 archive only — `vix_structure.vix` of the newest SPY
+    surface under the current OS2 assumptions (= the FRED VIXCLS close the archive held at that slot); `session:
+    "daily"`, `as_of` = the close date (`vix.date`), `slot_age_minutes` = the slot's age, `age_minutes: null`,
+    `provisional` from OS2. Change in pt vs the newest archived slot whose `vix.date` is EARLIER than the current one
+    (two slots of the same date are never compared; none within 45 days → `change: null`, the note says why); series =
+    one point per distinct `vix.date` (the newest slot of that date), the last ≤ 30. Read from the stored OS2 surface
+    rows (`/history` has no VIX field). No OS2 result / no VIX in the slot → `available: false` with the reason.
+  - Server-side cache 60 s per backend process (one lock: at most one Alpaca round per minute); failed items are part
+    of the cached payload.
+- **§26.2 `GET /v2/overview/risk`** → `{account ("legacy"|"platform"|null), account_ids, excluded_ids,
+  account_summary, as_of (newest equity point), generated_at, n_daily_returns, details {gaps_skipped, first_day,
+  last_day, latest_equity}, figures {var99_1d, es975_1d, net_exposure_pct, gross_exposure_pct, max_drawdown_pct,
+  vol20_ann_pct}}`, each figure `{value, unit ("usd"|"pct"), available, reason, method}`.
+  - **Active paper account set** (lead decision 2026-11-06; ONE helper `overview_routes.active_account_set()`, also the
+    rule the WPF Overview follows): while `legacy_account.status` (`execution/migration.legacy_state`) is not
+    `migrated` → `legacy` = the old engine through the bridge `execution.control.legacy_engine()` (`/fund` equity
+    series since the last reset, account from its `/fund/state`). After migration → `platform` = the platform's
+    INTERNAL paper ledger accounts in USD (`execution.accounts.INTERNAL_IDS`: `paper-main`, `paper-council`).
+    **ASSUMPTION (user may revisit):** broker mirror accounts (alpaca-paper, binance-demo, kraken-demo, any
+    broker-backed account) and anything not marked paper are excluded (`excluded_ids`) — a mirror is the broker's
+    book (a different book; would double-count / mix currencies).
+  - Exposure = from the summed point-in-time USD amounts of the set (any account whose valuation is paused or
+    unreadable → unavailable naming that account; never a partial sum). Series figures from that account's own stored
+    equity history when the set has exactly ONE account; with several no portfolio-level equity series exists →
+    `available: false` "no platform equity history yet — … per-account histories are not summed" (open user
+    decision). Time series and percentages are never summed.
+  - `account_summary = {ids, n, available, equity, day_pnl, total_pnl, as_of, summed, currency: "USD", reason}` over
+    the same set: point-in-time USD amounts summed server-side (`summed: true` when n > 1); legacy → the old-engine
+    account (`ids: ["old-engine"]`, n 1, `summed: false`, `as_of` = its `/fund/state` `now`); platform `as_of` = the
+    request time. Any account unreadable, or a field missing on any account → `available: false`, every amount null,
+    the reason naming the account (no partial sums).
+  - Daily returns: the last point of each NYSE trading day whose session has closed; non-trading-day points ignored;
+    simple returns only between consecutive trading days (a missing day, or a day outside the NYSE calendar = a
+    skipped gap, counted, never filled).
+  - VaR 99 % / ES 97.5 % (1 day): historical simulation on the daily P&L in USD, scenario loss = −(latest equity ×
+    r_t), loss positive; quantile convention identical to RiskLab `models/historical.py` `hs_var_es`
+    (re-implemented, not imported): `VaR = L_(k)`, `k = ceil(round(n·α, 9))`, ES = mean of the losses ≥ VaR_α (ties
+    included). Needs ≥ 60 daily returns (else "needs ≥ 60 daily returns, have n"); in addition the RiskLab minimum
+    window `ceil(1 / (1 − α))` applies — VaR 99 % needs ≥ 100 returns, ES 97.5 % ≥ 40 (accepted by the lead
+    2026-11-06).
+  - vol20 = sample stdev (n − 1) of the last 20 daily returns × √252 (%); max drawdown = largest peak-to-trough fall
+    over every stored equity point (%); exposure: net = (long − short) / equity, gross = (long + short) / equity (%).
+- **§26.3 `GET /v2/overview/activity?limit=20`** (1…100) → `{generated_at, limit, items: [{ts, kind, title, detail,
+  severity ("info"|"warning"|"error"), link}], sources: {name: "ok" | "not available (<reason>)"}}`, newest first.
+  Sources, each read in its own try: `oms_orders` (OMS order events, filtered in SQL: placed — a first event straight
+  to rejected / cancelled / expired is labelled with that state —, cancelled, rejected, expired; filled / partially
+  filled for broker accounts), `fills` (booked fills of the internal paper accounts — each fill listed once),
+  `alerts` (monitoring alerts; critical → error), `loops` (finished loops, ts = the terminal event's `created_at`), `options_archive`
+  (failed / partial runs + the newest ok one), `council` (Council runs), `old_engine` (`fund_events`, newest first via
+  `fund/store.events_latest`, reached through the sanctioned bridge `execution.control.legacy_engine().store` — the
+  platform imports nothing from `fund` (§22.7 guard `tests/test_s10_no_new_fund_imports.py`); no engine registered →
+  "not available (the old engine is not running in this backend)"). `link` names the target view: `trading/orders`, `trading/monitoring`,
+  `strategies/loop`, `trading/legacy`, `settings/options-archive`.

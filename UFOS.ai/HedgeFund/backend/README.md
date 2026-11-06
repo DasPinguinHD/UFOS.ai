@@ -51,6 +51,12 @@ a multi-agent simulation of a hedge fund decision process (paper trading, no rea
   and the OS2 assumptions (spread maximum, parity band / pairs) are unconfirmed (confirmation via
   `data/options_structure_config.json`). Nothing trades on it; no H1 / H2
   results before the evaluation date (frozen pre-registration `docs/preregistration/`).
+- **Overview API (stage 11, 2026-11-06, contract `strategy_platform/SPEC.md` §26):** read-only
+  `GET /v2/overview/markets` (SPY / QQQ / IWM / GLD / BTC via the Market Research data layer, US 10Y and EUR/USD
+  from the Newsroom FRED store, VIX from the OS2 archive; 60 s cache), `GET /v2/overview/risk` (VaR 99 % / ES
+  97.5 % historical simulation, exposure, max drawdown, vol 20 d of the active paper account) and
+  `GET /v2/overview/activity?limit=20` (merged feed with a per-source status). Unavailable values carry their
+  reason; no fallbacks.
 - **Financial Newsroom: live.** Insider trades (SEC EDGAR) and macro
   indicators (FRED), moved here from the Global Monitoring module on
   2026-09-24. See below.
@@ -67,7 +73,7 @@ online, red = offline).
 | Section | Collector (`newsroom/`) | Endpoint(s) on 127.0.0.1:8867 | WPF view (`HedgeFund/Newsroom/`) |
 |---|---|---|---|
 | Insider Trades | `sec_edgar_collector.py` — SEC Form 4 filings, parsed per transaction (every `SEC_EDGAR_POLL_SECONDS`, default 120s) | `GET /newsroom/insider` → `{items, status}`; `POST /newsroom/insider-summary` → `{summary, filings, provenance}` | `InsiderTradesView` — cards, re-reads every 10s, "✦ Sum up most notable" (AI, labelled per `claude/conventions.md`) |
-| Macro Indicators | `fred_collector.py` — FEDFUNDS, DGS2, DGS10, T10Y2Y, T10Y3M, CPI YoY (`units=pc1`), core PCE YoY, UNRATE, ICSA, HY spread, VIX; last 24 observations each (every `FRED_POLL_SECONDS`, default 6h) | `GET /newsroom/macro` → `{items, status}` | `MacroIndicatorsView` — value, change vs. previous observation, sparkline, how-to-read note, link to the FRED series; re-reads every 60s |
+| Macro Indicators | `fred_collector.py` — FEDFUNDS, DGS2, DGS10, T10Y2Y, T10Y3M, CPI YoY (`units=pc1`), core PCE YoY, UNRATE, ICSA, HY spread, VIX; last 24 observations each; DEXUSEU (EUR/USD) stored for the Overview only, no card (every `FRED_POLL_SECONDS`, default 6h) | `GET /newsroom/macro` → `{items, status}` | `MacroIndicatorsView` — value, change vs. previous observation, sparkline, how-to-read note, link to the FRED series; re-reads every 60s |
 
 **Macro stability colours (2026-09-25):** each series carries
 `macro.signal = {level, reason}` from `fred_collector.stability_signal()` —

@@ -1,0 +1,5 @@
+{
+  "label": "stage11ov-be",
+  "approved": "lead, 2026-11-06: stage 11 Overview backend (routes /v2/overview/markets|risk|activity, SPEC §26, CODEMAP/README lines) per UFOS.ai/docs/tasks/STAGE11_OVERVIEW_TASK.md §1, §5 (scope UFOS.ai/HedgeFund/**; nothing outside the module) (Agent H-B)",
+  "files": []
+}
