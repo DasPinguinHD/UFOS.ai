@@ -1,0 +1,20 @@
+\begin{table}[H]
+\centering
+\scriptsize
+\caption{Top: rejection rates (\%, level 5\,\%) of calibration tests applied to the TRUE PD of one period of 20000 borrowers (M = 200), with independent defaults (asset correlation 0) and with asset correlation 0.12. Hosmer--Lemeshow: 10 groups, chi-square with 10 degrees of freedom (the true PD is not fitted on the sample; $g-2$ applies only to the development sample of a fitted model). The per-grade tests reject if any grade with at least 50 borrowers does (a multiple test over about 8 grades). Bottom: a downturn period (macro variable at -2 sd), \% $\pm$ Monte-Carlo se.}
+\label{tab:C2_calibration}
+\begin{tabular}{lrr}
+\toprule
+Test & Correlation 0 & Correlation 0.12 \\
+\midrule
+Hosmer--Lemeshow & 5.5 $\pm$ 1.6 & 82.5 $\pm$ 2.7 \\
+binomial, any grade & 27.5 $\pm$ 3.2 & 36.0 $\pm$ 3.4 \\
+Jeffreys, any grade & 34.5 $\pm$ 3.4 & 38.5 $\pm$ 3.4 \\
+\midrule
+\textit{Downturn} & \textit{predicted PD: mean (median)} & \textit{realised DR} \\
+true PD & 3.55 $\pm$ 0.00 (3.55) & 3.65 $\pm$ 0.20 \\
+model with macro & 5.46 $\pm$ 0.67 (3.22) & 3.65 $\pm$ 0.20 \\
+model without macro & 1.65 $\pm$ 0.05 (1.54) & 3.65 $\pm$ 0.20 \\
+\bottomrule
+\end{tabular}
+\end{table}

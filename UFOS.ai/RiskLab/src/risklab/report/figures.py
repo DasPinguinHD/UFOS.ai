@@ -512,6 +512,167 @@ def fig_holdout(go: dict, out_dir, stem: str = "fig11_holdout", data: str = "iid
     return FigureSpec(stem, caption, paths)
 
 
+# ---- 18-22. credit risk -------------------------------------------------------------------
+
+def _cr(res: dict, table: str) -> List[dict]:
+    return [r for r in res["rows"] if r["table"] == table]
+
+
+def fig_cap_roc(res: dict, out_dir, stem: str = "fig18_cap_roc") -> FigureSpec:
+    cap = _cr(res, "cap")
+    summ = _cr(res, "cap_summary")[0]
+    with _style():
+        fig, ax = plt.subplots(figsize=(4.8, 3.6))
+        for label, col, ls, name in (("perfect", PALETTE["grey"], ":", "perfect model"),
+                                     ("true_pd", PALETTE["green"], "--", f"true PD (AUC {summ['auc_true']:.3f})"),
+                                     ("model", PALETTE["blue"], "-", f"fitted model (AUC {summ['auc']:.3f})")):
+            rr = [r for r in cap if r["model"] == label]
+            ax.plot([100 * r["share"] for r in rr], [100 * r["captured"] for r in rr], color=col, ls=ls, label=name)
+        ax.plot([0, 100], [0, 100], color=PALETTE["black"], lw=0.8, label="random")
+        ax.set_xlabel("share of borrowers, riskiest first (%)")
+        ax.set_ylabel("share of defaults captured (%)")
+        ax.legend(frameon=False, fontsize=7, loc="lower right")
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = (f"Cumulative accuracy profile out of time (3 later periods) of the logistic PD model fitted on "
+               f"{summ['n_train']} borrower-years, against the true PD and a perfect model (synthetic data). The model "
+               f"reaches the discrimination of the true PD (Gini {summ['gini']:.3f}); the true PD itself is far from "
+               f"perfect because defaults are random given the PD.")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_pd_sample_size(res: dict, out_dir, stem: str = "fig19_pd_sample_size") -> FigureSpec:
+    rows = sorted(_cr(res, "sample_size"), key=lambda r: r["n_train"])
+    n = [r["n_train"] for r in rows]
+    m = res["meta"]["config"]["m"]
+    with _style():
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=WIDE)
+        a1.errorbar(n, [r["auc_gap"] for r in rows], yerr=[1.96 * r["auc_gap_se"] for r in rows], marker="o", ms=3,
+                    capsize=2, color=PALETTE["blue"])
+        a1.axhline(0, color=PALETTE["grey"], lw=0.8)
+        a1.set_xscale("log")
+        a1.set_xlabel("training borrower-years")
+        a1.set_ylabel("AUC(true PD) - AUC(model)")
+        a2.errorbar(n, [r["coef_rmse"] for r in rows], yerr=[1.96 * r["coef_rmse_se"] for r in rows], marker="s",
+                    ms=3, capsize=2, color=PALETTE["vermillion"])
+        a2.set_xscale("log")
+        a2.set_xlabel("training borrower-years")
+        a2.set_ylabel("coefficient RMSE")
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    fails = ", ".join(f"{r['fit_failures']} at {r['n_train']}" for r in rows if r["fit_failures"])
+    caption = (f"PD model quality against the training sample size (M = {m} replications per point, out-of-time "
+               f"test on 30\\,000 borrower-years; error bars $\\pm 1.96$ se). Left: the AUC lost against the true PD; "
+               f"right: the error of the estimated coefficients. Fits that failed with an explicit separation error "
+               f"are excluded and counted ({fails if fails else 'none'}).")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_calibration_drift(res: dict, out_dir, stem: str = "fig20_calibration_drift") -> FigureSpec:
+    cs = _cr(res, "calibration_size")
+    dt = {r["model"]: r for r in _cr(res, "downturn")}
+    tests = list(dict.fromkeys(r["test"] for r in cs))
+    labels = {"hosmer_lemeshow": "Hosmer-Lemeshow", "binomial_any_grade": "binomial (any grade)",
+              "jeffreys_any_grade": "Jeffreys (any grade)"}
+    with _style():
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=WIDE_LEGEND)
+        x = np.arange(len(tests))
+        for j, (rho, col) in enumerate(((0.0, PALETTE["blue"]), (res["meta"]["rho"], PALETTE["vermillion"]))):
+            rr = {r["test"]: r for r in cs if abs(r["rho"] - rho) < 1e-12}
+            a1.bar(x + (j - 0.5) * 0.38, [100 * rr[t]["reject"] for t in tests], 0.38, color=col,
+                   yerr=[196 * rr[t]["reject_se"] for t in tests], capsize=2, label=f"asset correlation {rho:g}")
+        a1.axhline(5, color=PALETTE["black"], ls="--", lw=0.8, label="test level 5 %")
+        a1.set_xticks(x)
+        a1.set_xticklabels([labels.get(t, t) for t in tests], rotation=20, ha="right", fontsize=7)
+        a1.set_ylabel("rejection rate of the TRUE PD (%)")
+        a1.legend(frameon=False, fontsize=6.5)
+        names = [("true_pd", "true PD"), ("full", "model with macro"), ("ttc", "model without macro")]
+        a2.bar(range(3), [100 * dt[k]["pred_pd"] for k, _ in names], 0.6,
+               yerr=[196 * (dt[k]["pred_pd_se"] or 0) for k, _ in names], capsize=2,
+               color=[PALETTE["green"], PALETTE["blue"], PALETTE["orange"]])
+        a2.plot(range(3), [100 * dt[k]["pred_pd_median"] for k, _ in names], ls="", marker="D", ms=4,
+                color=PALETTE["black"], label="median over the replications")
+        a2.axhline(100 * dt["full"]["realised_dr"], color=PALETTE["black"], ls="--", lw=0.9, label="realised default rate")
+        a2.set_xticks(range(3))
+        a2.set_xticklabels([n for _, n in names], rotation=20, ha="right", fontsize=7)
+        a2.set_ylabel("predicted PD in the downturn (%)")
+        a2.legend(frameon=False, fontsize=6.5)
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    c = res["meta"]["config"]
+    caption = (f"Left: rejection rates of calibration tests applied to the TRUE PD of one period ({c['calib_n']} "
+               f"borrowers, M = {c['m']}), with independent defaults and with asset correlation {res['meta']['rho']:g}; "
+               f"the per-grade tests reject if any grade does (multiple testing). Right: a downturn period (macro "
+               f"variable at {c['downturn_macro']:g} sd): mean (bars) and median (diamonds) predicted PD of the true model "
+               f"and of two fitted models (8 training periods) against the realised default rate; the mean of the model "
+               f"with the macro variable lies above its median (a noisy coefficient enters through the exponential). "
+               f"Hosmer--Lemeshow uses $g = 10$ degrees of freedom (the true PD is not fitted on the sample). "
+               f"Error bars $\\pm 1.96$ se.")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_ecl_cliff(res: dict, out_dir, stem: str = "fig21_ecl_cliff") -> FigureSpec:
+    cl = sorted(_cr(res, "cliff"), key=lambda r: r["pd_now"])
+    grid = _cr(res, "ecl_grid")
+    mults = sorted({r["sicr_multiple"] for r in grid})
+    with _style():
+        fig, (a1, a2) = plt.subplots(1, 2, figsize=WIDE_LEGEND)
+        for st, col in ((1, PALETTE["blue"]), (2, PALETTE["vermillion"])):
+            rr = [r for r in cl if r["stage"] == st]
+            a1.plot([100 * r["pd_now"] for r in rr], [100 * r["ecl_loan"] for r in rr], marker="o", ms=3, color=col,
+                    ls="", label=f"stage {st}")
+        a1.set_xlabel("current 12-month PD (%)")
+        a1.set_ylabel("ECL (% of EAD)")
+        a1.set_title("one loan: PD at origination 1 %")
+        a1.legend(frameon=False, fontsize=7)
+        cmap = plt.get_cmap("viridis")
+        for i, m in enumerate(mults):
+            rr = sorted((r for r in grid if r["sicr_multiple"] == m), key=lambda r: r["downside_weight"])
+            a2.plot([100 * r["downside_weight"] for r in rr], [100 * r["coverage"] for r in rr], marker="o", ms=3,
+                    color=cmap(i / max(1, len(mults) - 1)), label=f"SICR x{m:g}")
+        a2.set_xlabel("weight of the downside scenario (%)")
+        a2.set_ylabel("ECL coverage of the book (% of EAD)")
+        a2.legend(frameon=False, fontsize=6.5, ncol=2)
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = ("IFRS 9 ECL. Left: the stage-2 cliff of one 5-year amortising loan (PD at origination 1\\,\\%, LGD "
+               "45\\,\\%, EIR 5\\,\\%): when its current 12-month PD reaches 3 times the origination PD (both "
+               "base-scenario PDs, the same basis) the provision jumps from 12-month to lifetime ECL. Right: the ECL "
+               f"coverage of a synthetic book of {res['meta']['config']['n_loans']} loans against the downside-scenario "
+               "weight, for several relative SICR thresholds; the weight changes the measurement, not the stage.")
+    return FigureSpec(stem, caption, paths)
+
+
+def fig_irb_vs_mc(res: dict, out_dir, stem: str = "fig22_irb_vs_mc") -> FigureSpec:
+    rows = _cr(res, "irb")
+    hom = sorted((r for r in rows if r["portfolio"].startswith("homogeneous")), key=lambda r: r["names"])
+    other = {r["portfolio"]: r for r in rows if not r["portfolio"].startswith("homogeneous")}
+    with _style():
+        fig, ax = plt.subplots(figsize=WIDE)
+        n = [r["names"] for r in hom]
+        lo = [(r["q999"] - r["q999_lo"]) / r["k_sum"] for r in hom]
+        hi = [(r["q999_hi"] - r["q999"]) / r["k_sum"] for r in hom]
+        ax.errorbar(n, [r["ratio"] for r in hom], yerr=[lo, hi], marker="o", ms=3, capsize=2, color=PALETTE["blue"],
+                    label="homogeneous portfolio, PD 1 %")
+        for name, mk, col in (("granular", "s", PALETTE["green"]), ("concentrated", "^", PALETTE["vermillion"])):
+            if name in other:
+                r = other[name]
+                ax.plot([r["names"]], [r["ratio"]], marker=mk, ms=6, ls="", color=col, label=f"{name} ({r['names']} names)")
+        ax.axhline(1.0, color=PALETTE["black"], ls="--", lw=0.8, label="IRB capital (ASRF)")
+        ax.set_xscale("log")
+        ax.set_xlabel("number of names (same total exposure)")
+        ax.set_ylabel("(99.9 % loss quantile - EL) / sum K")
+        ax.legend(frameon=False, fontsize=7)
+        fig.tight_layout()
+        paths = _save(fig, out_dir, stem)
+    caption = (f"IRB capital against the simulated one-factor loss distribution ({res['meta']['config']['n_sims']:,} "
+               "draws, M = 1 year so the maturity adjustment is 1, the IRB correlation of each PD). The ratio of the "
+               "simulated 99.9\\,\\% quantile minus the expected loss to the sum of K is 1 for a large granular "
+               "portfolio and grows as the exposure is concentrated in fewer names (name concentration is not in the "
+               "IRB formula). Error bars: 95\\,\\% order-statistic intervals of the quantile.").replace(",", "\\,", 1)
+    return FigureSpec(stem, caption, paths)
+
+
 # ---- 12. architecture (overview document) ------------------------------------------------
 
 ARCH_BOXES = (

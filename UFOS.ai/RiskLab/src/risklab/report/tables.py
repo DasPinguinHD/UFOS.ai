@@ -19,6 +19,8 @@ OVERFIT_TABLE_NAMES = ("O1_gates_scope", "O2_fpr", "O3_power", "O4_holdout", "O5
 OVERVIEW_TABLE_NAMES = ("V1_key_results",)
 #: tables of the IRRBB report
 IRRBB_TABLE_NAMES = ("R1_scenarios", "R2_outlier_test", "R3_assumptions", "R4_findings")
+#: tables of the credit risk report
+CREDIT_TABLE_NAMES = ("C1_pd_model", "C2_calibration", "C3_ecl", "C4_irb", "C5_assumptions", "C6_findings")
 
 _LATEX_SPECIAL = {"\\": "\\textbackslash{}", "&": "\\&", "%": "\\%", "$": "\\$", "#": "\\#", "_": "\\_",
                   "{": "\\{", "}": "\\}", "~": "\\textasciitilde{}", "^": "\\textasciicircum{}"}
@@ -780,6 +782,209 @@ def table_irrbb_findings(res: dict) -> str:
                   colsep="3pt")
 
 
+# ---- C1..C6: credit risk ---------------------------------------------------------------------
+
+CREDIT_TEST_LABELS = {"hosmer_lemeshow": "Hosmer--Lemeshow", "binomial_any_grade": "binomial, any grade",
+                      "jeffreys_any_grade": "Jeffreys, any grade"}
+
+
+def _cr(res: dict, table: str) -> List[dict]:
+    return [r for r in res["rows"] if r["table"] == table]
+
+
+def _num(x: Optional[float], fmt: str = ".3f") -> str:
+    return "--" if x is None else format(x, fmt)
+
+
+def table_credit_pd(res: dict) -> str:
+    coef = _cr(res, "coef")
+    ss = sorted(_cr(res, "sample_size"), key=lambda r: r["n_train"])
+    body = [[esc(r["name"]), f"{r['true']:+.2f}", f"{r['estimate']:+.3f}", f"{r['se']:.3f}", f"{r['z']:+.2f}", ""]
+            for r in coef]
+    body.append("MIDRULE")
+    m = res["meta"]["config"]["m"]
+    body.append(["\\textit{N train}", "\\textit{failed}", "\\textit{AUC}", "\\textit{gap to true}",
+                 "\\textit{coef.\\ RMSE}", "\\textit{macro: sd / se}"])
+    for r in ss:
+        body.append([str(r["n_train"]), str(r["fit_failures"]), f"{r['auc']:.3f} $\\pm$ {r['auc_se']:.3f}",
+                     f"{r['auc_gap']:+.3f} $\\pm$ {r['auc_gap_se']:.3f}",
+                     f"{r['coef_rmse']:.3f} $\\pm$ {r['coef_rmse_se']:.3f}",
+                     f"{_num(r['macro_coef_sd'])} / {_num(r['macro_se_mean'])}"])
+    n = max(r["n_train"] for r in ss)
+    return _table("C1_pd_model", f"Logistic PD model. Top: one fit on {n} borrower-years against the true coefficients "
+                  "(standard errors from the MLE information matrix; $z$ = (estimate $-$ true) / se). Bottom: out-of-time "
+                  f"quality against the training size (M = {m} replications, $\\pm$ Monte-Carlo se); failed = fits stopped "
+                  "with an explicit separation error. Failed fits are EXCLUDED: all averages are conditional on a "
+                  "successful fit. Macro: standard deviation of the macro coefficient over the successful fits / mean "
+                  "MLE standard error.", "lrrrrr", ["Coefficient", "True", "Estimate", "SE", "$z$", ""], body,
+                  size="\\scriptsize", colsep="4pt")
+
+
+def table_credit_calibration(res: dict) -> str:
+    cs = _cr(res, "calibration_size")
+    dt = {r["model"]: r for r in _cr(res, "downturn")}
+    body = []
+    for t in CREDIT_TEST_LABELS:
+        rr = {r["rho"]: r for r in cs if r["test"] == t}
+        rhos = sorted(rr)
+        body.append([CREDIT_TEST_LABELS[t]] + [pmr(rr[x]["reject"], rr[x]["reject_se"], rr[x]["m"]) for x in rhos])
+    body.append("MIDRULE")
+    body.append(["\\textit{Downturn}", "\\textit{predicted PD: mean (median)}", "\\textit{realised DR}"])
+    for k, lab in (("true_pd", "true PD"), ("full", "model with macro"), ("ttc", "model without macro")):
+        r = dt[k]
+        body.append([lab, f"{pm(r['pred_pd'], r['pred_pd_se'], 2)} ({pct(r['pred_pd_median'], 2)})",
+                     pm(r["realised_dr"], r["realised_dr_se"], 2)])
+    c = res["meta"]["config"]
+    return _table("C2_calibration", f"Top: rejection rates (\\%, level 5\\,\\%) of calibration tests applied to the TRUE PD "
+                  f"of one period of {c['calib_n']} borrowers (M = {c['m']}), with independent defaults (asset correlation "
+                  f"0) and with asset correlation {res['meta']['rho']:g}. Hosmer--Lemeshow: 10 groups, chi-square with 10 "
+                  "degrees of freedom (the true PD is not fitted on the sample; $g-2$ applies only to the development "
+                  "sample of a fitted model). The per-grade tests reject if any grade with at "
+                  "least 50 borrowers does (a multiple test over about 8 grades). Bottom: a downturn period (macro variable at "
+                  f"{c['downturn_macro']:g} sd), \\% $\\pm$ Monte-Carlo se.", "lrr",
+                  ["Test", "Correlation 0", f"Correlation {res['meta']['rho']:g}"], body, size="\\scriptsize")
+
+
+def table_credit_ecl(res: dict) -> str:
+    g = {(r["downside_weight"], r["sicr_multiple"]): r for r in _cr(res, "ecl_grid")}
+    ws = sorted({k[0] for k in g})
+    ms = sorted({k[1] for k in g})
+    body = [[f"{100 * w:.0f}\\,\\%"] + [f"{100 * g[(w, m)]['coverage']:.2f} ({100 * g[(w, m)]['stage2_share']:.0f})"
+                                         for m in ms] for w in ws]
+    return _table("C3_ecl", f"IFRS 9 ECL coverage (\\% of EAD) of the synthetic book of {res['meta']['config']['n_loans']} "
+                  "loans by the weight of the downside scenario (rows; upside fixed at 20\\,\\%, base = the rest) and the "
+                  "relative SICR threshold (columns); in brackets the share of loans in stage 2 (\\%). The SICR test compares "
+                  "the current and the origination 12-month PD on the same basis (both without the scenario overlay), so "
+                  "the stage-2 share depends on the threshold only. Deterministic.",
+                  "l" + "r" * len(ms), ["Downside weight"] + [f"SICR $\\times${m:g}" for m in ms], body,
+                  size="\\scriptsize", colsep="4pt")
+
+
+def table_credit_irb(res: dict) -> str:
+    body = []
+    for r in _cr(res, "irb"):
+        body.append([esc(r["portfolio"].replace("_", " ")), str(r["names"]), f"{r['k_sum']:.1f}", f"{r['el']:.1f}",
+                     f"{r['q999']:.1f} ({r['q999_lo']:.1f}--{r['q999_hi']:.1f})", f"{r['unexpected']:.1f}",
+                     f"{r['ratio']:.3f}"])
+    return _table("C4_irb", f"IRB capital (sum of K $\\times$ EAD, M = 1 year, no PD floor) against the one-factor loss "
+                  f"distribution ({res['meta']['config']['n_sims']:,} draws; 95\\,\\% order-statistic interval of the "
+                  "quantile). Total EAD 10\\,000, LGD 45\\,\\%; granular and concentrated portfolios share the PD mix "
+                  "0.1--5\\,\\%; the homogeneous ones have PD 1\\,\\%.".replace(",", "\\,", 1), "lrrrrrr",
+                  ["Portfolio", "Names", "Sum K", "EL", "q$_{99.9}$ (95\\,\\% CI)", "q$_{99.9}-$EL", "Ratio"], body,
+                  size="\\scriptsize", colsep="4pt")
+
+
+def credit_assumptions(res: dict) -> Dict[str, str]:
+    m = res["meta"]
+    out = {f"IRB {k}": v for k, v in m["irb_sources"].items()}
+    out.update({f"IFRS 9 {k}": v for k, v in m["ifrs9_sources"].items()})
+    out["Jeffreys test"] = m["jeffreys_source"]
+    out["data"] = (f"synthetic: logit PD with known coefficients, one-factor Gaussian copula with asset correlation "
+                   f"{m['rho']:g}, observable AR(1) macro variable (modelling choices, not calibrations)")
+    out["master scale"] = "9 grades with PD bounds " + ", ".join(f"{100 * b:g}" for b in m["master_scale"][1:-1]) + " % (synthetic)"
+    return out
+
+
+def table_credit_assumptions(res: dict) -> str:
+    body = []
+    for k, v in sorted(credit_assumptions(res).items()):
+        flag = "ASSUMPTION" if "ASSUMPTION" in v else ("verify" if ("verify" in v or "secondary" in v) else "stated")
+        body.append([esc(k), esc(v), flag])
+    return _table("C5_assumptions", "Assumptions register of the credit study (``ASSUMPTION'' = not verified against a "
+                  "primary source in this work; ``stated'' = a modelling choice or a cited rule).",
+                  _rag("3.0cm", "10.6cm", "2.1cm"), ["Item", "Statement and source", "Status"], body,
+                  size="\\scriptsize", colsep="3pt")
+
+
+def credit_findings(res: dict) -> List[Dict[str, str]]:
+    cs = {(r["rho"], r["test"]): r for r in _cr(res, "calibration_size")}
+    rho = res["meta"]["rho"]
+    hl_c, hl_0 = cs[(rho, "hosmer_lemeshow")], cs[(0.0, "hosmer_lemeshow")]
+    bi_c, bi_0 = cs[(rho, "binomial_any_grade")], cs[(0.0, "binomial_any_grade")]
+    je_c, je_0 = cs[(rho, "jeffreys_any_grade")], cs[(0.0, "jeffreys_any_grade")]
+    coef = {r["name"]: r for r in _cr(res, "coef")}
+    dt = {r["model"]: r for r in _cr(res, "downturn")}
+    ss = sorted(_cr(res, "sample_size"), key=lambda r: r["n_train"])
+    big = ss[-1]
+    g = {(r["downside_weight"], r["sicr_multiple"]): r for r in _cr(res, "ecl_grid")}
+    ws, ms = sorted({k[0] for k in g}), sorted({k[1] for k in g})
+    irb = {r["portfolio"]: r for r in _cr(res, "irb")}
+    return [
+        {"id": "C-F1", "severity": "High",
+         "finding": f"Calibration tests that assume independent defaults reject correct PDs in a single period: the "
+                    f"Hosmer--Lemeshow test (chi-square with $g = 10$ degrees of freedom, as the true PD is not fitted on "
+                    f"the sample) rejects the TRUE PD in {pm(hl_c['reject'], hl_c['reject_se'])}\\,\\% of the periods with "
+                    f"asset correlation {rho:g}, against {pm(hl_0['reject'], hl_0['reject_se'])}\\,\\% (its nominal 5\\,\\%) "
+                    f"with independent defaults; a one-year default rate carries the systematic factor. The per-grade "
+                    f"binomial and Jeffreys tests are a multiple test over about 8 grades: they reject already with "
+                    f"independent defaults ({pm(bi_0['reject'], bi_0['reject_se'])} / {pm(je_0['reject'], je_0['reject_se'])}"
+                    f"\\,\\%), and correlation adds little ({pm(bi_c['reject'], bi_c['reject_se'])} / "
+                    f"{pm(je_c['reject'], je_c['reject_se'])}\\,\\%).",
+         "evidence": "Tab.~\\ref{tab:C2_calibration}; Fig.~\\ref{fig:fig20_calibration_drift}",
+         "remediation": "Interpret one-period calibration tests with correlation-adjusted critical values or over a "
+                        "cycle; control the family-wise level of per-grade tests (e.g. Bonferroni / Holm)."},
+        {"id": "C-F2", "severity": "Medium",
+         "finding": f"The MLE standard errors ignore the default correlation within a period: over the {big['m'] - big['fit_failures']} "
+                    f"replications with {big['n_train']} borrower-years (5 periods) the macro coefficient (true "
+                    f"{coef['macro']['true']:+.2f}) has a spread of {big['macro_coef_sd']:.3f} (sd), "
+                    f"{big['macro_coef_sd'] / big['macro_se_mean']:.0f} times its mean MLE standard error "
+                    f"({big['macro_se_mean']:.3f}): the macro effect is identified from only 5 period-level observations, "
+                    f"each shifted by the unobserved systematic factor.",
+         "evidence": "Tab.~\\ref{tab:C1_pd_model}",
+         "remediation": "Cluster standard errors by period, or estimate macro sensitivities on long histories."},
+        {"id": "C-F3", "severity": "High",
+         "finding": f"In a downturn (macro at {res['meta']['config']['downturn_macro']:g} sd) a model without the macro "
+                    f"variable predicts {pm(dt['ttc']['pred_pd'], dt['ttc']['pred_pd_se'], 2)}\\,\\% against a realised "
+                    f"{pm(dt['ttc']['realised_dr'], dt['ttc']['realised_dr_se'], 2)}\\,\\%. The model with the macro variable, "
+                    f"estimated from 8 periods, overshoots on average ({pm(dt['full']['pred_pd'], dt['full']['pred_pd_se'], 2)}"
+                    f"\\,\\%; true PD {pct(dt['true_pd']['pred_pd'], 2)}\\,\\%), but its median over the replications is "
+                    f"{pct(dt['full']['pred_pd_median'], 2)}\\,\\%: the overshoot of the mean is a Jensen effect - the noisy "
+                    f"macro coefficient enters through the exponential, so the mean prediction is biased upwards; the median "
+                    f"fit is close to the true PD.",
+         "evidence": "Tab.~\\ref{tab:C2_calibration}; Fig.~\\ref{fig:fig20_calibration_drift}",
+         "remediation": "Monitor the calibration through the cycle; constrain macro sensitivities (expert bounds, longer data)."},
+        {"id": "C-F4", "severity": "Medium",
+         "finding": f"Small samples cost discrimination and stability: with {ss[0]['n_train']} borrower-years "
+                    f"{ss[0]['fit_failures']} of {ss[0]['m']} fits fail with separation, and the successful fits lose "
+                    f"{ss[0]['auc_gap']:.3f} AUC against the true PD; with {ss[-1]['n_train']} the gap is "
+                    f"{ss[-1]['auc_gap']:.3f}. Failed fits are excluded, so the small-sample averages are conditional on "
+                    f"success and flatter the model.",
+         "evidence": "Tab.~\\ref{tab:C1_pd_model}; Fig.~\\ref{fig:fig19_pd_sample_size}",
+         "remediation": "Pool data or simplify the model for low-default portfolios; never hide failed fits."},
+        {"id": "C-F5", "severity": "Medium",
+         "finding": f"The ECL depends strongly on two judgements: the coverage ranges from "
+                    f"{100 * g[(ws[0], ms[-1])]['coverage']:.2f}\\,\\% (no downside weight, SICR $\\times${ms[-1]:g}) to "
+                    f"{100 * g[(ws[-1], ms[0])]['coverage']:.2f}\\,\\% (downside weight {100 * ws[-1]:.0f}\\,\\%, SICR "
+                    f"$\\times${ms[0]:g}). The SICR threshold moves the stage-2 share from "
+                    f"{100 * g[(ws[0], ms[-1])]['stage2_share']:.0f} to {100 * g[(ws[0], ms[0])]['stage2_share']:.0f}\\,\\% and "
+                    f"dominates; the downside weight changes the measurement only (staging compares PDs on the same basis, "
+                    f"without the scenario overlay). The stage-2 transfer makes a single loan's provision jump by a multiple.",
+         "evidence": "Tab.~\\ref{tab:C3_ecl}; Fig.~\\ref{fig:fig21_ecl_cliff}",
+         "remediation": "Disclose the sensitivity to the scenario weights and the SICR threshold; back-test the staging."},
+        {"id": "C-F6", "severity": "Medium",
+         "finding": f"The IRB capital matches the one-factor 99.9\\,\\% loss of a granular portfolio (ratio "
+                    f"{irb['granular']['ratio']:.3f}) but understates a concentrated one: with 30 names the simulated "
+                    f"unexpected loss is {irb['concentrated']['ratio']:.2f} times the sum of K.",
+         "evidence": "Tab.~\\ref{tab:C4_irb}; Fig.~\\ref{fig:fig22_irb_vs_mc}",
+         "remediation": "Add a concentration charge (Pillar 2 / granularity adjustment) for portfolios with few names."},
+        {"id": "C-F7", "severity": "Low",
+         "finding": "The IRB formula reproduces the illustrative risk weights of Basel II Annex 5 / CRE99 exactly, and the "
+                    "PD floor (CRE32.4), the M bounds (CRE32.46) and the CRR-only 1.06 scaling are confirmed; still used as "
+                    "recalled: the IFRS 9 paragraph numbers other than B5.5.13 and the ECB form of the Jeffreys test.",
+         "evidence": "Tab.~\\ref{tab:C5_assumptions}",
+         "remediation": "Verify the remaining IFRS 9 references and the ECB instructions before any use beyond this showcase."},
+    ]
+
+
+def table_credit_findings(res: dict) -> str:
+    rows = [[f["id"], f["finding"], f"PROPOSED: {f['severity']}", f["evidence"], f["remediation"]]
+            for f in credit_findings(res)]
+    return _table("C6_findings", "Findings register of the credit risk study. Severities are PROPOSED and must be "
+                  "confirmed by the validator.", _rag("0.75cm", "6.6cm", "1.85cm", "2.4cm", "3.5cm"),
+                  ["ID", "Finding", "Severity", "Evidence", "Proposed remediation"], rows, size="\\scriptsize",
+                  colsep="3pt")
+
+
 # ---- write all --------------------------------------------------------------------------
 
 def load(path) -> dict:
@@ -788,7 +993,7 @@ def load(path) -> dict:
 
 
 def write_all(results_dir, out_dir, doc: str = "validation") -> List[Path]:
-    """Write the tables of ``doc`` (``validation``: T1..T7; ``overfitting``: O1..O6; ``overview``: V1; ``irrbb``: R1..R4) from
+    """Write the tables of ``doc`` (``validation``: T1..T7; ``overfitting``: O1..O6; ``overview``: V1; ``irrbb``: R1..R4; ``credit``: C1..C6) from
     ``<results_dir>/<study>_full_results.json`` into ``out_dir``."""
     r = Path(results_dir)
     out = Path(out_dir)
@@ -799,6 +1004,12 @@ def write_all(results_dir, out_dir, doc: str = "validation") -> List[Path]:
                  "O3_power": table_go_power(go), "O4_holdout": table_go_holdout(go),
                  "O5_calibration": table_go_calibration(go), "O6_findings": table_overfitting_findings(go)}
         return _write_tables(out, OVERFIT_TABLE_NAMES, texts)
+    if doc == "credit":
+        res = load(r / "credit_risk_full_results.json")
+        texts = {"C1_pd_model": table_credit_pd(res), "C2_calibration": table_credit_calibration(res),
+                 "C3_ecl": table_credit_ecl(res), "C4_irb": table_credit_irb(res),
+                 "C5_assumptions": table_credit_assumptions(res), "C6_findings": table_credit_findings(res)}
+        return _write_tables(out, CREDIT_TABLE_NAMES, texts)
     if doc == "irrbb":
         res = load(r / "irrbb_scenarios_full_results.json")
         texts = {"R1_scenarios": table_irrbb_scenarios(res), "R2_outlier_test": table_irrbb_outlier(res),

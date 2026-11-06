@@ -185,3 +185,30 @@ so that the README stays short; the content is unchanged.
   checked against a primary text is marked `ASSUMPTION` or `verify` in the
   results' assumptions register.
 
+## Credit risk (`risklab.credit`, v0.8)
+
+- **PD, LGD, EAD** are decimals and currency units. The PD is a one-year
+  probability.
+- **Defaults** follow a one-factor Gaussian copula. Obligor i defaults when
+  `sqrt(rho) Z + sqrt(1 - rho) e_i < G(PD_i)`. A low Z means many defaults.
+- **Logistic fits** stop with an explicit `SeparationError` or
+  `ConvergenceError` (subclasses of `FitError`). They are never silently
+  regularised.
+- **The AUC** is the Mann-Whitney statistic, with ties counted 1/2. The
+  Gini (accuracy ratio) is `2 AUC - 1`.
+- **Hosmer-Lemeshow:** `hosmer_lemeshow(..., fitted_on_sample=...)` must
+  state the case. Degrees of freedom g - 2 only for the development sample of
+  a fitted model; g for the true PD or a model applied out of time.
+- **IFRS 9:** default at the end of each year, with the exposure at the
+  start of the year, discounted at the EIR. The 12-month ECL has a horizon of
+  1 year, the lifetime ECL the remaining maturity, with a constant hazard.
+  Stage 3 has PD = 1 and is undiscounted (LGD x EAD).
+- **IFRS 9 staging:** the current 12-month PD and the PD at origination are
+  compared on the same basis: both base-scenario PDs without the scenario
+  overlay. The scenarios change the ECL amount, not the stage.
+- **IRB:** K is per unit of EAD and RWA = 12.5 K EAD (× `scaling`). The PD
+  floor and the M bounds are parameters.
+- **Sources:** the register in the results meta (`irb_sources`,
+  `ifrs9_sources`) gives every source. Items that are not verified are marked
+  ASSUMPTION.
+

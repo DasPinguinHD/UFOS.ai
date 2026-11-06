@@ -218,6 +218,25 @@ class IRRBBTableTests(unittest.TestCase):
         self.assertEqual(T._years(1.0), "1 year")
 
 
+class CreditTableTests(unittest.TestCase):
+    def test_credit_tables_from_saved_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = T.write_all(RESULTS, tmp, doc="credit")
+            self.assertEqual([p.stem for p in paths], list(T.CREDIT_TABLE_NAMES))
+            texts = {p.stem: p.read_text(encoding="utf-8") for p in paths}
+        for name, text in texts.items():
+            self.assertIn(f"\\label{{tab:{name}}}", text)
+            self.assertNotRegex(text, r"[^\\]%")
+        self.assertGreaterEqual(texts["C6_findings"].count("PROPOSED:"), 7)
+        self.assertIn("ASSUMPTION", texts["C5_assumptions"])
+        # v0.8 review: failed fits excluded (C1), HL degrees of freedom (C2), same-basis staging (C3)
+        self.assertIn("EXCLUDED", texts["C1_pd_model"])
+        self.assertIn("10 degrees of freedom", texts["C2_calibration"])
+        self.assertIn("median", texts["C2_calibration"])
+        self.assertIn("same basis", texts["C3_ecl"])
+        self.assertIn("Jensen", texts["C6_findings"])
+
+
 class WriteAllTests(unittest.TestCase):
     def test_write_all_from_saved_results(self):
         with tempfile.TemporaryDirectory() as tmp:

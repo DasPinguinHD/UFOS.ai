@@ -324,6 +324,65 @@ The full run is in
 The assumptions register (sources, `ASSUMPTION`, `verify`) is in the results
 file (`meta.assumptions`) and in table R3 of the IRRBB report.
 
+## The credit risk study
+
+```
+python studies/credit_risk.py                # M = 20, 200 000 loss draws: 12 s in the cloud container
+python studies/credit_risk.py --mode full --save-results    # M = 200, 2 000 000 draws: 42 s
+```
+
+**Design (synthetic, known truth):**
+
+- **Borrowers:** each has leverage, interest coverage, size, a sector and an
+  observable macro variable (AR(1)).
+- **True PD:** a logit with known coefficients. Defaults follow a one-factor
+  Gaussian copula with asset correlation 0.12.
+- **A. PD model vs sample size:** a correctly specified logit is fitted on
+  500–50 000 borrower-years (5 periods) and tested out of time.
+  - It reports the AUC against the true PD, the coefficient error, the
+    spread of the macro coefficient against its MLE standard error, and
+    Hosmer-Lemeshow (out of time: chi-square with g = 10 degrees of freedom).
+  - Fits that fail with separation are counted and excluded, so the averages
+    are conditional on a successful fit.
+- **B. Calibration tests on the TRUE PD of one period** (20 000 borrowers),
+  with correlation 0.12 and 0. A downturn period (macro at -2 sd) is scored by
+  a model with and a model without the macro variable.
+- **C. IFRS 9 ECL** of a 2000-loan book, by the downside-scenario weight and
+  the relative SICR threshold, and the stage-2 cliff of one loan.
+- **D. IRB capital vs the simulated one-factor loss** (M = 1 year): granular
+  vs concentrated books, and the gap by the number of names.
+
+The full run is in
+[`studies/results/credit_risk_full_summary.md`](../studies/results/credit_risk_full_summary.md).
+
+**Results:**
+
+- **Discrimination:** with 50 000 borrower-years the fitted model comes
+  within 0.018 ± 0.004 of the true PD's AUC. With 500
+  borrower-years, the gap is 0.072 ± 0.007, and 74 of 200 fits fail with
+  separation.
+- **Calibration on the true PD:** Hosmer-Lemeshow (g = 10 degrees of freedom,
+  as the true PD is not fitted on the sample) rejects it in 82.5 ± 2.7 % of
+  the periods with correlation, against 5.5 ± 1.6 % without (its nominal
+  level). The per-grade binomial / Jeffreys tests reject in 27.5 / 34.5 % of
+  the periods even without correlation, because about 8 grades are tested at
+  once (a multiple test); with correlation 36.0 / 38.5 %.
+- **Standard errors:** the MLE standard errors ignore the within-period
+  correlation. With 50 000 borrower-years the macro coefficient varies over
+  the replications with an sd of 1.03, 12 times its mean MLE standard error
+  (0.087).
+- **Downturn:** without the macro variable the model predicts
+  1.65 ± 0.05 % against a realised 3.65 ± 0.20 %. With it, estimated from
+  8 periods, the model overshoots on average (5.46 ± 0.67 %), but its median
+  is 3.22 % (true PD 3.55 %): a Jensen effect of the noisy coefficient in the
+  exponential.
+- **ECL:** coverage ranges from 0.97 % to 1.84 % over the scenario weights
+  and SICR thresholds. Staging compares the current and the origination PD
+  on the same basis (no scenario overlay), so the SICR threshold alone sets
+  the stage-2 share (2–30 %).
+- **IRB:** (q99.9 - EL) / sum K is 0.993 for 10 000 names and 1.69 for 30
+  names.
+
 ## The validation report
 
 **Report PDFs are not kept in the repository** (user decision 2026-11-05):

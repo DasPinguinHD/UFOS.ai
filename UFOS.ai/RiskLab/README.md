@@ -2,10 +2,11 @@
 
 A bank-style market-risk lab: VaR / ES models, regulatory backtests and a
 model-validation report — with the tests' own size and power measured on
-synthetic data with known truth. Since v0.7 also interest rate risk in the
-banking book (IRRBB).
+synthetic data with known truth. It also covers interest rate risk in the
+banking book (IRRBB, v0.7) and credit risk (PD models, IFRS 9 ECL, Basel IRB
+capital, v0.8).
 
-Part of UFOS.ai. **Status: v0.7.** Python ≥ 3.10, numpy and scipy (matplotlib
+Part of UFOS.ai. **Status: v0.8.** Python ≥ 3.10, numpy and scipy (matplotlib
 for the figures). Synthetic data only; no imports from or into the HedgeFund backend.
 
 ## Key findings
@@ -52,6 +53,17 @@ rates in % ± their standard error).
   - The results are deterministic. Every regulatory parameter is cited to its
     article; only the NMD caps are marked as an assumption.
   ([summary](studies/results/irrbb_scenarios_full_summary.md))
+- **Calibration tests that assume independent defaults reject correct
+  PDs.** Applied to the *true* PD of one period of 20 000 borrowers,
+  Hosmer-Lemeshow rejects in 82.5 ± 2.7 % of the periods with asset
+  correlation 0.12, against 5.5 ± 1.6 % (its nominal level) with
+  independent defaults.
+  ([summary](studies/results/credit_risk_full_summary.md))
+- **IRB capital covers a granular book but not a concentrated one.** The
+  simulated 99.9 % loss minus EL is 0.993 × the IRB capital for 10 000
+  names and 1.69 × for the same exposure in 30 names (one-factor model,
+  M = 1 year).
+  ([summary](studies/results/credit_risk_full_summary.md))
 
 <p>
 <img src="report/figures/fig3_estimation_window.png" width="32%" alt="Estimation-window curve">
@@ -124,6 +136,8 @@ flowchart LR
     S2 --> R
     C["rates<br/>Nelson-Siegel curves,<br/>instruments, IRRBB shocks"] --> S3["IRRBB study"]
     S3 --> R
+    K["credit<br/>PD model, IFRS 9 ECL,<br/>IRB capital, Vasicek"] --> S4["credit study"]
+    S4 --> R
 ```
 
 | module | role |
@@ -135,7 +149,8 @@ flowchart LR
 | `risklab.validation` | the UFOS strategy-platform gates, re-implemented, and the simulator of the gate study |
 | `risklab.rates` | IRRBB: Nelson-Siegel(-Svensson) curves and fitting, banking-book instruments and a synthetic bank, duration / DV01 / key rates, the six standardised shocks with the floor, ΔEVE / ΔNII, outlier tests |
 | `risklab.report` | deterministic export (code fingerprints), figures, LaTeX tables |
-| `studies/`, `report/`, `examples/`, `tests/` | the six studies, the report sources and build, the quickstart, the unit tests |
+| `risklab.credit` | credit risk: synthetic loan panel (logit PD, one-factor copula), logistic PD model with discrimination / calibration tests and a master scale, IFRS 9 staging and ECL with macro scenarios, Basel IRB risk weights and the one-factor loss simulation |
+| `studies/`, `report/`, `examples/`, `tests/` | the seven studies, the report sources and build, the quickstart, the unit tests |
 
 The conventions (signs, confidence levels, seeds, model, engine and backtest
 details, data policy) are in [`docs/conventions.md`](docs/conventions.md).
@@ -154,17 +169,19 @@ studies running in parallel).
 | `survivorship` | How much do survivors-only base rates overstate growth? | 2000 synthetic firms, growth-dependent exits, M = 2000 | 34.3 % naive vs 25.5 % counterfactual vs 17.8 % full cohort | 7 s | [md](studies/results/survivorship_full_summary.md) |
 | `gate_overfitting` | How often does a searched noise rule pass the UFOS gates, and with what power? | MA-crossover family, K = 1–256, 5 / 10 / 20 years, M = 2000 | false positives ≤ 0.5 %; power 13.1 ± 0.8 % (10 y) at Sharpe 1 | 30 min | [md](studies/results/gate_overfitting_full_summary.md) |
 | `irrbb_scenarios` | Does a synthetic bank breach the IRRBB outlier tests, and how much do the deposit assumptions matter? | reference bank, six BCBS shocks (2016 / 2024 EUR sizes, EU floor on both), NMD grid, 2000 variants of the bank (±30 % composition) | worst ΔEVE 17.6 % of Tier 1 (outlier); NMD grid 1.5–31.1 %; robust to ±30 % changes in the composition (65.6 ± 1.1 % of the variants breach) | 32 s | [md](studies/results/irrbb_scenarios_full_summary.md) |
+| `credit_risk` | How good are PD models and their tests, how sensitive is the IFRS 9 ECL, and does IRB capital match simulated losses? | panel with known PD and asset correlation 0.12, M = 200; 2000-loan ECL book; 2 000 000 loss draws | HL rejects the true PD in 82.5 ± 2.7 % of periods (5.5 ± 1.6 % without correlation); ECL coverage 0.97–1.84 % across weights / SICR; IRB ratio 0.993 granular, 1.69 with 30 names | 42 s | [md](studies/results/credit_risk_full_summary.md) |
 
 Every study also has a smoke mode (used by the tests and CI) and a default
 demo mode. Run a full run with `--mode full --save-results`.
 
 ## Reports
 
-Four LaTeX documents are generated from the saved results:
+Five LaTeX documents are generated from the saved results:
 
 - the validation report (`--doc validation`, the default);
 - the overfitting study of the UFOS gates (`--doc overfitting`);
-- the IRRBB report (`--doc irrbb`, 8 pages);
+- the IRRBB report (`--doc irrbb`, 10 pages);
+- the credit risk report (`--doc credit`, 8 pages);
 - a 3–4 page project overview (`--doc overview`).
 
 Report PDFs are **not** kept in the repository. The figure PDFs in
@@ -176,6 +193,7 @@ Report PDFs are **not** kept in the repository. The figure PDFs in
 python report/build_report.py --doc validation       # -> out/report/validation_report.pdf
 python report/build_report.py --doc overfitting      # -> out/report/overfitting_study.pdf
 python report/build_report.py --doc irrbb            # -> out/report/irrbb.pdf
+python report/build_report.py --doc credit           # -> out/report/credit.pdf
 python report/build_report.py --doc overview         # -> out/report/overview.pdf
 python report/build_report.py --doc overview --publish --publish-to <dir outside the repo>
 ```
@@ -185,17 +203,17 @@ How the build works:
 - It checks the toolchain first and refuses stale inputs: a results file whose
   code fingerprint does not match the current code.
 - `--publish-to` must be an existing directory outside the repository.
-- The prose slots of the three detailed reports are written by the author. They are
+- The prose slots of the four detailed reports are written by the author. They are
   marked as orange boxes, so a build with open slots is visibly a draft.
 
 ## Quality
 
-- **Tests:** 256 unit tests (`python -m unittest discover -s tests`), no network.
+- **Tests:** 289 unit tests (`python -m unittest discover -s tests`), no network.
   - They include golden tables, closed-form checks, smoke runs of every study
     and the quickstart, and byte-level reproducibility of the figures.
   - A parity test on the HedgeFund side compares `risklab.validation` with
     the platform's gate code on fixed inputs.
-- **Reviews:** every version from v0.1 to v0.6 had an independent review. Its
+- **Reviews:** every version from v0.1 to v0.7 had an independent review. Its
   findings were fixed in a follow-up round before the next version.
 - **Reproducibility, as tested:**
   - **Locked versions vs saved results:** the saved results in
@@ -274,6 +292,13 @@ How the build works:
   prepayment or early-redemption options, constant balance sheet for NII.
   Only the NMD caps are unverified (marked ASSUMPTION); the other regulatory
   parameters are cited to their articles.
+- **Credit:** a single Gaussian factor, constant LGD, simple IFRS 9 term
+  structures and corporate risk weights only. The IRB formula reproduces
+  the illustrative risk weights of Basel II Annex 5 / CRE99 exactly; the PD
+  floor (CRE32.4), the maturity bounds (CRE32.46) and the CRR-only 1.06
+  scaling are confirmed. The IFRS 9 paragraph numbers other than B5.5.13
+  and the ECB form of the Jeffreys test are used as recalled (marked
+  ASSUMPTION).
 - **Gate study:** one rule family and one cost level. G3, the cost and
   stress parts of G6, and G8 are out of scope.
 - **Reports:** the report prose (the text slots) is open; it is written by
@@ -293,9 +318,11 @@ How the build works:
     survivorship studies;
   - v0.5: the UFOS gate re-implementation and its overfitting study;
   - v0.6: presentation, quickstart, locks, CI file and the overview document;
-  - v0.7 (this version): interest rate risk in the banking book (IRRBB):
-    curves, instruments, standardised shocks, ΔEVE / ΔNII, outlier tests, the
-    IRRBB study and report.
+  - v0.7: interest rate risk in the banking book (IRRBB): curves,
+    instruments, standardised shocks, ΔEVE / ΔNII, outlier tests, the IRRBB
+    study and report;
+  - v0.8 (this version): credit risk: PD model and its validation tests,
+    IFRS 9 ECL, Basel IRB capital against the one-factor loss distribution,
+    the credit study and report.
 - **Next:**
-  - v0.8: credit risk;
   - v0.9: a reverse DCF.
