@@ -228,7 +228,11 @@ def place(account, intent: dict, *, actor: str = "user", prices: Optional[dict] 
         if known is not None:
             if known["account_id"] != account.id:
                 raise TradingError(409, "client_order_id_in_use", "This client_order_id belongs to another account.")
-            return known, False
+            return known, False             # idempotent replay: the existing order, also while retired
+        if origin == "council":             # SP §22.15: no NEW Council order while retired / the marker unreadable
+            from strategy_platform.council import retirement
+            if retirement.blocked():
+                raise TradingError(409, "retired", "The Council is retired — no Council orders.")
         now = accounts.now()
         pm = dict(prices or {})
         # retest 2026-10-23: every quote this order needs (the traded symbol, each held one without a quote, and
@@ -398,11 +402,14 @@ def _resend_blocker(account, o: dict, now: Optional[datetime]) -> Optional[str]:
 
 def _council_blocker() -> Optional[str]:
     """Why a Council order may not be (re-)sent now, or None (SP §22.5): Council orders switched off, switch-over not
-    done, sandbox mode. Unreadable state → blocked (fail closed)."""
+    done, retired (SP §22.15 — second safety net), sandbox mode. Unreadable state → blocked (fail closed)."""
     try:
+        from strategy_platform.council import retirement
         from strategy_platform.council import store as cl_store
         if cl_store.switchover() != "done":
             return "the Council is not switched over"
+        if retirement.is_retired():
+            return "the Council is retired"
         if not cl_store.orders_enabled():
             return "Council orders were switched off meanwhile"
     except Exception:          # noqa: BLE001 — fail closed

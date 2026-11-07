@@ -156,6 +156,7 @@ class CouncilService:
         self.last_result: Optional[dict] = None
         self._task: Optional[asyncio.Task] = None
         self._stopping = False
+        self._stop_reason: Optional[str] = None    # why a running cycle was cancelled (stop(reason); retire1b)
         self._wake: Optional[asyncio.Event] = None
         self._manual_pending = False
         # change-detection memory (FUND §8.3), rebuilt from cl_decisions / cl_run_results after a restart
@@ -190,8 +191,11 @@ class CouncilService:
     def order_gate(self, acc) -> Optional[str]:
         """Why no Council order may be submitted now (None = allowed). Re-checked right before each submit."""
         from strategy_platform.execution import control
+        from . import retirement
         if not self.active():
             return "the Council is not switched over"
+        if retirement.blocked():          # SP §22.15: retired (or the marker unreadable — fail closed)
+            return "the Council is retired"
         if self.sandbox():
             return "sandbox mode — the Council only analyses"
         try:
@@ -357,7 +361,13 @@ class CouncilService:
             raise
         except asyncio.CancelledError:
             if run_id is not None:
-                store.finish_run(run_id, self.now(), "error", None, 0.0, {"error": "cancelled (backend shutting down)"})
+                why = f"cancelled ({self._stop_reason or 'backend shutting down'})"
+                try:                       # off the event loop (review retire1b); a second cancel leaves it to the sweep
+                    await asyncio.to_thread(store.finish_run, run_id, self.now(), "error", None, 0.0, {"error": why})
+                except asyncio.CancelledError:
+                    logger.warning("Council run %s: cancel recorded by the next sweep (cancelled twice)", run_id)
+                except Exception:          # noqa: BLE001 — the sweep closes it later
+                    logger.exception("could not record the cancelled Council run %s", run_id)
             raise
         except Exception as ex:
             logger.exception("Council cycle %s crashed", run_id)
@@ -659,8 +669,11 @@ class CouncilService:
     # --- schedule / task ---------------------------------------------------------------------------------------
     def request_run(self) -> dict:
         """"Run now": 202 started (orders per class) / 409 running / 503 not active (SP §22.5, D8)."""
+        from . import retirement
         if not self.active():
             raise CouncilError(503, "not_active", "The Council is not switched over yet.")
+        if retirement.blocked():          # SP §22.15 (the route answers 410 before this; second net)
+            raise CouncilError(410, retirement.CODE, "The Council is retired — un-retire it first.")
         if self.cycle_in_progress or self._manual_pending:
             raise CouncilError(409, "running", "A Council cycle is already running.")
         acc = self.account()
@@ -676,6 +689,7 @@ class CouncilService:
                 "orders": {"equity": gate is None and equity_window_open(now), "crypto": gate is None}}
 
     async def run_forever(self) -> None:
+        from . import retirement
         self._wake = asyncio.Event()
         try:
             n = await asyncio.to_thread(store.sweep_unfinished, self.now())
@@ -692,7 +706,7 @@ class CouncilService:
                     rid, self._manual_pending = self._manual_pending, False
                     await self.run("manual", rid if isinstance(rid, int) and not isinstance(rid, bool) else None)
                     continue
-                if not self.active() or self.sandbox():
+                if not self.active() or self.sandbox() or retirement.blocked():   # retired: no AI cycle (§22.15)
                     self.next_due_at = None
                 else:
                     _v, council = self.params()
@@ -734,14 +748,21 @@ class CouncilService:
                         logger.exception("expiring %s failed", o["client_order_id"])
         return n
 
+    def task_running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
     def start(self) -> asyncio.Task:
         if self._task is None or self._task.done():
             self._stopping = False
+            self._stop_reason = None
             self._task = asyncio.get_running_loop().create_task(self.run_forever(), name="council-cycle")
         return self._task
 
-    async def stop(self) -> None:
+    async def stop(self, reason: Optional[str] = None) -> None:
+        """Stops the task; a cycle in flight is cancelled and recorded as "cancelled (<reason>)" (default: backend
+        shutting down)."""
         self._stopping = True
+        self._stop_reason = reason
         if self._task is not None:
             self._task.cancel()
             try:

@@ -42,11 +42,16 @@ Stage 11 Overview (contract `UFOS.ai/docs/tasks/STAGE11_OVERVIEW_TASK.md`, desig
   report `2026-11-06_Stage11_Overview.pdf`); report build errors → then the lead commits the WPF part.
 - [ ] User decision: broker mirror accounts (alpaca-paper, binance-demo, kraken-demo) stay OUT of the Overview account
   set after migration (lead assumption, SP §26.2)?
-- [ ] After migration + switch-over (user decision 2026-11-06): retire Council / old engine (now under Trading › Legacy) — interview on how, then contract.
+- [ ] **Retire Council + old engine (retire1, contract `UFOS.ai/docs/tasks/RETIRE_COUNCIL_TASK.md`, SP §22.15):** built
+  (backend `council/retirement.py` + routes `POST /v2/council/{retire,unretire}`, WPF Retired card / Retire… / toolbar /
+  kill texts / Overview + tile wording; touched-module tests + static C# checks green). Open: lead full suite + review →
+  **user builds**, restarts the backend, then presses "Retire…" in Trading › Legacy (the lead never retires on the user's
+  behalf) and click-tests (AI cycles stop, kill switch works, un-retire works with Council orders OFF, no balance
+  change). Done after the user's build + click-test.
 - [ ] Next in stage 11: Risk Lab view (replaces the placeholder), then the other HF views with the `Ui/` components.
 
-**Parked** (kept, not deleted): LSA-SRC, Depth & Range. R4 / R5 stay scheduled after the
-Council switch-over.
+**Parked** (kept, not deleted): LSA-SRC, Depth & Range, R4 / R5 (postponed 2026-11-06 until the user declares the
+retirement final — see the R4 / R5 item).
 
 ## 1. Now — in this order
 
@@ -75,7 +80,9 @@ Council switch-over.
   Treasury / BLS / BEA candidates — interview first), source picker instead of a free YouTube URL, remove yt-dlp;
   transcript gaps — measure (Deepgram start + duration), show (explicit gap markers + count), fix by cause; tests with
   fakes. Contract `LSA_SOURCES_API.md` first.
-- [ ] **R4 / R5 — remove the rest of `fund/`** (stays scheduled after the switch-over + click-test; not started): history export (SP
+- [ ] **PARKED 2026-11-06 — R4 / R5 — remove the rest of `fund/`** (postponed until the user declares the retirement
+  (SP §22.15) final: it is reversible, `fund/store.py` is needed by `migration.legacy_state`, `main.py` imports `fund/*`,
+  tests import the packages, un-retire + revert must stay possible; not started): history export (SP
   §22.12) + golden parity fixture first, then rename to `*.stale` (engine files, shims, `/fund/kill` + `/fund/resume`
   aliases, the §17.9 migration — D12), then R5 delete with the user's permission. Also delete the S10-K `*.stale`
   files and, after the click-test, the 202 copies in `KEEP_UNTIL_CLICKTEST.txt`.

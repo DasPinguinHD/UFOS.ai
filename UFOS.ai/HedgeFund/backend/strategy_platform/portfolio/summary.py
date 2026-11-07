@@ -103,19 +103,26 @@ def _autotrade() -> dict:
 
 
 def _council() -> dict:
+    from ..council import retirement
     from ..council import store as cl_store
     try:
         sw = cl_store.switchover()
         err = None
     except Exception as ex:      # noqa: BLE001 — shown, never guessed
         sw, err = None, f"the Council switch-over state is unreadable ({type(ex).__name__})"
+    ret = retirement.read_fields()          # SP §22.15: retired true / false / null (+ retired_at, reason | error)
     return {"switchover": sw, "error": err, "orders_enabled": cl_store.orders_enabled(),
-            "label": "not validated — AI strategy"}
+            "label": "not validated — AI strategy", "retired": ret["retired"], "retired_at": ret.get("retired_at"),
+            "retired_error": ret.get("retired_error")}
 
 
-def _old_engine(switchover: Optional[str]) -> dict:
-    """Before the switch-over: the registered old engine's own stored flags (its store, no fund import)."""
+def _old_engine(switchover: Optional[str], retired: Optional[bool] = False) -> dict:
+    """Before the switch-over: the registered old engine's own stored flags (its store, no fund import). Retired
+    (SP §22.15): "retired", not an error."""
     from ..execution import control
+    if retired is True:
+        return {"applicable": False, "halted": None, "autopilot": None, "reason": "retired",
+                "retired": True}
     if switchover in ("pending", "done"):
         return {"applicable": False, "halted": None, "autopilot": None, "reason": "switched over to the Council"}
     eng = control.legacy_engine()
@@ -156,4 +163,4 @@ def summary(now: Optional[datetime] = None) -> dict:
             "halts": {"any": bool(halted), "accounts": halted},
             "kill": {"active": bool(killed), "accounts": killed,
                      "pending": [a["id"] for a in out_accounts if a["kill_pending"]]},
-            "council": council, "old_engine": _old_engine(council["switchover"])}
+            "council": council, "old_engine": _old_engine(council["switchover"], council["retired"])}

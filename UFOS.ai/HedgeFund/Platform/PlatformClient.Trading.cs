@@ -889,6 +889,8 @@ namespace UFOS.ai.HedgeFund.Platform
         [JsonPropertyName("applicable")] public bool? Applicable { get; set; }
         [JsonPropertyName("note")] public string? Note { get; set; }
         [JsonPropertyName("orders")] public List<JsonElement>? Orders { get; set; }
+        /// <summary>SPEC §22.15: present (true / null) only while retired or when the retirement marker is unreadable.</summary>
+        [JsonPropertyName("retired")] public bool? Retired { get; set; }
     }
 
     internal sealed class TradingKillHalf

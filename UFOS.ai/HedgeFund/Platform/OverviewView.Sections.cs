@@ -622,7 +622,9 @@ namespace UFOS.ai.HedgeFund.Platform
                 _tiles.Children.Add(_incubationTile);
                 _tiles.Columns = Math.Max(1, _tiles.Children.Count);
             }
-            for (var i = 0; i < shown.Count && i < _tileParts.Count; i++) UpdateStrategyTile(_tileParts[i], shown[i]);
+            var councilRetired = _council?.IsRetired == true;   // SP §22.15: the Council source tile reads "retired"
+            for (var i = 0; i < shown.Count && i < _tileParts.Count; i++)
+                UpdateStrategyTile(_tileParts[i], shown[i], councilRetired && shown[i].Kind == "council");
 
             if (_sources == null)
             {
@@ -687,11 +689,11 @@ namespace UFOS.ai.HedgeFund.Platform
             return parts;
         }
 
-        private static void UpdateStrategyTile(TileParts parts, TradingSource s)
+        private static void UpdateStrategyTile(TileParts parts, TradingSource s, bool retired = false)
         {
             var name = HfUi.Plain(s.Name ?? s.StrategyId ?? s.SourceId ?? "strategy", 80);
             HfUi.SetText(parts.Name, name);
-            HfUi.SetText(parts.State, HfUi.Plain(s.State ?? "state not stated", 40));
+            HfUi.SetText(parts.State, retired ? "retired — managed by hand" : HfUi.Plain(s.State ?? "state not stated", 40));
             var total = s.Pnl?.Total;
             if (total is double t)
             {
@@ -705,7 +707,7 @@ namespace UFOS.ai.HedgeFund.Platform
                 parts.Total.FontSize = 12;
                 parts.Total.ClearValue(TextBlock.FontFamilyProperty);
             }
-            AutomationProperties.SetName(parts.Button, name + ", " + HfUi.Plain(s.State ?? "", 40) + ", total P&L "
+            AutomationProperties.SetName(parts.Button, name + ", " + (retired ? "retired" : HfUi.Plain(s.State ?? "", 40)) + ", total P&L "
                                                        + (total is double t2 ? FundFormat.Money(t2, signed: true) : "not available"));
         }
 
@@ -812,7 +814,8 @@ namespace UFOS.ai.HedgeFund.Platform
             var sig = _activity == null ? "x|" + _activityProblem
                 : string.Join("\u001f", (_activity.Items ?? new List<OverviewActivityItem>())
                       .Select(i => i.Ts + "\u001e" + i.Kind + "\u001e" + i.Title + "\u001e" + i.Detail + "\u001e" + i.Severity + "\u001e" + i.Link))
-                  + "|" + string.Join(";", _activity.ProblemSources()) + "|" + DateTime.Now.Date.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+                  + "|" + string.Join(";", _activity.ProblemSources()) + "|" + string.Join(";", _activity.RetiredSources())
+                  + "|" + DateTime.Now.Date.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
             if (sig == _activitySignature) return;
             _activitySignature = sig;
             _activityList.Children.Clear();
@@ -823,8 +826,13 @@ namespace UFOS.ai.HedgeFund.Platform
                 return;
             }
             var problems = _activity.ProblemSources();
-            _activityProblemText.Visibility = problems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            HfUi.SetText(_activityProblemText, problems.Count > 0 ? "not available: " + HfUi.Plain(string.Join("; ", problems), 400) : "");
+            // SP §22.15: the Council / old engine read "retired" — a state, said as such, never listed as "not available"
+            var retired = _activity.RetiredSources().Select(n => n == "old_engine" ? "old engine" : n == "council" ? "Council" : n).ToList();
+            var notes = new List<string>();
+            if (problems.Count > 0) notes.Add("not available: " + HfUi.Plain(string.Join("; ", problems), 400));
+            if (retired.Count > 0) notes.Add("retired: " + HfUi.Plain(string.Join(", ", retired), 120) + " (past Council runs stay listed)");
+            _activityProblemText.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            HfUi.SetText(_activityProblemText, string.Join(" · ", notes));
             var items = _activity.Items ?? new List<OverviewActivityItem>();
             if (items.Count == 0)
             {

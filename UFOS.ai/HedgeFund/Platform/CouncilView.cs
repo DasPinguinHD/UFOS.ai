@@ -20,6 +20,8 @@ namespace UFOS.ai.HedgeFund.Platform
     /// over… / Revert…; the latest decision per symbol (agents, verdict with AI labelling, target vs position, execution outcome or why
     /// no order) and the recent runs. Polls GET /v2/council/state every 15 s while visible. <see cref="StateChanged"/> tells the window
     /// whether the old engine is still the active one (switch-over not "done").
+    /// retire1 (SPEC §22.15): while retired the view is the read-only "Retired" card (date + reason, the recent runs as history, the
+    /// manual-management note, "Un-retire…"); otherwise it shows as before plus "Retire…" once switched over.
     /// </summary>
     internal sealed class CouncilView : UserControl
     {
@@ -161,6 +163,11 @@ namespace UFOS.ai.HedgeFund.Platform
                 _root.Children.Add(Line(_problem ?? "Loading the Council state…", _problem != null ? FundPalette.Risk : FundPalette.Dim));
                 return;
             }
+            if (s.IsRetired)
+            {
+                RenderRetired(s, title, chip, actions);
+                return;
+            }
             var done = s.SwitchedOver;
             var pending = s.Switchover == "pending";
 
@@ -191,6 +198,9 @@ namespace UFOS.ai.HedgeFund.Platform
                 : "Council orders: OFF (the Council is not active).";
             _root.Children.Add(Line(orders + " Paper trading · simulated money.", s.OrdersEnabled ? FundPalette.Long : FundPalette.Dim));
             if (_problem != null) _root.Children.Add(Line(_problem + " Showing the last known state.", FundPalette.Risk));
+            if (s.Retired == null && !string.IsNullOrWhiteSpace(s.RetiredError))
+                _root.Children.Add(Line("Retirement state unreadable: " + s.RetiredError + " — no Council cycle and no Council order runs until it is "
+                                        + "readable (fail closed). Retire… stores a fresh retirement and repairs it.", FundPalette.Kill));
             if (pending)
             {
                 var err = _pending?.LastError ?? s.SwitchoverError;
@@ -223,6 +233,8 @@ namespace UFOS.ai.HedgeFund.Platform
                                             () => SetOrdersAsync(!s.OrdersEnabled)));
                 actions.Children.Add(MakeAction("AI budget…", "The Council's daily AI budget (a new Council params version)", EditBudgetAsync));
                 actions.Children.Add(MakeAction("Revert…", "Go back to the old engine (possible until the old engine is removed)", RevertAsync, danger: true));
+                actions.Children.Add(MakeAction("Retire…", "Retire the Council of AIs and the old engine: no more AI cycles, Council orders off — "
+                                                           + "reversible, nothing is deleted", RetireAsync, danger: true));
             }
             else if (pending)
             {
@@ -266,6 +278,36 @@ namespace UFOS.ai.HedgeFund.Platform
                                             + (r.Legacy == true ? "  · legacy (old engine)" : r.OrdersEnabled == false ? "  · orders off" : ""),
                                             r.Status == "error" ? FundPalette.Risk : FundPalette.Dim, mono: true));
             }
+        }
+
+        /// <summary>retire1 (SPEC §22.15): the read-only Retired card — retire date + reason, the recent runs as history, Un-retire….</summary>
+        private void RenderRetired(CouncilState s, StackPanel title, TextBlock chip, WrapPanel actions)
+        {
+            title.Children.Clear();
+            title.Children.Add(FundUi.Text("Retired: Council of AIs & old engine", 13, FundPalette.Text, bold: true, wrap: false));
+            chip.Text = "retired";
+            chip.Foreground = FundPalette.Dim;
+            title.Children.Add(chip);
+            var when = string.IsNullOrWhiteSpace(s.RetiredAt) ? "an unknown date" : FundFormat.LocalTime(s.RetiredAt, "yyyy-MM-dd HH:mm");
+            _root.Children.Add(Line("Retired by you on " + when + (string.IsNullOrWhiteSpace(s.RetiredReason) ? " (no reason given)." : " — reason: " + s.RetiredReason),
+                                    FundPalette.Text));
+            _root.Children.Add(Line("No Council AI cycles run (no AI spend), the Council places no orders and the old engine does not start. "
+                                    + "Nothing was deleted: balances, positions, orders and the run history are unchanged.", FundPalette.Dim));
+            _root.Children.Add(Line("paper-council is now managed by hand — no managing strategy. Manual orders, the kill switch, halt / resume "
+                                    + "and marks work as for every platform paper account (Portfolio & Trading). Paper trading · simulated money.",
+                                    FundPalette.Dim));
+            if (_problem != null) _root.Children.Add(Line(_problem + " Showing the last known state.", FundPalette.Risk));
+            actions.Children.Add(MakeAction("Un-retire…", "Start the Council task again (its orders stay OFF — you turn them on)", UnretireAsync));
+            if (_runsProblem != null) _root.Children.Add(Line(_runsProblem, FundPalette.Risk));
+            var runs = _runs ?? new List<CouncilRun>();
+            var hdr = FundUi.Text(runs.Count > 0 ? "Recent runs (history)" : "No Council runs recorded.", 11.5, FundPalette.Text, bold: true);
+            hdr.Margin = new Thickness(0, 10, 0, 2);
+            _root.Children.Add(hdr);
+            foreach (var r in runs)
+                _root.Children.Add(Line("#" + r.Id.ToString(Inv) + "  " + FundFormat.LocalTime(r.StartedAt, "MM-dd HH:mm") + "  " + (r.Trigger ?? "?")
+                                        + "  " + (r.Status ?? "?") + (r.CostUsd is double c ? "  " + FundFormat.Money(c, decimals: 3) : "")
+                                        + (r.Legacy == true ? "  · legacy (old engine)" : r.OrdersEnabled == false ? "  · orders off" : ""),
+                                        FundPalette.Dim, mono: true));
         }
 
         private static string BudgetText(CouncilBudget? b)
@@ -431,5 +473,59 @@ namespace UFOS.ai.HedgeFund.Platform
         }
 
         private async Task RevertAsync() => await CouncilRevert.RunAsync(Window.GetWindow(this));
+
+        /// <summary>"Retire…" (SPEC §22.15): one confirmation with the reason field, then POST /v2/council/retire.</summary>
+        private async Task RetireAsync()
+        {
+            var owner = Window.GetWindow(this);
+            var values = FundDialogs.Form(owner, "Retire the Council and the old engine",
+                "This retires the Council of AIs AND the old engine (reversible — nothing is deleted):\n\n"
+                + "• the Council orders are switched off and its working orders are cancelled,\n"
+                + "• the Council task stops — no more AI cycles, no more AI spend,\n"
+                + "• the old engine stays off (also after a backend restart),\n"
+                + "• balances, positions, orders and the run history stay as they are; paper-council stays a normal platform paper account "
+                + "managed by hand (manual orders, kill switch, halt / resume).\n\n"
+                + "Un-retire… brings the Council task back (its orders stay OFF). Paper trading · simulated money.",
+                new[] { ("Reason (optional, stored in the audit log)", "") },
+                "Retire", danger: true);
+            if (values == null) return;
+            var res = await PlatformClient.RetireCouncilAsync(values.Length > 0 ? values[0] : null);
+            if (!res.Ok)
+            {
+                FundDialogs.Info(owner, "Retire", "Not retired: " + PlatformClient.DescribeFailure(res));
+                return;
+            }
+            var r = res.Value;
+            FundDialogs.Info(owner, "Retired",
+                r?.Already == true
+                    ? "The Council and the old engine were already retired."
+                    : "The Council of AIs and the old engine are retired. Council orders off, "
+                      + (r?.CancelledOrders ?? 0).ToString(Inv) + " working Council order(s) cancelled, Council task "
+                      + (r?.TaskStopped == true ? "stopped." : "not running in this backend."));
+        }
+
+        /// <summary>"Un-retire…" (SPEC §22.15): one confirmation, then POST /v2/council/unretire — the Council orders stay OFF.</summary>
+        private async Task UnretireAsync()
+        {
+            var owner = Window.GetWindow(this);
+            var values = FundDialogs.Form(owner, "Un-retire the Council",
+                "The Council task starts again: its scheduled AI cycles (agents + judge) run during the US session and spend from its AI budget.\n\n"
+                + "The Council orders stay OFF — turn them on in this view when you want it to trade paper-council again. The old engine comes "
+                + "back only through Revert… (after un-retiring). Paper trading · simulated money.",
+                new[] { ("Note (optional, stored in the audit log)", "") },
+                "Un-retire");
+            if (values == null) return;
+            var res = await PlatformClient.UnretireCouncilAsync(values.Length > 0 ? values[0] : null);
+            if (!res.Ok)
+            {
+                FundDialogs.Info(owner, "Un-retire", "Not un-retired: " + PlatformClient.DescribeFailure(res));
+                return;
+            }
+            var r = res.Value;
+            if (r?.Already == true) return;
+            FundDialogs.Info(owner, "Un-retired",
+                "The Council is no longer retired. Council orders: " + (r?.OrdersEnabled == true ? "ON" : "OFF") + ". Council task: "
+                + (r?.TaskStarted == true ? "started." : "NOT started — " + (string.IsNullOrWhiteSpace(r?.TaskError) ? "no reason given" : r!.TaskError!.Trim())));
+        }
     }
 }

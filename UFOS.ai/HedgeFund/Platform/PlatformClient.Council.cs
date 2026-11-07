@@ -82,6 +82,23 @@ namespace UFOS.ai.HedgeFund.Platform
             catch (JsonException) { return null; }
         }
 
+        /// <summary>
+        /// POST /v2/council/retire {reason?} (SPEC §22.15, retire1): audit → Council orders OFF (working ones cancelled) → the Council
+        /// task stopped → marker. 200 {retired, already, retired_at, reason, audit_id, orders_enabled, cancelled_orders, task_stopped} /
+        /// 409 sandbox | not_switched_over | busy / 503 audit_unavailable | marker_unwritten. Idempotent.
+        /// </summary>
+        public static Task<PlatformResult<CouncilRetireResult>> RetireCouncilAsync(string? reason)
+            => SendAsync<CouncilRetireResult>(HttpMethod.Post, "/v2/council/retire", WithNote(new Dictionary<string, object?>(), reason),
+                CouncilTimeout);
+
+        /// <summary>
+        /// POST /v2/council/unretire {reason?} (SPEC §22.15): audit → marker cleared → the Council task started; the Council orders stay
+        /// OFF. 200 {retired: false, already, audit_id, orders_enabled, task_started, task_error} / 409 sandbox | busy / 503.
+        /// </summary>
+        public static Task<PlatformResult<CouncilRetireResult>> UnretireCouncilAsync(string? reason)
+            => SendAsync<CouncilRetireResult>(HttpMethod.Post, "/v2/council/unretire", WithNote(new Dictionary<string, object?>(), reason),
+                CouncilTimeout);
+
         /// <summary>POST /v2/council/switchover/revert {reason?} → 200 {state: "reverted", old_spend_seed_usd, old_engine_started,
         /// old_engine_error, already?} / 409 not_switched_over (none / pending — pending is aborted instead).</summary>
         public static Task<PlatformResult<CouncilRevertResult>> RevertCouncilSwitchoverAsync(string? reason)
@@ -108,7 +125,29 @@ namespace UFOS.ai.HedgeFund.Platform
         [JsonPropertyName("mode")] public JsonElement? Mode { get; set; }
         /// <summary>SWITCHOVER_FIX_API §7: the stored last_error of an unfinished (pending) attempt.</summary>
         [JsonPropertyName("switchover_error")] public string? SwitchoverError { get; set; }
+        /// <summary>SPEC §22.15: true = retired (Council task stopped, old engine off), false = not retired, null = marker unreadable.</summary>
+        [JsonPropertyName("retired")] public bool? Retired { get; set; }
+        [JsonPropertyName("retired_at")] public string? RetiredAt { get; set; }
+        /// <summary>The user's note when retiring (only while retired).</summary>
+        [JsonPropertyName("reason")] public string? RetiredReason { get; set; }
+        [JsonPropertyName("retired_error")] public string? RetiredError { get; set; }
         [JsonIgnore] public bool SwitchedOver => Switchover == "done";
+        [JsonIgnore] public bool IsRetired => Retired == true;
+    }
+
+    /// <summary>POST /v2/council/retire | /v2/council/unretire (SPEC §22.15).</summary>
+    internal sealed class CouncilRetireResult
+    {
+        [JsonPropertyName("retired")] public bool Retired { get; set; }
+        [JsonPropertyName("already")] public bool? Already { get; set; }
+        [JsonPropertyName("retired_at")] public string? RetiredAt { get; set; }
+        [JsonPropertyName("reason")] public string? Reason { get; set; }
+        [JsonPropertyName("audit_id")] public long? AuditId { get; set; }
+        [JsonPropertyName("orders_enabled")] public bool? OrdersEnabled { get; set; }
+        [JsonPropertyName("cancelled_orders")] public int? CancelledOrders { get; set; }
+        [JsonPropertyName("task_stopped")] public bool? TaskStopped { get; set; }
+        [JsonPropertyName("task_started")] public bool? TaskStarted { get; set; }
+        [JsonPropertyName("task_error")] public string? TaskError { get; set; }
     }
 
     internal sealed class CouncilRecord
@@ -304,5 +343,7 @@ namespace UFOS.ai.HedgeFund.Platform
         [JsonPropertyName("orders_enabled")] public bool? OrdersEnabled { get; set; }
         [JsonPropertyName("cancelled_orders")] public int? CancelledOrders { get; set; }
         [JsonPropertyName("error")] public string? Error { get; set; }
+        /// <summary>SPEC §22.15: present (true / null) only while retired or when the marker is unreadable.</summary>
+        [JsonPropertyName("retired")] public bool? Retired { get; set; }
     }
 }

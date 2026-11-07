@@ -14,7 +14,8 @@ namespace UFOS.ai.HedgeFund.Tiles
     ///                   listed separately (amounts of different currencies are never added up).
     ///   2. Day P&amp;L — the primary currency's total (+ % of the day reference); tone green / red.
     ///   3. Trading    — KILLED / HALTED (red) / kill pending (amber), otherwise "auto ON|OFF" (+ "Council ON|OFF" after the
-    ///                   switch-over); the old engine's autopilot in the detail line while it still applies.
+    ///                   switch-over, "Council retired" while retired — SP §22.15); the old engine's autopilot in the detail line while
+    ///                   it still applies.
     ///   Sparkline     — the stored equity snapshots of paper-main (else the first account of the primary currency).
     /// A value the route does not have is shown as "not available" WITH the route's reason (never a stand-in figure).
     /// No WPF types here: the mapping is checked offline.
@@ -112,7 +113,14 @@ namespace UFOS.ai.HedgeFund.Tiles
             var council = root.GetProperty("council");
             var details = new List<string>();
             var switchover = Str(council.GetProperty("switchover"));
-            if (switchover == "done")
+            // retire1 (SP §22.15): "retired" true / false / null (unreadable); absent on an older backend
+            var retired = council.TryGetProperty("retired", out var rt) ? rt.ValueKind : JsonValueKind.Undefined;
+            if (retired == JsonValueKind.Null)
+                details.Add("Council retirement state " + NotAvailable + " ("
+                            + ((council.TryGetProperty("retired_error", out var re) ? Str(re) : null) ?? "no reason given") + ")");
+            if (retired == JsonValueKind.True)
+                value += " · Council retired";
+            else if (switchover == "done")
                 value += " · Council " + (council.GetProperty("orders_enabled").ValueKind == JsonValueKind.True ? "ON" : "OFF");
             else if (switchover == null)
                 details.Add("Council state " + NotAvailable + " (" + (Str(council.GetProperty("error")) ?? "no reason given") + ")");

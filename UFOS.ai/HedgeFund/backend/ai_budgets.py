@@ -4,6 +4,8 @@ Contract: ``UFOS.ai/docs/ai-budgets-spec.md`` §4.3/§4.4. Aggregates (authorita
 
 - ``fund``                      fund param ``ai_daily_budget_usd`` (sentiment + judge, Council of AIs);
                                 PUT = ``engine.update_params`` (audited ``params_update``, applies next cycle)
+                                — HIDDEN while the Council + old engine are retired (strategy_platform SPEC
+                                §22.15; PUT → 409 ``retired``; spend history stays in the DB)
 - ``explain``                   ``strategy_platform.backtest.explain`` settings (audited)
 - ``ideation_month``/``_day``   ``strategy_platform.research.studio`` settings (audited)
 - ``loop``                      the stage-6 discovery loop via the hook ``PROVIDER_MODULES`` (§4.4)
@@ -222,9 +224,37 @@ class FundSource:
             raise PutRefused(503, {"error": "audit log unavailable — the action was not carried out",
                                    "kind": "AuditUnavailable"}) from ex
 
+    @staticmethod
+    def _retired():
+        """SP §22.15 (user decision 2026-11-06): the Council / fund entry is HIDDEN while retired (spend history stays in
+        the DB). True / False; raises RetirementUnreadable."""
+        from strategy_platform.council import retirement
+        return retirement.is_retired_if_stored()     # no platform database → no marker can exist
+
+    def put_refusal(self, key):
+        """(status, payload) when a PUT of this entry is refused before validation (retired → 409), else None."""
+        from strategy_platform.council import retirement
+        if key != self.KEY:
+            return None
+        try:
+            if self._retired():
+                return 409, {"error": "The Council of AIs is retired — its AI budget cannot be changed (un-retire "
+                                      "it first).", "kind": "Retired", "code": retirement.CODE}
+        except retirement.RetirementUnreadable as ex:
+            return 503, {"error": f"The retirement state is unreadable ({ex}) — nothing was changed.",
+                         "kind": "RetirementUnreadable"}
+        return None
+
     def entries(self, now):
+        from strategy_platform.council import retirement
         default, lo, hi, step = self._meta()
         day = now.date().isoformat()
+        try:
+            if self._retired():
+                return []                      # hidden while retired
+        except retirement.RetirementUnreadable as ex:
+            return [_error_entry(self.KEY, self.LABEL, self.GROUP, "day", day, lo, hi, step, default, self.NOTES,
+                                 self.COST, f"The retirement state is unreadable ({ex}).", "next_cycle")]
         state = self._council_state()
         if state in ("pending", "done"):
             return self._council_entries(now, default, lo, hi, step, day)
@@ -528,6 +558,12 @@ class HedgeFundBudgets:
         refused = ai_caps.refuse_put(origin, query)
         if refused:
             return refused
+        if isinstance(body, dict):              # SP §22.15: a hidden (retired) entry answers 409, not "unknown key"
+            for src in self.sources:
+                hook = getattr(src, "put_refusal", None)
+                got = hook(body.get("key")) if hook is not None else None
+                if got is not None:
+                    return got
         entries = self.entries()
         by_key = {e["key"]: e for e in entries}
 

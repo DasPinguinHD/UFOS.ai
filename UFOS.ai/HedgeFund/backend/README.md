@@ -24,6 +24,14 @@ a multi-agent simulation of a hedge fund decision process (paper trading, no rea
   since 2016) — a failing source pauses the affected symbol with a clear
   reason, no other source is used. **Contract: `fund/SPEC.md`.** The
   notes below about an illustrative dashboard predate this.
+- **Council of AIs + old engine retired (retire1, 2026-11-06; contract `strategy_platform/SPEC.md` §22.15):**
+  after the Council switch-over the user can retire BOTH the platform Council strategy and the old engine through
+  "Retire…" in Trading › Legacy (`POST /v2/council/retire`; reversible with "Un-retire…" →
+  `POST /v2/council/unretire`, Council orders stay OFF). Retired: no Council AI cycle, no Council order, no old
+  engine at start-up (marker meta `retired.council_and_old_engine` in hedgefund.db; unreadable → fail closed + critical
+  alert); Council write routes and `/fund/*` answer 410 `retired` (the kill switch and `/fund/kill` / `/fund/resume`
+  keep working); the Council AI budget entry is hidden. Nothing is deleted, no balance changes; `paper-council` is
+  managed by hand. The `fund/` code stays until the user declares the retirement final (R4 / R5 postponed).
 - **24/7 crypto (2026-09-27):** `BTC-USD`, `ETH-USD`, `SOL-USD` join the
   default watchlist (existing installs: one-time params migration at start,
   `fund.crypto_rollout`). Crypto trades around the clock with fractional

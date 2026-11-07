@@ -1121,9 +1121,10 @@ Full text (review history, rev. 2 / rev. 3 answers, full tables, R1 / R2 as-buil
 §17.9. Open task files: UFOS.ai/docs/tasks/ (switch-over fix API, the user's approved difference list).
 
 **Status:** R1 (build) + R2 (switch-over backend) + R3 (WPF Council view, Agent W) committed (main 4df6db3, PR #6
-61eb5f8). **Not switched over** on the user's DB. Sequence decided by the user 2026-10-24: after Monday 2026-10-26's open
-(the old engine's 2 queued orders fill) → the §17.9 migration (not reversible) → the switch-over R2 → click-test →
-R4 / R5 (see UFOS.ai/docs/todo.md).
+61eb5f8). The user ran the §17.9 migration (2026-11-06 19:14 UTC) and the switch-over (19:15 UTC, `council.switchover =
+done`). **Retirement (§22.15, user decision 2026-11-06):** the Council AND the old engine are retired reversibly through
+the app button ("Retire…" in Trading › Legacy), built by retire1 — the user retires after building. **R4 / R5 are
+POSTPONED** until the user declares the retirement final (see §22.8 and UFOS.ai/docs/todo.md).
 
 | # | Decision in force |
 |---|---|
@@ -1207,10 +1208,11 @@ R4 / R5 (see UFOS.ai/docs/todo.md).
     `old_engine_error`. The switch-over revert does **not** undo the §17.9 migration.
   - **`/fund/*` per request:** `pending` / `done` → 410 `{"code": "replaced"}` except `/fund/kill` →
     `control.kill_all(via=…)` and `/fund/resume` → `control.resume("paper-council", via=…)` (audited); unreadable →
-    503 (kill still forwarded).
+    503 (kill still forwarded). Retired (§22.15) → the 410s carry `{"code": "retired"}`; kill / resume keep forwarding.
   - **`kill_all`** → `{"platform", "legacy", "council"}`: before R2 legacy = the old kill incl. its closing orders,
     council `{"applicable": false}`; after (or pending) legacy "not applicable", council `{applicable, ok,
-    orders_enabled: false, cancelled_orders, error}`.
+    orders_enabled: false, cancelled_orders, error}`. While retired (§22.15) still this branch; both halves add
+    `retired: true` (`null` = marker unreadable) and the legacy note reads "retired — the old engine does not run".
   - **Emergency code rollback below v25** (user's decision only): stop the backend, rename hedgefund.db (+ wal / shm)
     to `*.v25-<UTC>.stale`, copy the pre-v25 backup back, start older code — everything written since is lost.
   - **§22.8a Legacy import** (above `council.legacy_hwm`): old `fund_params` referenced → `cl_params` legacy frozen;
@@ -1222,12 +1224,14 @@ R4 / R5 (see UFOS.ai/docs/todo.md).
     Research hand-over → `/v2/oms/orders`. **R4** (refused in sandbox): history export (§22.12), golden parity fixture,
     rename to `*.stale` the old `fund/` engine files, shims, `/fund/kill` / `/fund/resume` aliases and the §17.9
     migration (D12). **R5:** suite + build + click-test → delete the `.stale` files (with the user's delete
-    permission). newsroom.db keeps its old tables.
+    permission). newsroom.db keeps its old tables. **R4 / R5 are POSTPONED (2026-11-06)** while the retirement (§22.15)
+    is reversible: `fund/store.py` is needed by `migration.legacy_state`, `main.py` imports `fund/*`, tests import the
+    packages, and un-retire + revert must stay possible. They resume only when the user declares the retirement final.
 - **§22.9 Labels / dropped features:** never incubated / live-eligible / promoted / allocator-managed / decay-monitored;
   "not validated — AI strategy", record "forward paper record, N days, not validated"; sentiment / judge outputs
   "AI-generated" + provenance. Dropped: manual accept, `/fund/export/*`, `/fund/backtest(s)`, old toasts → alert kinds
   `council_flip`, `council_order_filled`, `council_run_failed`, `council_budget_reached`, `council_orders_off`,
-  `council_switchover_failed`, `council_legacy_duplicates`.
+  `council_switchover_failed`, `council_legacy_duplicates`, `council_retirement_unreadable` (§22.15, critical).
 - **§22.10 Parity (acceptance gate, passed):** harness `tests/council_parity_testkit.py` +
   `tests/test_s10_council_parity.py` (+ `_scenarios.py`; data window (c) = SYNTHETIC bars from
   `tests/council_parity_synth_bars.py` — SPY, QQQ, TLT, GLD, BTC-USD, 260 bars to 2026-10-23, NYSE days / BTC 7 days,
@@ -1251,10 +1255,70 @@ R4 / R5 (see UFOS.ai/docs/todo.md).
   `order_state`, sandbox `mode`); `GET /v2/council/runs?limit=`, `GET /v2/council/runs/{id}`; `POST /v2/council/run`;
   `GET/PUT /v2/council/params`; `GET/PUT /v2/council/broker-params`; `PUT /v2/council/orders {enabled, reason?}`;
   `GET /v2/council/switchover` (dry run + `pending` + `actions`); `POST /v2/council/switchover`, `…/retry`, `…/abort`,
-  `…/revert`. Errors `{error, code}`. Exact shapes → archive §22.11 / §22.14 and the task file in UFOS.ai/docs/tasks/.
+  `…/revert`; `POST /v2/council/retire`, `POST /v2/council/unretire` (§22.15). Errors `{error, code}`. Exact shapes →
+  archive §22.11 / §22.14 and the task file in UFOS.ai/docs/tasks/.
 - **§22.12 History export (before R4):** a SQLite-backup temp copy of newsroom.db → `data/backups/stage10-<UTC>/
   old_engine_history.jsonl` (`{"table", "row"}` per row, header with counts) + `.sha256`, counts re-read; the real
   newsroom.db is never written.
+- **§22.15 Retirement of the Council AND the old engine (retire1, as built 2026-11-06; contract
+  UFOS.ai/docs/tasks/RETIRE_COUNCIL_TASK.md).** Why: after the switch-over the Council task ran a full AI cycle every
+  interval in the session although its orders were OFF (AI spend for nothing). Reversible; nothing is deleted; no
+  balance / ledger / position / order history is touched; `paper-council` stays a normal platform paper account (manual
+  orders into `council-of-ais`, kill / halt / resume / marks unchanged). `council.switchover` stays `done` (it is NOT the
+  marker). Code `council/retirement.py`; tests `tests/test_retire_council.py` + `RetiredFundRoutesTest` in
+  `tests/test_s10_council_switchover.py`.
+  - **Marker:** hedgefund.db meta `retired.council_and_old_engine` = `{retired: bool, at, actor, reason, audit_id}`;
+    absent = not retired; un-retiring writes `retired: false` (kept as a record). Unreadable (storage error, bad JSON,
+    no boolean) → fail closed: no Council cycle / order (`service.order_gate`, `run_forever`, `request_run`,
+    `oms.place` origin `council` 409 `retired`, `oms._council_blocker`), Council write routes 503
+    `retirement_unreadable`, and at start-up neither the Council task nor the old engine starts + critical alert
+    `council_retirement_unreadable`. No fallback.
+  - **`POST /v2/council/retire {reason?}`** (token, optional note ≤ 500, refused in sandbox 409 `sandbox`, before the
+    switch-over 409 `not_switched_over`, one operation at a time 409 `busy`): audit `council_retire` first (else 503
+    `audit_unavailable`, nothing changed) → `control.council_orders_off("retired")` (working Council orders cancelled)
+    → `CouncilService.stop("Council retired")` (a cycle in flight is recorded `error` "cancelled (Council retired)",
+    off the event loop) + unfinished runs swept → marker. **Race window** (same as the kill switch): a cycle whose
+    order gate passed just before the retire may still reach `oms.place`; the protection is the per-submit re-check of
+    `order_gate` (Council orders switch + marker) under the account's trade lock and the retired check inside
+    `oms.place` — the switch is forced OFF before the task is stopped. 200 `{retired: true, already, retired_at, reason,
+    audit_id, orders_enabled: false, cancelled_orders, task_stopped}`; already retired → 200 `already: true`, no new
+    audit row; marker write failure → 503 `marker_unwritten` (stopped now, said honestly). Retiring over an unreadable
+    marker repairs it.
+  - **`POST /v2/council/unretire {reason?}`** (same guards; unreadable marker → 503): audit `council_unretire` →
+    Council orders forced OFF → marker `retired: false` → `CouncilService.start()`. 200 `{retired: false, already,
+    audit_id, orders_enabled: false, task_started, task_error}`. The Council orders stay OFF (the user turns them on);
+    the old engine comes back only through the revert, after un-retiring.
+  - **Start-up** (`main.py`, `retirement.startup_plan`): marker set / unreadable → the Council service is built (read
+    routes, un-retire) but its task does not start and no `FundEngine` is built; re-applied at every start.
+    **Behaviour change (fail closed):** if hedgefund.db cannot be opened at start (Strategy Platform storage init
+    failure), the marker is unreadable too → neither the Council task nor the old engine starts and a critical alert
+    `council_retirement_unreadable` is attempted (stored only when the database is reachable; always logged) —
+    before retire1 the old engine was still built in that case (its `start()` then refused on the unreadable
+    switch-over state). The alert's row in Monitoring › Alerts has the "Council view…" button (every `council_*` kind)
+    that opens Trading › Retired / Legacy.
+  - **`/fund/resume`** after the switch-over forwards like `/fund/kill`, also with an unreadable marker (never 503);
+    `oms.place` answers an idempotent replay (known `client_order_id`) with the existing order before the retired
+    check.
+  - **Routes while retired:** Council writes (`run`, `params PUT`, `broker-params PUT`, `orders PUT` ON, `switchover
+    POST`, `retry`, `abort`, `revert`) → 410 `{code: "retired", error: "Retired by the user on <date> — un-retire
+    first", retired_at}`; `orders PUT {enabled: false}` stays possible (a safety switch never answers 410). Reads
+    (`state`, `runs`, `runs/{id}`, `params GET`, `broker-params GET`, `switchover GET`) stay 200 and add `retired:
+    true, retired_at, reason` (`retired: null, retired_error` when unreadable; unchanged shape otherwise, except
+    `state`, which always carries `retired` and reads `task: "retired"`); the dry run offers no action. `/fund/*` and
+    `kill_all`: see §22.8.
+  - **Readers:** `GET /v2/portfolio/summary` council `{…, retired, retired_at, retired_error}`, old_engine `{applicable:
+    false, reason: "retired", retired: true}`; `GET /v2/overview/activity` sources `council` / `old_engine` =
+    `"retired"` (past Council runs still listed; §26.3).
+  - **AI budgets** (user decision): the `fund` entry ("Fund AI — sentiment + judge (Council of AIs)") is HIDDEN from
+    `GET /ai/budgets` while retired; `PUT` for it → 409 `{kind: "Retired", code: "retired"}`; the spend history stays.
+  - **History pruning** (user decision): the old-engine newsroom.db pruning (runs 90 d without recommendation / order,
+    events 30 d) keeps running unchanged.
+  - **WPF:** Trading sub-tab "Retired: Council & old engine" = the read-only Retired card (date + reason, recent runs
+    as history, "paper-council is now managed by hand — no managing strategy", "Un-retire…" with one confirmation);
+    not retired → the Council view as before plus "Retire…" (one confirmation with the reason field). Toolbar while
+    retired: ▶ Run now, its hint and "Resume engine" hidden; the kill switch stays (texts: "platform + paper-council").
+    Overview: the Council source tile reads "retired — managed by hand", the activity feed lists retired sources as
+    "retired" (not as "not available"); the module tile shows "Council retired".
 ## 23. Stage 10 — hardening, security, Kraken removal, .env removal (as-built 2026-10-24)
 
 Full text (per-agent batch notes S10-B / H / K / U / A1 / A2 / E, exact texts, test names): →
@@ -1438,7 +1502,7 @@ As-delivered notes (W, 2026-10-24): → spec-archive/pending-docs-2026-10-24-25.
 
 Contract `UFOS.ai/docs/tasks/STAGE11_OVERVIEW_TASK.md` §1 (design D3 "Markets + risk"). Code
 `api/overview_routes.py` (routes, sources), `portfolio/overview_risk.py` (risk maths, pure); tests
-`tests/test_s11_overview_api.py`, `tests/test_s11_overview_risk.py`. Three READ-ONLY `GET` routes behind the token
+`tests/test_s11_overview_api.py`, `tests/test_s11_overview_risk.py`. Three READ-ONLY `GET` routes (+ §26.4 for the Risk Lab view) behind the token
 check; nothing trades, writes or touches the client heartbeat (dead-man switch). Reasons never carry raw exception
 text: a `UserFacingError`'s message or a reader's own safe text, else only the exception type + "(details in
 backend.log)". Every value has exactly ONE source; a
@@ -1519,5 +1583,22 @@ parameters → 400.
   (failed / partial runs + the newest ok one), `council` (Council runs), `old_engine` (`fund_events`, newest first via
   `fund/store.events_latest`, reached through the sanctioned bridge `execution.control.legacy_engine().store` — the
   platform imports nothing from `fund` (§22.7 guard `tests/test_s10_no_new_fund_imports.py`); no engine registered →
-  "not available (the old engine is not running in this backend)"). `link` names the target view: `trading/orders`, `trading/monitoring`,
+  "not available (the old engine is not running in this backend)"; retired (§22.15) → `"retired"`, and `council`
+  reads `"retired"` while still listing its past runs). `link` names the target view: `trading/orders`, `trading/monitoring`,
   `strategies/loop`, `trading/legacy`, `settings/options-archive`.
+- **§26.4 `GET /v2/risk/daily-returns`** (stage 11 Risk Lab view, contract `UFOS.ai/docs/tasks/RISKLAB_VIEW_TASK.md`
+  §B.1; code `api/risk_routes.py`, test `tests/test_rlview_daily_returns.py`) — READ-ONLY, token check like every
+  `/v2` route, no query parameters (unknown → 400) → `{account ("legacy"|"platform"|null), account_ids, excluded_ids,
+  generated_at, as_of (newest equity point), available, reason, days: ["YYYY-MM-DD"…], returns: [r…], n_daily_returns,
+  gaps, first_day, last_day, latest_equity, currency: "USD", return_kind: "simple", method}`. The daily simple returns
+  of the Overview's ACTIVE paper account set (§26.2), read through the SAME reader (`_ov_risk_inputs` →
+  `risk_inputs` → `active_account_set`) and computed by the SAME functions (`overview_risk.end_of_day`,
+  `dated_daily_returns`, `latest_equity`): `days[i]` = the NYSE trading day return i ends on; a gap is skipped and
+  counted (`gaps`), never filled; `latest_equity` = the newest valued equity point (the HS P&L scale of §26.2). Same
+  refusal as §26.2: a set with more than one account → `available: false`, `reason` "no platform equity history yet —
+  … per-account histories are not summed", empty series; an unreadable source → `reason` (safe text); no stored
+  points → "no stored equity points yet". With `available: true` the series may still be short — the consumer says
+  "needs ≥ N daily returns, have n". **Parity (pinned by the test):** RiskLab-convention HS VaR 99 % / ES 97.5 % on
+  `−latest_equity × returns` equals the §26.2 `var99_1d` / `es975_1d` figures. Consumer: the WPF Risk Lab view, which
+  passes the series to RiskLab's one-shot CLI (`python -m risklab.app var|backtest`, RiskLab's own venv); the backend
+  never imports RiskLab (and RiskLab never imports the backend).

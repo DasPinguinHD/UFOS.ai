@@ -84,6 +84,19 @@ def switch_state() -> str:
         return "unreadable"
 
 
+def retirement_state():
+    """("active" | "retired" | "unreadable", retired_at) of the retirement marker (SP §22.15), read per request."""
+    try:
+        from strategy_platform.council import retirement
+        if not retirement.is_retired_if_stored():          # also: no platform database → no marker can exist
+            return "active", None
+        st = retirement.state()
+        return ("retired" if st["retired"] else "active"), st["at"]
+    except Exception:       # noqa: BLE001 — RetirementUnreadable / import failure: fail closed
+        logger.exception("retirement marker unreadable")
+        return "unreadable", None
+
+
 class FundApi:
     """Route handlers (see module docstring)."""
 
@@ -92,17 +105,27 @@ class FundApi:
 
     # --- SP §22.8 (R2): after the switch-over every /fund route answers 410, EXCEPT kill / resume (D6) -------------
     async def replaced(self, name: str, query, body, match):
-        """(status, payload) when the route must not reach the old engine, else None."""
+        """(status, payload) when the route must not reach the old engine, else None. Retired (SP §22.15): the 410s
+        carry ``code: "retired"``; kill / resume keep forwarding to the platform (a kill switch never answers 410)."""
         state = await asyncio.to_thread(switch_state)
-        if state in ("none", "reverted"):
+        retired, retired_at = await asyncio.to_thread(retirement_state)
+        if state in ("none", "reverted") and retired == "active":
             return None
         if name == "kill":
             return await self.kill_forward(query, body, match)
         if state == "unreadable":
             return 503, {"error": "The Council switch-over state is unreadable — try again later.",
                          "code": "state_unreadable"}
-        if name == "resume":
+        if name == "resume" and state in ("pending", "done"):    # forwarded like kill, also with an unreadable marker
             return await self.resume_forward(query, body, match)
+        if retired == "unreadable":
+            return 503, {"error": "The retirement state is unreadable — try again later.",
+                         "code": "retirement_unreadable"}
+        if name == "resume":                 # retired before any switch-over (not reachable via the routes): as retire1
+            return await self.resume_forward(query, body, match)
+        if retired == "retired":
+            from strategy_platform.council import retirement
+            return 410, {"error": retirement.gone_message(retired_at), "code": "retired"}
         return 410, {"error": REPLACED, "code": "replaced"}
 
     async def kill_forward(self, query, body, match):

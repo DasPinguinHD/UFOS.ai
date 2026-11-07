@@ -44,7 +44,9 @@ other users (background: Claude Project `claude/project-direction.md`, `claude/c
   settings: each backend's optional strict `backend/data/settings.json`.
 - **Security by default** (2026-09-25): local servers on `127.0.0.1` only; Host-header check + session token
   (`X-UFOS-Token`, `backend/data/api-token`) on every endpoint with side effects, cost or data; no CORS `*`; TLS with
-  verification for every outbound call; validate all external input; open only http(s) links; no shell execution of
+  verification for every outbound call; validate all external input; open only http(s) links (one exception, user 2026-11-06: the Risk Lab view may open
+  `*.pdf` reports inside `C:\Users\leonh\Documents\UFOS.ai` only — resolved path inside that folder, no reparse points,
+  name `YYYY-MM-DD_<topic>.pdf` — and "Show in folder"); no shell execution of
   untrusted strings; escape everything rendered; rate / cost limits; safe error messages; no secrets in logs; pinned
   dependencies (`requirements.lock`, `--require-hashes`). New endpoints are protected automatically; new clients must
   send the token. The three `api_auth.py` / `ai_caps.py` / `settings_file.py`
@@ -151,3 +153,6 @@ other users (background: Claude Project `claude/project-direction.md`, `claude/c
 - **Reports (user, 2026-11-05):** whenever a feature is finished or there is something to report on an aspect, the lead
   produces a designed PDF report (report PDFs only; figure PDFs used as LaTeX assets may stay in the repo) and saves it in the user's report folder `C:\Users\leonh\Documents\UFOS.ai` (file name `YYYY-MM-DD_<topic>.pdf`), OUTSIDE the repo (never committed;
   `RiskLab/report/build_report.py --publish-to <dir>` refuses targets inside the repo).
+- **Reports are finished technical reports and a learning base (user, 2026-11-07):** no `\usertext` slots, no "draft"
+  mark; explain the why, assumptions and limits in plain language next to the formulas, define terms, name the
+  prerequisites and further reading — the user will later use them (with Claude) to learn to explain UFOS.ai.

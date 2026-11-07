@@ -1,0 +1,5 @@
+{
+  "label": "retire1b",
+  "approved": "lead, 2026-11-07: retire1 review fixes (fund/api resume forward on unreadable marker, KillResultText retired branch, cancelled-cycle reason, SPEC §22.15 lines, nits) per UFOS.ai/docs/tasks/RETIRE_COUNCIL_TASK.md; scope UFOS.ai/HedgeFund/** only, nothing outside the module (Agent H-R)",
+  "files": []
+}

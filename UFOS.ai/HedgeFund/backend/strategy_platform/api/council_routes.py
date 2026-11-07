@@ -2,7 +2,12 @@
 paper-council broker-params override (D9), the Council orders switch and (R2) the switch-over: GET
 ``/v2/council/switchover`` (dry run + blockers), POST ``/v2/council/switchover`` (the user's dialog — the ONLY way the
 real switch-over happens) and POST ``/v2/council/switchover/revert``. Council GETs do NOT touch the client heartbeat
-(SP §22.5). Errors ``{error, code}``, never a stack trace."""
+(SP §22.5). Errors ``{error, code}``, never a stack trace.
+
+Retirement (SP §22.15, retire1): POST ``/v2/council/retire`` / ``/v2/council/unretire`` (``council/retirement.py``).
+While retired every Council WRITE route answers 410 ``{code: "retired"}`` (except switching the Council orders OFF —
+a safety switch never answers 410) and the read routes stay 200 with ``retired: true`` (+ ``retired_at``,
+``reason``; ``/v2/council/state`` always carries ``retired``); an unreadable marker → writes 503 ``retirement_unreadable`` (fail closed)."""
 from __future__ import annotations
 
 import asyncio
@@ -22,6 +27,24 @@ def _err(status: int, code: str, message: str):
 def _svc():
     from strategy_platform.council import service
     return service.default()
+
+
+async def _retired_refusal():
+    """(410 | 503, payload) for a Council write route while retired / the marker is unreadable, else None."""
+    from strategy_platform.council import retirement
+    return await asyncio.to_thread(retirement.write_refusal)
+
+
+async def _with_retired(status_payload):
+    """A read route's (status, payload): a 200 dict gets the retirement fields (SP §22.15) while retired / unreadable
+    (unchanged shape otherwise; ``/v2/council/state`` always carries ``retired``)."""
+    from strategy_platform.council import retirement
+    status, payload = status_payload
+    if status == 200 and isinstance(payload, dict):
+        fields = await asyncio.to_thread(retirement.read_fields)
+        if fields["retired"] is not False:
+            payload = dict(payload, **fields)
+    return status, payload
 
 
 def _symbol_cards(detail: dict) -> list:
@@ -56,8 +79,9 @@ def _symbol_cards(detail: dict) -> list:
 
 
 def state_payload() -> dict:
-    from strategy_platform.council import service, spend, store
+    from strategy_platform.council import retirement, service, spend, store
     svc = service.default()
+    retired = retirement.read_fields()
     sw_error = None
     try:
         sw = store.switchover()
@@ -73,7 +97,9 @@ def state_payload() -> dict:
         logger.exception("Council params unreadable")
     now = svc.now() if svc else datetime.now(timezone.utc)
     sandbox = svc.sandbox() if svc else False
-    if svc is None or sw != "done":
+    if retired["retired"] is True:
+        task = "retired"                     # SP §22.15: the Council task is stopped while retired
+    elif svc is None or sw != "done":
         task = "not_active"
     elif sandbox:
         task = "sandbox"
@@ -103,7 +129,7 @@ def state_payload() -> dict:
                                                          if days is not None else None)},
             "next_due_at": (svc.next_due_at.isoformat(timespec="seconds") if svc and svc.next_due_at else None),
             "budget": {"limit_usd": limit, "spent_usd": spent, "status": bstatus},
-            "last_run": last, "symbols": _symbol_cards(store.run_detail(last["id"]) if last else None)}
+            "last_run": last, "symbols": _symbol_cards(store.run_detail(last["id"]) if last else None), **retired}
 
 
 class CouncilRoutesMixin:
@@ -131,7 +157,7 @@ class CouncilRoutesMixin:
                 errors["limit"] = "1..200"
         if errors:
             return _bad(errors)
-        return 200, {"runs": await asyncio.to_thread(store.runs, limit)}
+        return await _with_retired((200, {"runs": await asyncio.to_thread(store.runs, limit)}))
 
     async def council_run_detail(self, query: Mapping, body, match: Mapping):
         from strategy_platform.council import store
@@ -142,13 +168,16 @@ class CouncilRoutesMixin:
         d = await asyncio.to_thread(store.run_detail, rid)
         if d is None:
             return _err(404, "not_found", "No such Council run.")
-        return 200, d
+        return await _with_retired((200, d))
 
     async def council_run(self, query: Mapping, body, match: Mapping):
         from strategy_platform.council import service
         b = _body(body)
         if b is None or set(query) or (b and set(b)):
             return _bad({"_": "no parameters"})
+        refused = await _retired_refusal()
+        if refused:
+            return refused
         svc = _svc()
         if svc is None:
             return _err(503, "not_active", "The Council service is not running.")
@@ -162,8 +191,8 @@ class CouncilRoutesMixin:
         from strategy_platform.council import params as cp
         from strategy_platform.council import store
         got = await asyncio.to_thread(store.latest_params)
-        return 200, {"version": got[0] if got else None, "params": got[1] if got else None, "limits": cp.limits(),
-                     "active": got is not None}
+        return await _with_retired((200, {"version": got[0] if got else None, "params": got[1] if got else None,
+                                          "limits": cp.limits(), "active": got is not None}))
 
     async def council_params_put(self, query: Mapping, body, match: Mapping):
         from strategy_platform.council import params as cp
@@ -175,6 +204,9 @@ class CouncilRoutesMixin:
         errors: dict = {}
         reason = _note(b, errors)
         payload = {k: v for k, v in b.items() if k != "reason"}
+        refused = await _retired_refusal()
+        if refused:
+            return refused
         got = await asyncio.to_thread(store.latest_params)
         if got is None:
             return _err(409, "not_active", "The Council has no parameters before the switch-over.")
@@ -213,7 +245,7 @@ class CouncilRoutesMixin:
         out = await asyncio.to_thread(read)
         if out is None:
             return _err(404, "not_found", "The account paper-council does not exist (migration not done).")
-        return 200, out
+        return await _with_retired((200, out))
 
     async def council_broker_params_put(self, query: Mapping, body, match: Mapping):
         from strategy_platform.council import params as cp
@@ -226,6 +258,9 @@ class CouncilRoutesMixin:
         errors: dict = {}
         reason = _note(b, errors)
         payload = {k: v for k, v in b.items() if k != "reason"}
+        refused = await _retired_refusal()
+        if refused:
+            return refused
 
         def write():
             if not accounts.exists(accounts.COUNCIL):
@@ -265,6 +300,10 @@ class CouncilRoutesMixin:
             errors["enabled"] = "true or false"
         if errors:
             return _bad(errors)
+        if enabled:                  # retired: ON → 410; OFF stays possible (a safety switch never answers 410)
+            refused = await _retired_refusal()
+            if refused:
+                return refused
 
         def go():
             if not enabled:          # turning OFF always works (audit failure logged)
@@ -294,9 +333,13 @@ class CouncilRoutesMixin:
         if set(query):
             return _bad({k: "unknown parameter" for k in query})
         try:
-            return 200, await asyncio.to_thread(switchover.dry_run, control.legacy_engine())
+            out = await asyncio.to_thread(switchover.dry_run, control.legacy_engine())
         except switchover.SwitchoverError as ex:
             return ex.status, ex.payload()
+        status, out = await _with_retired((200, out))
+        if "retired" in out and isinstance(out.get("actions"), dict):
+            out["actions"] = {k: False for k in out["actions"]}     # retired / unreadable: nothing offered
+        return status, out
 
     async def council_switchover_post(self, query: Mapping, body, match: Mapping):
         from strategy_platform.council import switchover
@@ -308,6 +351,9 @@ class CouncilRoutesMixin:
         reason = self._reason(b, errors)
         if errors:
             return _bad(errors)
+        refused = await _retired_refusal()
+        if refused:
+            return refused
         try:
             return 200, await switchover.run(reason, "user", control.legacy_engine())
         except switchover.SwitchoverError as ex:
@@ -322,6 +368,9 @@ class CouncilRoutesMixin:
         reason = self._reason(b, errors)
         if errors:
             return _bad(errors)
+        refused = await _retired_refusal()
+        if refused:
+            return refused
         try:
             return 200, await getattr(switchover, op_name)(reason, "user")
         except switchover.SwitchoverError as ex:
@@ -337,6 +386,30 @@ class CouncilRoutesMixin:
     async def council_switchover_abort(self, query: Mapping, body, match: Mapping):
         """R2 review M2: give up the unfinished attempt, back to the old engine (SWITCHOVER_FIX_API.md §5)."""
         return await self._switchover_op(query, body, "abort")
+
+    # --- retirement (SP §22.15, retire1) ------------------------------------------------------------------------
+    async def _retire_op(self, query, body, op_name: str):
+        from strategy_platform.council import retirement
+        b = _body(body)
+        if b is None or set(query):
+            return _bad({"_": "expected a JSON object {reason?}"})
+        errors: dict = {}
+        reason = self._reason(b, errors)
+        if errors:
+            return _bad(errors)
+        try:
+            return 200, await getattr(retirement, op_name)(reason, "user", _svc())
+        except retirement.RetireError as ex:
+            return ex.status, ex.payload()
+
+    async def council_retire(self, query: Mapping, body, match: Mapping):
+        """POST /v2/council/retire {reason?}: audit → Council orders OFF (working ones cancelled) → task stopped →
+        marker. Idempotent; refused in sandbox mode and before the switch-over."""
+        return await self._retire_op(query, body, "retire")
+
+    async def council_unretire(self, query: Mapping, body, match: Mapping):
+        """POST /v2/council/unretire {reason?}: audit → marker cleared → task started; Council orders stay OFF."""
+        return await self._retire_op(query, body, "unretire")
 
 
 COUNCIL_ROUTES = (
@@ -354,4 +427,6 @@ COUNCIL_ROUTES = (
     ("POST", "/v2/council/switchover/revert", "council_switchover_revert", True),
     ("POST", "/v2/council/switchover/retry", "council_switchover_retry", True),
     ("POST", "/v2/council/switchover/abort", "council_switchover_abort", True),
+    ("POST", "/v2/council/retire", "council_retire", True),          # retire1 (SP §22.15)
+    ("POST", "/v2/council/unretire", "council_unretire", True),
 )

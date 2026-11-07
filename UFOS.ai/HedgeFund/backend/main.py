@@ -603,7 +603,23 @@ async def main() -> None:
     if council_state == "pending":
         logger.error("Council switch-over is UNFINISHED (recovery at start failed) — no engine runs until the user "
                      "retries or aborts it in the Council view (alert council_switchover_failed)")
-    engine = None if council_state in ("done", "pending") else _make_engine()
+    # Retirement (strategy_platform/SPEC.md §22.15, retire1): marker set → neither the Council task nor the old engine
+    # starts (the Council service is still built for its read routes / un-retire); marker unreadable → the same plus a
+    # critical alert (fail closed, no fallback). Re-applied at every start.
+    try:
+        from strategy_platform.council import retirement as council_retirement
+        retire_state = await asyncio.to_thread(council_retirement.startup_check)
+    except Exception as ex:   # noqa: BLE001
+        logger.error("Council retirement state could not be checked: %s", ex)
+        retire_state = "unreadable"
+    if retire_state != "active":
+        logger.warning("Council of AIs + old engine: %s — neither the Council task nor the old engine starts",
+                       retire_state)
+    try:
+        start_plan = council_retirement.startup_plan(council_state, retire_state)
+    except NameError:         # the retirement module failed to import above (logged) — fail closed
+        start_plan = {"old_engine": False, "council_task": False}
+    engine = _make_engine() if start_plan["old_engine"] else None
     fund_api_obj = fund_api.register(app, engine)   # /fund/* decide per request from the switch-over state
     # S10-C R1 (strategy_platform/SPEC.md §22.1): the Council service on the same feed + newsroom accessors as the
     # old engine — built and registered for /v2/council/*, NOT started before the switch-over build (R2). A failure
@@ -681,7 +697,7 @@ async def main() -> None:
             engine.start()
         except RuntimeError as ex:      # FundEngine.start refuses after / during a switch-over or on an unreadable state
             logger.error("old engine not started: %s", ex)
-    elif council_state == "done":
+    elif start_plan["council_task"]:
         try:
             from strategy_platform.council import service as council_service
             if council_service.default() is not None:

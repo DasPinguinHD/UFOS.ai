@@ -68,6 +68,24 @@ class SourceUnavailable(Exception):
     """Raised by a reader with a message written for the UI (safe: no path, no SQL text)."""
 
 
+class SourceRetired(Exception):
+    """Raised by the Council / old-engine readers while retired (SP §22.15): the source state reads "retired" (not an
+    error); ``items`` = the history still listed (past Council runs)."""
+
+    def __init__(self, items: Optional[List[dict]] = None):
+        super().__init__("retired")
+        self.items = list(items or [])
+
+
+def _retired() -> bool:
+    """The retirement marker (SP §22.15); raises SourceUnavailable when unreadable (said, never guessed)."""
+    from ..council import retirement
+    try:
+        return retirement.is_retired_if_stored()
+    except retirement.RetirementUnreadable as ex:
+        raise SourceUnavailable(f"the retirement state is unreadable ({ex})") from ex
+
+
 def _why(ex: BaseException) -> str:
     """A safe, short reason: a UserFacingError's ``user_message`` or a SourceUnavailable's own text; anything else
     → only the exception type + a fixed hint (no paths / SQLite text in the UI; the full text goes to backend.log)."""
@@ -413,13 +431,22 @@ def src_council(limit: int) -> List[dict]:
                  "warning" if st in ("failed", "error") else "info", LINKS["legacy"])
         if a:
             out.append(a)
+    try:
+        retired = _retired()
+    except SourceUnavailable:
+        retired = False                  # the past runs do not depend on the marker; listed as before
+    if retired:
+        raise SourceRetired(out)         # past runs stay listed, the source reads "retired"
     return out
 
 
 def src_old_engine(limit: int) -> List[dict]:
     """Old-engine events through the sanctioned bridge ``execution.control.legacy_engine()`` (the engine main.py
-    registers; its ``store`` = the old engine's own store) — no ``fund`` import from the platform (SP §22.7 guard)."""
+    registers; its ``store`` = the old engine's own store) — no ``fund`` import from the platform (SP §22.7 guard).
+    Retired (SP §22.15) → the source reads "retired" (no items), not "not running"."""
     from ..execution import control
+    if _retired():
+        raise SourceRetired()
     eng = control.legacy_engine()
     if eng is None:
         raise SourceUnavailable("the old engine is not running in this backend")
@@ -727,6 +754,9 @@ class OverviewRoutesMixin:
                     got = fn(limit)
                     items.extend(x for x in got if x)
                     sources[name] = "ok"
+                except SourceRetired as r:   # SP §22.15: "retired" is a state, not an error
+                    items.extend(x for x in r.items if x)
+                    sources[name] = "retired"
                 except Exception as ex:      # noqa: BLE001 — this source says why; the rest still returns
                     logger.warning("/v2/overview/activity: source %s failed: %s", name, _why(ex))
                     sources[name] = f"not available ({_why(ex)})"

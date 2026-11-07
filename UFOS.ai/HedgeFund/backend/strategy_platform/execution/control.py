@@ -372,6 +372,16 @@ def kill_platform(reason: Optional[str] = None, actor: str = "user", via: Option
     return out
 
 
+def _retired_for_kill() -> Optional[bool]:
+    """The retirement marker for the kill result's wording (True / False; None = unreadable). Never raises — the kill
+    switch never fails on it (SP §22.15)."""
+    try:
+        from strategy_platform.council import retirement
+        return retirement.is_retired()
+    except Exception:            # noqa: BLE001
+        return None
+
+
 def kill_all(reason: Optional[str] = None, actor: str = "user", via: Optional[str] = None) -> dict:
     """POST /v2/oms/kill (sync; call in a worker thread) → {"platform", "legacy", "council"} (SP §22.8).
     Before the switch-over: the platform kill AND the old engine's kill (its closing orders passed through);
@@ -385,7 +395,10 @@ def kill_all(reason: Optional[str] = None, actor: str = "user", via: Optional[st
         cl_store, state = None, "unreadable"
     platform = kill_platform(reason, actor, via)
     if state in ("done", "pending"):        # pending: the old engine is already stopped (review minor 4)
-        legacy = {"ok": True, "applicable": False, "note": "not applicable — switched over to the Council",
+        retired = _retired_for_kill()       # SP §22.15: still the "done" branch, only the wording says "retired"
+        legacy = {"ok": True, "applicable": False,
+                  "note": ("retired — the old engine does not run" if retired else
+                           "not applicable — switched over to the Council"),
                   "error": None, "halted": None}
         n = council_orders_off("kill", actor)
         acc_res = next((a for a in platform.get("accounts") or [] if a.get("account_id") == accounts.COUNCIL), None)
@@ -393,6 +406,8 @@ def kill_all(reason: Optional[str] = None, actor: str = "user", via: Optional[st
         enabled = cl_store.orders_enabled()
         council = {"applicable": True, "ok": not enabled, "orders_enabled": enabled, "cancelled_orders": cancelled,
                    "error": None if not enabled else "the Council orders switch could not be forced off"}
+        if retired is not False:            # only while retired / unreadable (the result shape is unchanged otherwise)
+            legacy["retired"] = council["retired"] = retired
         return {"platform": platform, "legacy": legacy, "council": council}
     legacy = {"ok": True, "error": None, "halted": None, "orders": []}
     eng = _legacy_engine

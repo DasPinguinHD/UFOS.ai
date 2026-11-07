@@ -1073,7 +1073,7 @@ namespace UFOS.ai.HedgeFund
         private void UpdateHalt(FundState s)
         {
             var halted = s.Halted?.Active == true;
-            ResumeButton.Visibility = halted ? Visibility.Visible : Visibility.Collapsed;
+            ResumeButton.Visibility = halted && !_councilRetired ? Visibility.Visible : Visibility.Collapsed;
             if (!halted)
             {
                 HaltBanner.Visibility = Visibility.Collapsed;
@@ -1191,7 +1191,7 @@ namespace UFOS.ai.HedgeFund
                 RunNowButton.ToolTip = "US market closed: there are no scheduled runs until the open. ▶ Run now runs one full cycle " +
                                        "(Council of AIs: agents + judge) — crypto orders fill immediately, stock/ETF orders are queued for the next open. " +
                                        AiContent.TriggerTooltip;
-                RunNowHintText.Visibility = Visibility.Visible;
+                RunNowHintText.Visibility = _councilRetired ? Visibility.Collapsed : Visibility.Visible;
             }
             else
             {
@@ -2522,7 +2522,10 @@ namespace UFOS.ai.HedgeFund
             // S10 review C1 (2026-10-24): POST /v2/oms/kill (control.kill_all) runs the platform kill (all platform accounts, brokers
             // included) AND the old engine's kill; each half reports its own result — this one button covers both.
             var values = FundDialogs.Form(this, "Kill switch",
-                (_councilReplaced
+                (_councilRetired
+                    ? "This halts all paper trading immediately (Strategy Platform + paper-council).\n\n" +
+                      "The Council of AIs and the old engine are retired — nothing of theirs runs; the Council orders stay off.\n\n"
+                    : _councilReplaced
                     ? "This halts all paper trading immediately.\n\n" +
                       "Council of AIs:\n" +
                       "• the Council orders are switched off and its working orders are cancelled (paper-council's positions are closed with the platform accounts below).\n\n"
@@ -2583,7 +2586,23 @@ namespace UFOS.ai.HedgeFund
             var legacy = r?.Legacy;
             var council = r?.Council;
             var switchedOver = council?.Applicable == true || legacy?.Applicable == false;
-            if (switchedOver)
+            // retire1 (SPEC §22.15): {retired: true} on both halves while retired — said as "retired", never as an old-engine / Council action
+            var retired = council?.Retired == true || legacy?.Retired == true;
+            if (retired)
+            {
+                if (council?.Applicable != true)
+                {
+                    ok = false;   // review retire1b: never claim "confirmed off" without the Council half
+                    lines.Add("Council & old engine: retired — but no Council result was reported; check Trading › Retired (its orders switch must be off).");
+                }
+                else if (council.Ok != true)
+                {
+                    ok = false;
+                    lines.Add("Council (retired): its orders switch is NOT confirmed off — " + (string.IsNullOrWhiteSpace(council.Error) ? "no reason given" : council.Error!.Trim()));
+                }
+                else lines.Add("Council & old engine: retired — nothing of theirs runs (the Council orders are confirmed off).");
+            }
+            else if (switchedOver)
             {
                 lines.Add("Old engine: not applicable — switched over to the Council.");
                 if (council?.Applicable != true)
@@ -2670,6 +2689,7 @@ namespace UFOS.ai.HedgeFund
             var title = notFlat ? "Kill switch — a broker is NOT verified flat, check the results"
                 : !ok ? "Kill switch — check the results"
                 : ordersFailed > 0 ? "Halted — some closing orders failed"
+                : retired ? "Platform + paper-council halted"
                 : switchedOver ? "All paper trading halted"
                 : "Both engines halted";
             return (title, string.Join("\n\n", lines));

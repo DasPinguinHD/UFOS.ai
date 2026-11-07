@@ -503,5 +503,48 @@ class ReviewFixTest(SwitchoverCase):
         self.assertTrue(eng._stopping)
         self.assertTrue(eng._switchover_refused)
 
+
+class RetiredFundRoutesTest(SwitchoverCase):
+    """retire1 (SP §22.15): while retired every /fund route answers 410 ``retired`` — except /fund/kill and
+    /fund/resume, which keep forwarding to the platform (a kill switch never answers 410); an unreadable marker →
+    503, the kill still forwards."""
+
+    def test_fund_routes_while_retired(self):
+        from strategy_platform.council import retirement
+        self.migrate()
+        self.run_r2()
+        retirement._write(True, "user", "retired in the test", None)
+        api = FundApi(None)
+        st, body = asyncio.run(api.replaced("state", {}, NO_BODY, {}))
+        self.assertEqual((st, body["code"]), (410, "retired"))
+        self.assertIn("un-retire first", body["error"])
+        self.assertEqual(asyncio.run(api.replaced("run", {}, NO_BODY, {}))[1]["code"], "retired")
+        st, body = asyncio.run(api.replaced("kill", {}, {"reason": "pinned button"}, {}))
+        self.assertEqual(st, 200)
+        self.assertTrue(body["platform"]["ok"])
+        self.assertEqual((body["legacy"]["retired"], body["council"]["retired"]), (True, True))
+        self.assertTrue(accounts.get(accounts.COUNCIL).halt()["active"])
+        self.assertEqual(audits("platform_kill")[-1]["via"], "/fund/kill")
+        st, body = asyncio.run(api.replaced("resume", {}, {"reason": "pinned button"}, {}))
+        self.assertEqual(st, 200, body)
+        self.assertFalse(accounts.get(accounts.COUNCIL).halt()["active"])
+        self.assertFalse(cs.orders_enabled())
+        db.meta_set(retirement.META_RETIRED, "{broken")
+        st, body = asyncio.run(api.replaced("state", {}, NO_BODY, {}))
+        self.assertEqual((st, body["code"]), (503, "retirement_unreadable"))
+        self.assertEqual(asyncio.run(api.replaced("kill", {}, NO_BODY, {}))[0], 200)
+        # review retire1b #1: /fund/resume forwards like /fund/kill also with an unreadable marker (never a 503)
+        self.assertTrue(accounts.get(accounts.COUNCIL).halt()["active"])
+        st, body = asyncio.run(api.replaced("resume", {}, {"reason": "after kill"}, {}))
+        self.assertEqual(st, 200, body)
+        self.assertFalse(accounts.get(accounts.COUNCIL).halt()["active"])
+        self.assertEqual(audits("platform_resume")[-1]["via"], "/fund/resume")
+        # an unreadable marker before any switch-over: the old engine is not reached either (fail closed)
+        db.meta_set(cs.META_SWITCHOVER, json.dumps({"state": "reverted"}))
+        self.assertEqual(asyncio.run(api.replaced("state", {}, NO_BODY, {}))[0], 503)
+        retirement._write(False, "user", "back", None)
+        self.assertIsNone(asyncio.run(api.replaced("state", {}, NO_BODY, {})))
+
+
 if __name__ == "__main__":
     unittest.main()

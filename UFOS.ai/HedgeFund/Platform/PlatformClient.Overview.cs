@@ -130,21 +130,34 @@ namespace UFOS.ai.HedgeFund.Platform
     internal sealed class OverviewActivity
     {
         [JsonPropertyName("items")] public List<OverviewActivityItem>? Items { get; set; }
-        /// <summary>{source name: "ok" | "not available (reason)"} — values kept raw (plain text in the UI).</summary>
+        /// <summary>{source name: "ok" | "retired" | "not available (reason)"} — values kept raw (plain text in the UI).</summary>
         [JsonPropertyName("sources")] public Dictionary<string, JsonElement>? Sources { get; set; }
 
-        /// <summary>The sources that are not "ok", as "name: text".</summary>
+        /// <summary>The sources that are neither "ok" nor "retired" (SP §22.15: a state, not an error), as "name: text".</summary>
         public List<string> ProblemSources()
         {
             var list = new List<string>();
             if (Sources == null) return list;
             foreach (var kv in Sources)
             {
-                var text = kv.Value.ValueKind == JsonValueKind.String ? kv.Value.GetString() ?? "" : FundFormat.Plain(kv.Value);
-                if (!string.Equals(text.Trim(), "ok", StringComparison.OrdinalIgnoreCase)) list.Add(kv.Key + ": " + text);
+                var text = SourceText(kv.Value).Trim();
+                if (!string.Equals(text, "ok", StringComparison.OrdinalIgnoreCase) && !string.Equals(text, "retired", StringComparison.OrdinalIgnoreCase))
+                    list.Add(kv.Key + ": " + text);
             }
             return list;
         }
+
+        /// <summary>The source names that read "retired" (the Council and the old engine after the retirement, SP §22.15).</summary>
+        public List<string> RetiredSources()
+        {
+            var list = new List<string>();
+            if (Sources == null) return list;
+            foreach (var kv in Sources)
+                if (string.Equals(SourceText(kv.Value).Trim(), "retired", StringComparison.OrdinalIgnoreCase)) list.Add(kv.Key);
+            return list;
+        }
+
+        private static string SourceText(JsonElement v) => v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : FundFormat.Plain(v);
     }
 
     /// <summary>{ts, kind, title, detail, severity ("info"|"warning"|"error"), link} — plain text only.</summary>

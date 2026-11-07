@@ -1,0 +1,8 @@
+{
+  "label": "retire1",
+  "approved": "lead, 2026-11-06: retire the Council of AIs and the old engine (reversible) per UFOS.ai/docs/tasks/RETIRE_COUNCIL_TASK.md §1-§3 (scope UFOS.ai/HedgeFund/**, UFOS.ai/docs/**; outside the module only the todo and the task file) (Agent H-R)",
+  "files": [
+    "UFOS.ai/docs/todo.md",
+    "UFOS.ai/docs/tasks/RETIRE_COUNCIL_TASK.md"
+  ]
+}

@@ -43,6 +43,8 @@ KINDS = {
                                   "label": "Council of AIs — switch-over did not finish"},
     "council_legacy_duplicates": {"severity": "critical", "toast": True,          # v26 index not possible
                                   "label": "Council of AIs — duplicate imported history"},
+    "council_retirement_unreadable": {"severity": "critical", "toast": True,      # retire1 (SP §22.15): fail closed
+                                      "label": "Council / old engine — retirement state unreadable"},
     # Disclosures watchlist (CONGRESS, user 2026-10-24): Monitoring → Alerts only, NO toast
     "disclosure_watched_member": {"severity": "info", "toast": False, "label": "Disclosures — watched member filed"},
     "disclosure_held_ticker": {"severity": "info", "toast": False, "label": "Disclosures — held ticker in a new filing"},
