@@ -13,7 +13,8 @@ namespace UFOS.ai.Shared
 {
     /// <summary>
     /// Prepares the Python environments (backend\.venv) of the module backends
-    /// (HedgeFund, Global Monitoring, LiveStreamAgent). Added 2026-09-25.
+    /// (HedgeFund, Global Monitoring, LiveStreamAgent) and of the Risk Lab (UFOS.ai\RiskLab\.venv,
+    /// stage 11 Risk Lab view, see "Risk Lab lock contract" below; prepared LAZILY, never at app start). Added 2026-09-25.
     ///
     /// - The root UFOS.ai app calls <see cref="StartAppPreparation"/> once at start
     ///   (MainWindow.Window_Loaded): in the background, one module after the other,
@@ -48,6 +49,31 @@ namespace UFOS.ai.Shared
     ///   (A file lock instead of a named Mutex: the PowerShell scripts, including the
     ///   Settings "Update Python packages" run, already use it, and it isn't thread-affine.)
     ///
+    /// Risk Lab lock contract (RISKLAB_VIEW_TASK.md §B.2, 2026-11-06; review fixes rlview-be2 2026-11-07) — a folder with
+    /// requirements.in and NO requirements.txt (<see cref="IsUvCompiled"/>): RiskLab's requirements.lock is compiled by uv
+    /// (<see cref="UvCompileCommand"/>, uv 0.13.7, RiskLab README "Dependencies") and has no "# source:" line. Rules
+    /// (<see cref="UvLockProblem"/>, checked on EVERY prepare / wait, also when the venv is installed):
+    /// - lock missing, or its header has no "uv pip compile requirements.in" line → stop with the exact uv command;
+    /// - .venv\ufos-lock-source.sha256 records "requirements.in normalized-sha256=&lt;hex&gt;" and
+    ///   "requirements.lock sha256=&lt;hex&gt;" (lower-case) — written after every successful install and, when missing,
+    ///   whenever the check passes with an up-to-date venv. requirements.in is hashed NORMALISED
+    ///   (<see cref="NormalizedRequirementsIn"/>: comments, blank lines, whitespace runs, line order, line endings and the
+    ///   case of project names do not count), so a cosmetic edit that recompiles to the identical lock is not "stale";
+    ///   a real change of requirements.in while the lock did NOT change → stale → stop with the exact uv command; both
+    ///   changed = the lock was recompiled → install;
+    /// - no record yet (first install, recreated venv) → the lock is accepted as compiled from the current
+    ///   requirements.in (it cannot be checked further; the header names the source);
+    /// - the venv's Python must be one the lock has wheels for (<see cref="UvPythonMin"/>–<see cref="UvPythonMax"/>:
+    ///   numpy 2.2.6 / scipy 1.15.3 publish CPython wheels for 3.10–3.13 only; the lock has no python markers) — checked
+    ///   before an install; another version → stop naming the version found and the command to recreate the venv. No
+    ///   automatic switch to another interpreter;
+    /// - the install itself is the same as for the backends: "pip install --require-hashes -r requirements.lock" only
+    ///   when the lock changed (same stamp .venv\ufos-requirements.sha256), venv lock file RiskLab\.venv.lock, log
+    ///   RiskLab\data\logs\env-setup.log. The RiskLab package itself is NOT installed: the caller runs
+    ///   "python -m risklab.app" with PYTHONPATH = RiskLab\src.
+    /// - LAZY (lead decision 2026-11-07): the Risk Lab is not part of the app-start preparation (no first-start download,
+    ///   no FailedModules entry); the Risk Lab view calls WaitForModuleAsync("risklab", progress, ct) before its first run.
+    ///
     /// This file is compiled into the root app AND linked into every module project
     /// (internal on purpose, one copy per assembly). Static state is therefore per
     /// assembly - the launchers in the module assemblies coordinate with the root app's
@@ -69,11 +95,14 @@ namespace UFOS.ai.Shared
         private static readonly TimeSpan LockStaleAfter = TimeSpan.FromMinutes(30);
         private static readonly TimeSpan LockWaitMax = TimeSpan.FromMinutes(35);
 
-        private static readonly (string Name, string[] RelativeDir)[] KnownModules =
+        // Key (for WaitForModuleAsync(key)), display name, folder below the repo's UFOS.ai folder, marker file that must
+        // exist, prepared at app start (false = lazily, on the first WaitForModuleAsync(key)).
+        private static readonly (string Key, string Name, string[] RelativeDir, string Marker, bool AtStart)[] KnownModules =
         {
-            ("Hedge Fund", new[] { "HedgeFund", "backend" }),
-            ("Global Monitoring", new[] { "Global Monitoring", "backend" }),
-            ("LiveStream Agent", new[] { "LiveStreamAgent", "backend" }),
+            ("hedgefund", "Hedge Fund", new[] { "HedgeFund", "backend" }, "requirements.txt", true),
+            ("globalmonitoring", "Global Monitoring", new[] { "Global Monitoring", "backend" }, "requirements.txt", true),
+            ("livestreamagent", "LiveStream Agent", new[] { "LiveStreamAgent", "backend" }, "requirements.txt", true),
+            ("risklab", "Risk Lab", new[] { "RiskLab" }, UvSourceFileName, false),  // own venv, uv lock, lazy (Risk Lab view)
         };
 
         private static readonly object Sync = new();
@@ -152,32 +181,50 @@ namespace UFOS.ai.Shared
 
         /// <summary>
         /// Walks up from the exe folder (like the launchers' FindBackendScript helpers) and
-        /// returns every module backend that has a requirements.txt.
+        /// returns every module backend prepared at app start that has its marker file (requirements.txt). The Risk Lab
+        /// is not listed: it is prepared lazily (<see cref="WaitForModuleAsync(string, IProgress{string}?, CancellationToken)"/>).
         /// </summary>
         public static IReadOnlyList<(string Name, string BackendDir)> DiscoverModuleBackends()
         {
             var result = new List<(string Name, string BackendDir)>();
-            foreach (var (name, relativeDir) in KnownModules)
+            foreach (var (_, name, relativeDir, marker, atStart) in KnownModules)
             {
-                try
-                {
-                    var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
-                    for (var depth = 0; dir != null && depth < 8; depth++, dir = dir.Parent)
-                    {
-                        var backendDir = Path.Combine(new[] { dir.FullName }.Concat(relativeDir).ToArray());
-                        if (File.Exists(Path.Combine(backendDir, "requirements.txt")))
-                        {
-                            result.Add((name, backendDir));
-                            break;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    SafeLog(AppLogModule, "Could not look for the " + name + " backend folder.", ex, error: false);
-                }
+                if (!atStart) continue;
+                var found = LocateModuleDir(name, relativeDir, marker);
+                if (found != null) result.Add((name, found));
             }
             return result;
+        }
+
+        /// <summary>
+        /// The folder of a known module by key ("hedgefund", "globalmonitoring", "livestreamagent", "risklab";
+        /// case-insensitive), found like <see cref="DiscoverModuleBackends"/>; null when the key is unknown or the folder
+        /// (with its marker file) is not found.
+        /// </summary>
+        public static string? FindModuleDir(string moduleKey)
+        {
+            foreach (var (key, name, relativeDir, marker, _) in KnownModules)
+                if (string.Equals(key, moduleKey, StringComparison.OrdinalIgnoreCase))
+                    return LocateModuleDir(name, relativeDir, marker);
+            return null;
+        }
+
+        private static string? LocateModuleDir(string name, string[] relativeDir, string marker)
+        {
+            try
+            {
+                var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+                for (var depth = 0; dir != null && depth < 8; depth++, dir = dir.Parent)
+                {
+                    var moduleDir = Path.Combine(new[] { dir.FullName }.Concat(relativeDir).ToArray());
+                    if (File.Exists(Path.Combine(moduleDir, marker))) return moduleDir;
+                }
+            }
+            catch (Exception ex)
+            {
+                SafeLog(AppLogModule, "Could not look for the " + name + " folder.", ex, error: false);
+            }
+            return null;
         }
 
         private static async Task<bool> PrepareAllAsync()
@@ -236,6 +283,44 @@ namespace UFOS.ai.Shared
             => Task.Run(() => EnsureReadyAsync(backendDir, moduleName, progress, ct));
 
         /// <summary>
+        /// For callers that know a module only by its key — the Risk Lab view calls
+        /// <c>WaitForModuleAsync("risklab", progress, ct)</c> before its first CLI run (lazy preparation: creates / installs
+        /// the venv when needed). Same as the (backendDir, moduleName) overload; false (logged, reported through
+        /// <paramref name="progress"/>) when the key is unknown, the module folder is not found, or the environment
+        /// could not be prepared — the module-specific reason was reported before.
+        /// </summary>
+        public static Task<bool> WaitForModuleAsync(string moduleKey)
+            => WaitForModuleAsync(moduleKey, null, CancellationToken.None);
+
+        /// <inheritdoc cref="WaitForModuleAsync(string)"/>
+        public static async Task<bool> WaitForModuleAsync(string moduleKey, IProgress<string>? progress, CancellationToken ct)
+        {
+            foreach (var (key, name, relativeDir, marker, _) in KnownModules)
+            {
+                if (!string.Equals(key, moduleKey, StringComparison.OrdinalIgnoreCase)) continue;
+                var dir = LocateModuleDir(name, relativeDir, marker);
+                if (dir == null)
+                {
+                    var why = "the " + name + " folder (" + string.Join("\\", relativeDir) + " with " + marker + ") was not found next to the app";
+                    SafeLog(name, "Python environment: " + why + ".", null, error: true);
+                    progress?.Report(why);
+                    return false;
+                }
+                var ok = await WaitForModuleAsync(dir, name, progress, ct).ConfigureAwait(false);
+                if (!ok)
+                    SafeLog(name, "Python environment: the " + name + " environment (" + Path.Combine(dir, ".venv") +
+                                  ") is not ready - " + name + " runs are not possible until it is (reason above; details in " +
+                                  Path.Combine(dir, "data", "logs", "env-setup.log") + ").", null, error: true);
+                return ok;
+            }
+            SafeLog(AppLogModule, "Python environment: unknown module key '" + moduleKey + "'.", null, error: true);
+            return false;
+        }
+
+        /// <summary>The venv's python.exe of a module folder (from <see cref="FindModuleDir"/>); may not exist yet.</summary>
+        internal static string VenvPythonPath(string moduleDir) => VenvPython(moduleDir);
+
+        /// <summary>
         /// Under the venv lock: create the .venv if missing/broken and run
         /// "pip install -r requirements.txt --upgrade" if requirements.txt changed since the
         /// last successful install (stamp), then write the stamp. Never throws.
@@ -284,10 +369,27 @@ namespace UFOS.ai.Shared
                                                            IProgress<string>? progress, CancellationToken ct)
         {
             var venvPython = VenvPython(backendDir);
+            // Risk Lab (uv lock contract, class summary): a missing / stale lock stops even when the venv is installed.
+            var uv = IsUvCompiled(backendDir);
+            if (uv)
+            {
+                var uvProblem = UvLockProblem(backendDir);
+                if (uvProblem != null)
+                {
+                    SafeLog(moduleName, "Python environment: " + uvProblem + ".", null, error: true);
+                    AppendEnvLog(backendDir, moduleName, "Not installed: " + uvProblem);
+                    progress?.Report(uvProblem);
+                    return false;
+                }
+            }
             var reason = GetInstallReason(backendDir);
             if (File.Exists(venvPython) && !await VenvRunsAsync(backendDir, moduleName, ct).ConfigureAwait(false))
                 reason = BrokenReason;
-            if (reason == null) return true;
+            if (reason == null)
+            {
+                if (uv) EnsureUvRecord(backendDir, moduleName);     // check passed, venv current: record it when missing
+                return true;
+            }
 
             SafeLog(moduleName, "Python environment needs an install: " + reason + ".", null, error: false);
             AppendEnvLog(backendDir, moduleName, $"===== {DateTime.Now:yyyy-MM-dd HH:mm:ss} install needed: {reason} =====");
@@ -306,8 +408,9 @@ namespace UFOS.ai.Shared
             var lockPath = Path.Combine(backendDir, LockFileName);
             // Hash BEFORE installing: an edit during the install then triggers another one next time.
             var hash = RequirementsHash(backendDir);
+            var uvRecord = uv ? UvRecordText(backendDir) : null;
 
-            if (!File.Exists(requirements))
+            if (!uv && !File.Exists(requirements))
             {
                 File.WriteAllText(hashFile, hash + "\r\n", Encoding.ASCII);
                 AppendEnvLog(backendDir, moduleName, "No requirements.txt - nothing to install.");
@@ -315,13 +418,25 @@ namespace UFOS.ai.Shared
             }
 
             // Pinned installs only (LOCK_API): no current lock → stop with the exact command, never an unpinned install.
-            var lockProblem = LockProblem(backendDir);
+            var lockProblem = uv ? null : LockProblem(backendDir);
             if (lockProblem != null)
             {
                 SafeLog(moduleName, "Python environment: " + lockProblem + " (in " + backendDir + ").", null, error: true);
                 AppendEnvLog(backendDir, moduleName, "Not installed: " + lockProblem);
                 progress?.Report(lockProblem);
                 return false;
+            }
+
+            if (uv)
+            {
+                var pyProblem = await UvPythonProblemAsync(backendDir, ct).ConfigureAwait(false);
+                if (pyProblem != null)
+                {
+                    SafeLog(moduleName, "Python environment: " + pyProblem + ".", null, error: true);
+                    AppendEnvLog(backendDir, moduleName, "Not installed: " + pyProblem);
+                    progress?.Report(pyProblem);
+                    return false;
+                }
             }
 
             progress?.Report("installing packages (" + reason + ") — can take a few minutes…");
@@ -347,6 +462,7 @@ namespace UFOS.ai.Shared
             }
 
             File.WriteAllText(hashFile, hash + "\r\n", Encoding.ASCII);
+            if (uvRecord != null) File.WriteAllText(Path.Combine(venvDir, UvRecordFileName), uvRecord, Encoding.ASCII);
             try { File.Delete(pendingFile); } catch { }
             SafeLog(moduleName, "Python environment ready (packages installed).", null, error: false);
             AppendEnvLog(backendDir, moduleName, "Install finished - stamp written.");
@@ -414,6 +530,163 @@ namespace UFOS.ai.Shared
             if (!string.Equals(source, want, StringComparison.Ordinal))
                 return LockFileName + " is out of date (requirements changed) - run: " + tool + " --update";
             return null;
+        }
+
+        // ------------------------------------------------------------------ Risk Lab: uv-compiled lock
+
+        internal const string UvSourceFileName = "requirements.in";
+        private const string UvRecordFileName = "ufos-lock-source.sha256";
+        private const string UvLockHeader = "uv pip compile requirements.in";
+        private const string UvInKey = "requirements.in normalized-sha256";
+        private const string UvLockKey = "requirements.lock sha256";
+
+        /// <summary>The exact command that (re)compiles RiskLab's lock — run in UFOS.ai\RiskLab (RiskLab README "Dependencies").</summary>
+        internal const string UvCompileCommand =
+            "uv pip compile requirements.in --universal --fork-strategy fewest --generate-hashes --python-version 3.10 -o requirements.lock";
+
+        /// <summary>
+        /// The CPython range the lock can be installed on: its packages (numpy 2.2.6, scipy 1.15.3) publish wheels for
+        /// cp310–cp313 only (checked on PyPI 2026-11-07; the uv lock carries no python markers). Update together with the lock.
+        /// </summary>
+        internal static readonly Version UvPythonMin = new(3, 10), UvPythonMax = new(3, 13);
+
+        private static readonly System.Text.RegularExpressions.Regex UvRecordLine =
+            new(@"^(requirements\.in normalized-sha256|requirements\.lock sha256)=([0-9a-f]{64})$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        private static readonly System.Text.RegularExpressions.Regex RequirementName =
+            new(@"^[A-Za-z0-9][A-Za-z0-9._-]*", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        private static readonly System.Text.RegularExpressions.Regex WhitespaceRun =
+            new(@"\s+", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        /// <summary>True for a folder under the uv lock contract: requirements.in and no requirements.txt (the Risk Lab).</summary>
+        internal static bool IsUvCompiled(string dir)
+            => !File.Exists(Path.Combine(dir, "requirements.txt")) && File.Exists(Path.Combine(dir, UvSourceFileName));
+
+        /// <summary>
+        /// Null when requirements.lock may be installed under the uv contract (class summary); else the message with the
+        /// exact uv command.
+        /// </summary>
+        internal static string? UvLockProblem(string dir)
+        {
+            var run = "run in " + dir + " (needs internet; uv 0.13.7): " + UvCompileCommand;
+            var lockPath = Path.Combine(dir, LockFileName);
+            if (!File.Exists(lockPath)) return LockFileName + " missing - " + run;
+            var header = false;
+            foreach (var line in File.ReadLines(lockPath).Take(20))
+                if (line.TrimStart().StartsWith("#", StringComparison.Ordinal) && line.Contains(UvLockHeader, StringComparison.Ordinal))
+                { header = true; break; }
+            if (!header) return LockFileName + " was not compiled from " + UvSourceFileName + " by uv (no \"" + UvLockHeader + "\" header line) - " + run;
+            var (recIn, recLock) = ReadUvRecord(dir);
+            if (recIn == null || recLock == null) return null;  // no / unreadable record: accepted, (re)written once the check passes
+            var inChanged = !string.Equals(recIn, NormalizedInHash(dir), StringComparison.Ordinal);
+            var lockChanged = !string.Equals(recLock, Sha256Lower(lockPath), StringComparison.Ordinal);
+            if (inChanged && !lockChanged)
+                return LockFileName + " is out of date (" + UvSourceFileName + " changed since the last install, the lock did not; recorded in .venv\\"
+                       + UvRecordFileName + ") - " + run;
+            return null;
+        }
+
+        /// <summary>
+        /// requirements.in reduced to what the resolver sees: comments ("#" at the line start or after whitespace) and blank
+        /// lines removed, whitespace runs collapsed to one space, lines trimmed, the leading project name lower-cased, lines
+        /// sorted (ordinal), joined with LF. Its sha256 is the record's "requirements.in normalized-sha256".
+        /// </summary>
+        internal static string NormalizedRequirementsIn(string text)
+        {
+            var lines = new List<string>();
+            foreach (var raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+            {
+                var line = raw;
+                for (var i = 0; i < line.Length; i++)
+                    if (line[i] == '#' && (i == 0 || char.IsWhiteSpace(line[i - 1]))) { line = line.Substring(0, i); break; }
+                line = WhitespaceRun.Replace(line, " ").Trim();
+                if (line.Length == 0) continue;
+                var name = RequirementName.Match(line);
+                if (name.Success) line = name.Value.ToLowerInvariant() + line.Substring(name.Length);
+                lines.Add(line);
+            }
+            lines.Sort(StringComparer.Ordinal);
+            return string.Join("\n", lines);
+        }
+
+        private static string NormalizedInHash(string dir)
+        {
+            string text;
+            using (var fs = new FileStream(Path.Combine(dir, UvSourceFileName), FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = new StreamReader(fs, Encoding.UTF8))
+                text = reader.ReadToEnd();
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(NormalizedRequirementsIn(text)))).ToLowerInvariant();
+        }
+
+        private static (string? In, string? Lock) ReadUvRecord(string dir)
+        {
+            var record = Path.Combine(dir, ".venv", UvRecordFileName);
+            if (!File.Exists(record)) return (null, null);
+            string? recIn = null, recLock = null;
+            try
+            {
+                foreach (var line in File.ReadLines(record))
+                {
+                    var m = UvRecordLine.Match(line.Trim());
+                    if (!m.Success) continue;
+                    if (m.Groups[1].Value == UvInKey) recIn = m.Groups[2].Value; else recLock = m.Groups[2].Value;
+                }
+            }
+            catch (IOException) { return (null, null); }
+            return (recIn, recLock);
+        }
+
+        /// <summary>The record written after a successful install (hashes taken BEFORE the install, like the stamp).</summary>
+        private static string UvRecordText(string dir)
+            => UvInKey + "=" + NormalizedInHash(dir) + "\r\n"
+             + UvLockKey + "=" + Sha256Lower(Path.Combine(dir, LockFileName)) + "\r\n";
+
+        /// <summary>Writes the record when it is missing / unreadable and the venv is current (MINOR 3 of the review).</summary>
+        private static void EnsureUvRecord(string dir, string moduleName)
+        {
+            var (recIn, recLock) = ReadUvRecord(dir);
+            if (recIn != null && recLock != null) return;
+            try
+            {
+                File.WriteAllText(Path.Combine(dir, ".venv", UvRecordFileName), UvRecordText(dir), Encoding.ASCII);
+                AppendEnvLog(dir, moduleName, "Lock source recorded in .venv\\" + UvRecordFileName + ".");
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                SafeLog(moduleName, "Python environment: could not write .venv\\" + UvRecordFileName + " (checked again next time).", ex, error: false);
+            }
+        }
+
+        /// <summary>
+        /// Null when the venv's python.exe is a CPython the lock has wheels for (<see cref="UvPythonMin"/>–<see cref="UvPythonMax"/>);
+        /// else the message naming the version found (or why it could not be read) and how to recreate the venv.
+        /// </summary>
+        private static async Task<string?> UvPythonProblemAsync(string dir, CancellationToken ct)
+        {
+            var py = VenvPython(dir);
+            var range = UvPythonMin.ToString(2) + "–" + UvPythonMax.ToString(2);
+            var recreate = "recreate the venv with a supported Python, in " + dir + ": py -" + UvPythonMax.ToString(2) +
+                           " -m venv --clear .venv (no other interpreter is picked automatically)";
+            var r = await OneShotProcess.RunAsync(py, new[] { "-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])" },
+                                                  workingDirectory: dir, timeout: ProbeTimeout, ct: ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            var text = r.StdOut.Trim();
+            if (r.ExitCode != 0 || !Version.TryParse(text, out var found))
+                return "the Python version of " + py + " could not be read (" + r.Describe() + ") - the " + LockFileName +
+                       " needs CPython " + range + "; " + recreate;
+            var minor = new Version(found.Major, found.Minor);
+            if (minor < UvPythonMin || minor > UvPythonMax)
+                return "the Risk Lab venv uses Python " + text + ", but " + LockFileName + " (numpy / scipy wheels) supports only CPython " +
+                       range + " - " + recreate;
+            return null;
+        }
+
+        private static string Sha256Lower(string path)
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            return Convert.ToHexString(SHA256.HashData(fs)).ToLowerInvariant();
         }
 
         private static string VenvPython(string backendDir) => Path.Combine(backendDir, ".venv", "Scripts", "python.exe");

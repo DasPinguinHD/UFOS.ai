@@ -1,0 +1,9 @@
+{
+  "label": "rlview-be2",
+  "approved": "lead, 2026-11-07: review fixes of rlview-be (stage 11 Risk Lab view phase B, UFOS.ai/docs/tasks/RISKLAB_VIEW_TASK.md §B): uv lock record normalisation + lazy Risk Lab preparation in Shared/PythonEnvironment.cs, runner fixes in Shared/OneShotProcess.cs, .venv.lock ignored in RiskLab/.gitignore",
+  "files": [
+    "UFOS.ai/Shared/PythonEnvironment.cs",
+    "UFOS.ai/Shared/OneShotProcess.cs",
+    "UFOS.ai/RiskLab/.gitignore"
+  ]
+}

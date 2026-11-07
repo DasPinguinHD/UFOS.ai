@@ -678,10 +678,12 @@ from .options_archive_routes import OPTIONS_ARCHIVE_ROUTES, OptionsArchiveRoutes
 from .council_routes import COUNCIL_ROUTES, CouncilRoutesMixin  # noqa: E402 — S10-C (SPEC §22.11)
 from .options_structure_routes import OPTIONS_STRUCTURE_ROUTES, OptionsStructureRoutesMixin  # noqa: E402 — OS2 (§21.12)
 from .overview_routes import OVERVIEW_ROUTES, OverviewRoutesMixin  # noqa: E402 — stage 11 Overview (SPEC §26)
+from .risk_routes import RISK_ROUTES, RiskRoutesMixin  # noqa: E402 — stage 11 Risk Lab view (SPEC §26.4)
 
 
 class V2Api(TradingRoutesMixin, BrokerRoutesMixin, MonitoringRoutesMixin, OptionsArchiveRoutesMixin,
-            CouncilRoutesMixin, OptionsStructureRoutesMixin, OverviewRoutesMixin):
+            CouncilRoutesMixin, OptionsStructureRoutesMixin, OverviewRoutesMixin,
+            RiskRoutesMixin):
     """Route handlers (see module docstring)."""
 
     async def _guarded(self, fn, *args):
@@ -1922,6 +1924,7 @@ ROUTES = ROUTES + OPTIONS_ARCHIVE_ROUTES   # OS1: /v2/options-archive/* (SPEC §
 ROUTES = ROUTES + COUNCIL_ROUTES   # S10-C: /v2/council/* (SPEC §22.11)
 ROUTES = ROUTES + OPTIONS_STRUCTURE_ROUTES   # OS2: /v2/options-structure/* (SPEC §21.12, read-only)
 ROUTES = ROUTES + OVERVIEW_ROUTES   # stage 11: /v2/overview/{markets,risk,activity} (SPEC §26, read-only)
+ROUTES = ROUTES + RISK_ROUTES   # stage 11: /v2/risk/daily-returns (SPEC §26.4, read-only)
 
 
 async def read_paper_body(request):

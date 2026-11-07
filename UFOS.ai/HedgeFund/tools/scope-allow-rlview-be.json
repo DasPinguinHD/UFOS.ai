@@ -1,0 +1,9 @@
+{
+  "label": "rlview-be",
+  "approved": "lead, 2026-11-06: stage 11 Risk Lab view, phase B (HF backend + Shared) per UFOS.ai/docs/tasks/RISKLAB_VIEW_TASK.md §B (scope UFOS.ai/RiskLab/**, UFOS.ai/HedgeFund/**, UFOS.ai/Shared/**, UFOS.ai/docs/**): GET /v2/risk/daily-returns, the RiskLab entry with its own uv lock contract in Shared/PythonEnvironment.cs, a generic one-shot process runner in Shared/",
+  "files": [
+    "UFOS.ai/Shared/PythonEnvironment.cs",
+    "UFOS.ai/Shared/OneShotProcess.cs"
+  ],
+  "note": "Backend route, tests, SPEC §26 and CODEMAP are inside the module. RiskLab files are NOT touched by this label (the RiskLab lock files are read only)."
+}

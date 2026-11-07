@@ -95,10 +95,11 @@ def end_of_day(points: Iterable[dict], now: datetime) -> List[Tuple[date, float]
     return out
 
 
-def daily_returns(eod: List[Tuple[date, float]]) -> Tuple[List[float], int]:
-    """(simple returns between consecutive trading days, number of skipped gaps)."""
+def dated_daily_returns(eod: List[Tuple[date, float]]) -> Tuple[List[date], List[float], int]:
+    """(the trading day each return ENDS on, simple returns between consecutive trading days, number of skipped gaps)
+    — the one implementation; ``daily_returns`` and ``/v2/risk/daily-returns`` (SP §26.4) both use it."""
     from ..core import calendars
-    rets, gaps = [], 0
+    days, rets, gaps = [], [], 0
     for (d0, e0), (d1, e1) in zip(eod, eod[1:]):
         try:
             consecutive = calendars.previous_trading_day(d1) == d0
@@ -107,8 +108,20 @@ def daily_returns(eod: List[Tuple[date, float]]) -> Tuple[List[float], int]:
         if not consecutive:
             gaps += 1
             continue
+        days.append(d1)
         rets.append(e1 / e0 - 1.0)
+    return days, rets, gaps
+
+
+def daily_returns(eod: List[Tuple[date, float]]) -> Tuple[List[float], int]:
+    """(simple returns between consecutive trading days, number of skipped gaps)."""
+    _days, rets, gaps = dated_daily_returns(eod)
     return rets, gaps
+
+
+def latest_equity(points: List[dict]) -> Optional[float]:
+    """The newest valued equity point (finite, > 0) — the scale of the HS P&L scenarios (§26.2) and of §26.4."""
+    return next((_equity(p) for p in reversed(points) if _equity(p) is not None), None)
 
 
 def max_drawdown_pct(points: Iterable[dict]) -> Optional[float]:
@@ -159,7 +172,7 @@ def series_figures(points: List[dict], now: datetime, unavailable: Optional[str]
     eod = end_of_day(points, now)
     rets, gaps = daily_returns(eod)
     n = len(rets)
-    latest = next((_equity(p) for p in reversed(points) if _equity(p) is not None), None)
+    latest = latest_equity(points)
     figs = {}
     for key, alpha, method in (("var99_1d", VAR_ALPHA, VAR_METHOD), ("es975_1d", ES_ALPHA, ES_METHOD)):
         if n < MIN_RETURNS:

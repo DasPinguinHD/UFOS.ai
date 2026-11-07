@@ -4,6 +4,8 @@ local_data/
 out/
 # Virtual environments
 .venv/
+# Lock file of the app's venv preparation (Shared/PythonEnvironment.cs; exists only while it prepares the venv)
+.venv.lock
 venv/
 env/
 # Python build / cache output
